@@ -95,6 +95,7 @@ set(CORE_SOURCES
     src/core/drift_model.cpp
     src/core/audio_buffer.cpp
     src/core/audio_file.cpp
+    src/core/correlation.cpp
 )
 
 # Core library
@@ -157,9 +158,12 @@ target_link_libraries(test_audio_buffer PRIVATE Catch2::Catch2WithMain mwaac_cor
 
 add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
 
+add_executable(test_correlation tests/test_correlation.cpp)
+target_link_libraries(test_correlation PRIVATE Catch2::Catch2WithMain mwaac_core)
+add_test(NAME test_correlation COMMAND test_correlation)
+
 add_executable(test_lossless tests/test_lossless.cpp)
 target_link_libraries(test_lossless PRIVATE Catch2::Catch2WithMain mwaac_core)
-
 add_test(NAME test_lossless COMMAND test_lossless)
 
 # Installation rules
