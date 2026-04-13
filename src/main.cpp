@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
         fs::path reference_path;
         fs::path output_dir;
         bool dry_run = false;
-        bool verbose = false;
+        [[maybe_unused]] bool verbose = false;  // TODO: implement verbose output
         
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
