@@ -96,6 +96,8 @@ set(CORE_SOURCES
     src/core/audio_buffer.cpp
     src/core/audio_file.cpp
     src/core/correlation.cpp
+    src/core/analysis.cpp
+    src/core/music_detection.cpp
 )
 
 # Core library
@@ -162,9 +164,17 @@ add_executable(test_correlation tests/test_correlation.cpp)
 target_link_libraries(test_correlation PRIVATE Catch2::Catch2WithMain mwaac_core)
 add_test(NAME test_correlation COMMAND test_correlation)
 
+add_executable(test_music_detection tests/test_music_detection.cpp)
+target_link_libraries(test_music_detection PRIVATE Catch2::Catch2WithMain mwaac_core)
+add_test(NAME test_music_detection COMMAND test_music_detection)
+
 add_executable(test_lossless tests/test_lossless.cpp)
 target_link_libraries(test_lossless PRIVATE Catch2::Catch2WithMain mwaac_core)
 add_test(NAME test_lossless COMMAND test_lossless)
+
+add_executable(test_analysis tests/test_analysis.cpp)
+target_link_libraries(test_analysis PRIVATE Catch2::Catch2WithMain mwaac_core)
+add_test(NAME test_analysis COMMAND test_analysis)
 
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
