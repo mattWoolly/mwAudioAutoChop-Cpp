@@ -209,5 +209,9 @@ add_executable(test_blind_mode tests/test_blind_mode.cpp)
 target_link_libraries(test_blind_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
 add_test(NAME test_blind_mode COMMAND test_blind_mode)
 
+add_executable(test_integration tests/test_integration.cpp)
+target_link_libraries(test_integration PRIVATE Catch2::Catch2WithMain mwaac_core mwaac_sndfile)
+add_test(NAME test_integration COMMAND test_integration)
+
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
