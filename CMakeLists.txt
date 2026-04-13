@@ -146,7 +146,7 @@ add_executable(test_basic tests/test_basic.cpp)
 target_link_libraries(test_basic PRIVATE Catch2::Catch2WithMain)
 
 add_executable(test_audio_file tests/test_audio_file.cpp)
-target_link_libraries(test_audio_file PRIVATE mwaac_core SndFile::sndfile Catch2::Catch2WithMain)
+target_link_libraries(test_audio_file PRIVATE mwaac_core Catch2::Catch2WithMain)
 
 # Register tests with CTest
 add_test(NAME test_basic COMMAND test_basic)
