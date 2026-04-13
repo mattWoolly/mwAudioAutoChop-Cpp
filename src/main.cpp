@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iomanip>
 #include "modes/reference_mode.hpp"
+#include "modes/blind_mode.hpp"
 #include "core/audio_file.hpp"
 #include "core/audio_buffer.hpp"
 #include "tui/app.hpp"
@@ -14,14 +15,21 @@ void print_help() {
     std::cout << "mwAudioAutoChop v0.1.0\n\n"
               << "Usage:\n"
               << "  mwaac reference <vinyl> -r <reference_dir> -o <output_dir> [options]\n"
+              << "  mwaac blind <vinyl> -o <output_dir> [options]\n"
               << "  mwaac tui <vinyl> -o <output_dir> [options]\n"
               << "\n"
               << "Commands:\n"
               << "  reference               Analyze vinyl using reference tracks\n"
+              << "  blind                  Analyze vinyl without reference tracks (gap detection)\n"
               << "  tui                     Interactive waveform editor\n"
               << "\n"
               << "Reference Options:\n"
               << "  -r, --reference <path>   Reference tracks directory (required)\n"
+              << "  -o, --output <path>      Output directory (required)\n"
+              << "  --dry-run                Preview splits without writing files\n"
+              << "  -v, --verbose            Show detailed output\n"
+              << "\n"
+              << "Blind Options:\n"
               << "  -o, --output <path>      Output directory (required)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
@@ -146,6 +154,124 @@ int main(int argc, char* argv[]) {
             
             auto write_result = mwaac::write_track(audio_file.value(), output_path, 
                                                     sp.start_sample, sp.end_sample);
+            if (write_result) {
+                std::cout << "  " << filename << "\n";
+            } else {
+                std::cerr << "  Failed to write " << filename << "\n";
+            }
+        }
+        
+        std::cout << "\nDone! Wrote " << analysis.split_points.size() << " track(s)\n";
+        return 0;
+    }
+    
+    if (command == "blind") {
+        if (argc < 3) {
+            std::cerr << "Error: vinyl path required\n";
+            return 1;
+        }
+        
+        fs::path vinyl_path = argv[2];
+        fs::path output_dir;
+        bool dry_run = false;
+        
+        // Parse arguments
+        for (int i = 3; i < argc; ++i) {
+            std::string arg = argv[i];
+            if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+                output_dir = argv[++i];
+            } else if (arg == "--dry-run") {
+                dry_run = true;
+            } else if (arg == "-v" || arg == "--verbose") {
+                // TODO: implement verbose output
+            }
+        }
+        
+        if (output_dir.empty()) {
+            std::cerr << "Error: -o is required\n";
+            return 1;
+        }
+        
+        std::cout << "Analyzing vinyl (blind mode): " << vinyl_path << "\n\n";
+        
+        // Run analysis
+        auto result = mwaac::analyze_blind_mode(vinyl_path);
+        if (!result) {
+            std::cerr << "Error: Analysis failed: ";
+            switch (result.error()) {
+                case mwaac::BlindError::LoadFailed:
+                    std::cerr << "Failed to load audio file\n";
+                    break;
+                case mwaac::BlindError::AnalysisFailed:
+                    std::cerr << "Analysis failed\n";
+                    break;
+                case mwaac::BlindError::NoGapsFound:
+                    std::cerr << "No gaps found in audio\n";
+                    break;
+            }
+            return 1;
+        }
+        
+        auto& analysis = result.value();
+        
+        // Print results
+        std::cout << "=== BLIND Mode Analysis ===\n";
+        std::cout << "Found " << analysis.split_points.size() << " track(s)\n\n";
+        
+        // Get native sample rate
+        auto audio_file = mwaac::AudioFile::open(vinyl_path);
+        int native_sr = audio_file ? audio_file.value().info().sample_rate : 44100;
+        
+        // Fix end samples (last track goes to end of file)
+        int64_t total_frames = audio_file ? audio_file.value().info().frames : 0;
+        for (size_t i = 0; i < analysis.split_points.size(); ++i) {
+            auto& sp = analysis.split_points[i];
+            if (i + 1 < analysis.split_points.size()) {
+                sp.end_sample = analysis.split_points[i + 1].start_sample - 1;
+            } else {
+                sp.end_sample = total_frames - 1;
+            }
+        }
+        
+        // Print track info
+        for (size_t i = 0; i < analysis.split_points.size(); ++i) {
+            auto& sp = analysis.split_points[i];
+            double start_sec = static_cast<double>(sp.start_sample) / native_sr;
+            double end_sec = static_cast<double>(sp.end_sample) / native_sr;
+            double duration = end_sec - start_sec;
+            
+            int start_min = static_cast<int>(start_sec) / 60;
+            int start_s = static_cast<int>(start_sec) % 60;
+            int end_min = static_cast<int>(end_sec) / 60;
+            int end_s = static_cast<int>(end_sec) % 60;
+            
+            std::cout << "Track " << std::setw(2) << std::setfill('0') << (i + 1) << ": "
+                      << std::setw(2) << start_min << ":" << std::setw(2) << start_s << " - "
+                      << std::setw(2) << end_min << ":" << std::setw(2) << end_s
+                      << " (" << static_cast<int>(duration / 60) << "m " 
+                      << static_cast<int>(static_cast<int>(duration) % 60) << "s)"
+                      << " — confidence: " << std::fixed << std::setprecision(2) << sp.confidence
+                      << "\n";
+        }
+        
+        if (dry_run) {
+            std::cout << "\nDRY RUN — no files written\n";
+            return 0;
+        }
+        
+        // Create output directory
+        fs::create_directories(output_dir);
+        
+        // Export tracks
+        std::cout << "\nWriting tracks...\n";
+        for (size_t i = 0; i < analysis.split_points.size(); ++i) {
+            auto& sp = analysis.split_points[i];
+            
+            std::string filename = "track_" + std::to_string(i + 1) + ".wav";
+            fs::path output_path = output_dir / filename;
+            
+            auto write_result = mwaac::write_track(audio_file.value(), output_path, 
+                                            sp.start_sample, sp.end_sample);
             if (write_result) {
                 std::cout << "  " << filename << "\n";
             } else {
