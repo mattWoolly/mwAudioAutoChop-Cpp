@@ -37,12 +37,10 @@ include(FetchContent)
 find_package(PkgConfig QUIET)
 pkg_check_modules(PkgConfig_sndfile QUIET sndfile)
 if(PkgConfig_sndfile_FOUND)
-    add_library(sndfile INTERFACE)
-    find_library(SNDFILE_LIBRARY NAMES sndfile)
-    if(SNDFILE_LIBRARY)
-        message(STATUS "Using system libsndfile")
-        add_library(SndFile::sndfile ALIAS sndfile)
-    endif()
+    message(STATUS "Using system libsndfile")
+    add_library(mwaac_sndfile INTERFACE)
+    target_link_libraries(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_LIBRARIES})
+    target_include_directories(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_INCLUDE_DIRS})
 endif()
 
 if(NOT TARGET SndFile::sndfile)
@@ -104,7 +102,11 @@ target_include_directories(mwaac_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 target_compile_features(mwaac_core PUBLIC cxx_std_20)
-target_link_libraries(mwaac_core PUBLIC SndFile::sndfile)
+if(PkgConfig_sndfile_FOUND)
+    target_link_libraries(mwaac_core PUBLIC mwaac_sndfile)
+else()
+    target_link_libraries(mwaac_core PUBLIC SndFile::sndfile)
+endif()
 
 set(SOURCES
     src/main.cpp
@@ -119,12 +121,21 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 # Link core library and dependencies to main executable
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    mwaac_core
-    SndFile::sndfile
-    ftxui::component
-    ftxui::dom
-)
+if(PkgConfig_sndfile_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        mwaac_core
+        mwaac_sndfile
+        ftxui::component
+        ftxui::dom
+    )
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        mwaac_core
+        SndFile::sndfile
+        ftxui::component
+        ftxui::dom
+    )
+endif()
 
 # =============================================================================
 # Tests
