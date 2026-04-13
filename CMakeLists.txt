@@ -27,7 +27,61 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # Enable testing
 enable_testing()
 
+# =============================================================================
+# Dependency Management
+# =============================================================================
+
+include(FetchContent)
+
+# libsndfile - Audio file I/O
+FetchContent_Declare(
+    libsndfile
+    GIT_REPOSITORY https://github.com/libsndfile/libsndfile
+    GIT_TAG        1.2.2
+)
+
+# FFTW3 - FFT operations
+# TODO: FFTW3 is complex to build from source. Prefer system install.
+# For now, check if system-installed first with find_package
+find_package(FFTW3 QUIET)
+if(NOT FFTW3_FOUND)
+    message(STATUS "FFTW3 not found. Please install system-wide or add support later.")
+    # TODO: Add FetchContent build for FFTW3 when ready
+endif()
+
+# FTXUI - Terminal UI
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
+    GIT_TAG        v5.0.0
+)
+
+# Catch2 - Testing framework
+FetchContent_Declare(
+    catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2
+    GIT_TAG        v3.5.2
+)
+
+# Fetch and configure all dependencies
+FetchContent_MakeAvailable(libsndfile ftxui catch2)
+
+# =============================================================================
 # Source files
+# =============================================================================
+
+# Core library source files
+set(CORE_SOURCES
+    src/core/drift_model.cpp
+)
+
+# Core library
+add_library(mwaac_core STATIC ${CORE_SOURCES})
+target_include_directories(mwaac_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_features(mwaac_core PUBLIC cxx_std_20)
+
 set(SOURCES
     src/main.cpp
 )
@@ -40,5 +94,20 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-# Installation rules
-install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+# Link core library and dependencies to main executable
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    mwaac_core
+    SndFile::sndfile
+    ftxui::component
+    ftxui::dom
+)
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+add_executable(test_basic tests/test_basic.cpp)
+target_link_libraries(test_basic PRIVATE Catch2::Catch2 WithMain)
+
+# Register tests with CTest
+add_test(NAME test_basic COMMAND test_basic)
