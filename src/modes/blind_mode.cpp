@@ -2,8 +2,11 @@
 #include "core/audio_buffer.hpp"
 #include "core/analysis.hpp"
 #include "core/music_detection.hpp"
+#include "core/verbose.hpp"
 #include <algorithm>
 #include <cmath>
+#include <sstream>
+#include <iomanip>
 
 namespace mwaac {
 
@@ -93,33 +96,68 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     const std::filesystem::path& vinyl_path,
     const BlindModeConfig& config)
 {
+    VerboseTimer timer("blind mode analysis");
+    
     // Load audio
+    verbose("Loading audio...");
     auto load_result = load_audio_mono(vinyl_path, config.analysis_sr);
     if (!load_result.ok()) {
+        verbose("ERROR: Failed to load audio");
         return BlindError::LoadFailed;
     }
     auto audio = std::move(load_result.value());
+    
+    if (g_verbose) {
+        verbose("  Loaded: " + std::to_string(audio.samples.size()) + 
+               " samples at " + std::to_string(audio.sample_rate) + " Hz");
+    }
     
     // Compute RMS energy
     int frame_length = static_cast<int>(0.05f * config.analysis_sr);  // 50ms
     int hop_length = frame_length / 4;  // 12.5ms
     
+    verbose("Computing RMS energy...");
     auto rms = compute_rms_energy(audio.samples, config.analysis_sr, frame_length, hop_length);
     if (rms.empty()) {
+        verbose("ERROR: RMS computation failed");
         return BlindError::AnalysisFailed;
     }
     
+    if (g_verbose) {
+        verbose("  Frame length: " + std::to_string(frame_length) + " samples");
+        verbose("  Hop length: " + std::to_string(hop_length) + " samples");
+        verbose("  RMS frames: " + std::to_string(rms.size()));
+    }
+    
     // Estimate noise floor
+    verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
     
     // Gap threshold: just above noise floor (6 dB)
     float threshold = noise_floor * 2.0f;
     
+    if (g_verbose) {
+        std::ostringstream oss;
+        oss << std::scientific << std::setprecision(2) << noise_floor;
+        std::ostringstream thresh_oss;
+        thresh_oss << std::scientific << std::setprecision(2) << threshold;
+        verbose("  Noise floor RMS: " + oss.str());
+        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor)");
+    }
+    
     // Find gaps
+    verbose("Detecting gaps...");
     auto gaps = detect_gaps(rms, threshold, hop_length, config.analysis_sr,
                             config.min_gap_seconds, config.max_gap_seconds);
     
+    if (g_verbose) {
+        verbose("  Min gap: " + std::to_string(config.min_gap_seconds) + "s");
+        verbose("  Max gap: " + std::to_string(config.max_gap_seconds) + "s");
+        verbose("  Candidate gaps found: " + std::to_string(gaps.size()));
+    }
+    
     if (gaps.empty()) {
+        verbose("WARNING: No gaps detected");
         return BlindError::NoGapsFound;
     }
     
@@ -135,8 +173,13 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     split_points.push_back(first_track);
     
     // Each gap end marks start of new track
+    if (g_verbose) {
+        verbose_section("Gap Detection Details");
+    }
+    
     for (const auto& gap : gaps) {
         int64_t track_start = static_cast<int64_t>(gap.second * hop_length);
+        int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * hop_length);
         
         // Score this gap
         float confidence = score_gap(audio.samples, 
@@ -144,6 +187,19 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
                                      gap.second * hop_length,
                                      config.analysis_sr,
                                      noise_floor);
+        
+        if (g_verbose) {
+            double gap_start_sec = static_cast<double>(gap.first * hop_length) / config.analysis_sr;
+            double gap_duration_sec = static_cast<double>(gap_duration) / config.analysis_sr;
+            std::ostringstream conf_oss;
+            conf_oss << std::fixed << std::setprecision(3) << confidence;
+            std::ostringstream dur_oss;
+            dur_oss << std::fixed << std::setprecision(2) << gap_duration_sec;
+            verbose("  Gap " + std::to_string(split_points.size()) + ":");
+            verbose("    Frame range: " + std::to_string(gap.first) + " - " + std::to_string(gap.second));
+            verbose("    Duration: " + dur_oss.str() + "s");
+            verbose("    Confidence: " + conf_oss.str());
+        }
         
         if (confidence >= config.confidence_threshold) {
             SplitPoint sp;
@@ -154,6 +210,10 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
             sp.evidence["gap_end_frame"] = static_cast<double>(gap.second);
             split_points.push_back(sp);
         }
+    }
+    
+    if (g_verbose) {
+        verbose("  Valid gaps (above threshold): " + std::to_string(split_points.size() - 1));
     }
     
     // Set end samples
@@ -172,6 +232,14 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     result.metadata["noise_floor_rms"] = static_cast<double>(noise_floor);
     result.metadata["num_gaps_found"] = static_cast<double>(gaps.size());
     result.metadata["analysis_sr"] = static_cast<double>(config.analysis_sr);
+    
+    if (g_verbose) {
+        verbose_section("Analysis Parameters");
+        verbose("  Analysis sample rate: " + std::to_string(config.analysis_sr) + " Hz");
+        verbose("  Min gap duration: " + std::to_string(config.min_gap_seconds) + "s");
+        verbose("  Max gap duration: " + std::to_string(config.max_gap_seconds) + "s");
+        verbose("  Confidence threshold: " + std::to_string(config.confidence_threshold));
+    }
     
     return result;
 }
