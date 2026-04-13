@@ -105,6 +105,12 @@ set(REFERENCE_SOURCES
     src/modes/reference_mode.cpp
 )
 
+# TUI sources
+set(TUI_SOURCES
+    src/tui/waveform.cpp
+    src/tui/app.cpp
+)
+
 # Core library
 add_library(mwaac_core STATIC ${CORE_SOURCES} ${REFERENCE_SOURCES})
 target_include_directories(mwaac_core PUBLIC
@@ -129,10 +135,22 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
+# TUI library
+add_library(mwaac_tui STATIC ${TUI_SOURCES})
+target_include_directories(mwaac_tui PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(mwaac_tui PRIVATE
+    mwaac_core
+    ftxui::component
+    ftxui::dom
+)
+
 # Link core library and dependencies to main executable
 if(PkgConfig_sndfile_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         mwaac_core
+        mwaac_tui
         mwaac_sndfile
         ftxui::component
         ftxui::dom
@@ -140,6 +158,7 @@ if(PkgConfig_sndfile_FOUND)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
         mwaac_core
+        mwaac_tui
         SndFile::sndfile
         ftxui::component
         ftxui::dom
