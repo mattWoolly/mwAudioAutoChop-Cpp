@@ -103,6 +103,7 @@ set(CORE_SOURCES
 # Reference mode sources
 set(REFERENCE_SOURCES
     src/modes/reference_mode.cpp
+    src/modes/blind_mode.cpp
 )
 
 # TUI sources
@@ -203,6 +204,10 @@ add_test(NAME test_analysis COMMAND test_analysis)
 add_executable(test_reference_mode tests/test_reference_mode.cpp)
 target_link_libraries(test_reference_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
 add_test(NAME test_reference_mode COMMAND test_reference_mode)
+
+add_executable(test_blind_mode tests/test_blind_mode.cpp)
+target_link_libraries(test_blind_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
+add_test(NAME test_blind_mode COMMAND test_blind_mode)
 
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
