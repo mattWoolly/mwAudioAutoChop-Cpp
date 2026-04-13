@@ -176,4 +176,32 @@ parse_wav_header(const std::vector<uint8_t>& data);
 [[nodiscard]] Expected<AudioInfo, AudioError>
 parse_aiff_header(const std::vector<uint8_t>& data);
 
+// Export a track (raw byte copy with new header)
+// Returns path to written file, or error
+[[nodiscard]] Expected<std::filesystem::path, AudioError>
+write_track(
+    const AudioFile& source,
+    const std::filesystem::path& output_path,
+    int64_t start_sample,
+    int64_t end_sample,  // inclusive
+    std::string_view output_format = ""  // empty = match source format
+);
+
+// Build a valid WAV header for the given parameters
+[[nodiscard]] std::vector<std::byte> build_wav_header(
+    int channels,
+    int sample_rate,
+    int bits_per_sample,
+    int64_t data_size
+);
+
+// Build a valid AIFF header for the given parameters  
+[[nodiscard]] std::vector<std::byte> build_aiff_header(
+    int channels,
+    int sample_rate,
+    int bits_per_sample,
+    int64_t num_frames,
+    int64_t data_size
+);
+
 } // namespace mwaac
