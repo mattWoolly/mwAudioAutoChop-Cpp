@@ -3,8 +3,18 @@
 #include "core/split_point.hpp"
 #include <vector>
 #include <filesystem>
+#include <string>
 
 namespace mwaac::tui {
+
+// Export status for progress display
+struct ExportStatus {
+    bool in_progress{false};
+    int current_track{0};
+    int total_tracks{0};
+    bool success{false};
+    std::string message;
+};
 
 struct AppState {
     AudioBuffer audio;
@@ -16,6 +26,9 @@ struct AppState {
     int64_t view_start{0};
     int64_t view_end{0};  // 0 = auto (full file)
     bool show_help{false};
+    
+    // Export state
+    ExportStatus export_status;
 };
 
 // Run the interactive TUI application
