@@ -5,6 +5,8 @@
 #include <iomanip>
 #include "modes/reference_mode.hpp"
 #include "core/audio_file.hpp"
+#include "core/audio_buffer.hpp"
+#include "tui/app.hpp"
 
 namespace fs = std::filesystem;
 
@@ -12,12 +14,20 @@ void print_help() {
     std::cout << "mwAudioAutoChop v0.1.0\n\n"
               << "Usage:\n"
               << "  mwaac reference <vinyl> -r <reference_dir> -o <output_dir> [options]\n"
+              << "  mwaac tui <vinyl> -o <output_dir> [options]\n"
               << "\n"
-              << "Options:\n"
+              << "Commands:\n"
+              << "  reference               Analyze vinyl using reference tracks\n"
+              << "  tui                     Interactive waveform editor\n"
+              << "\n"
+              << "Reference Options:\n"
               << "  -r, --reference <path>   Reference tracks directory (required)\n"
               << "  -o, --output <path>      Output directory (required)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
+              << "\n"
+              << "TUI Options:\n"
+              << "  -o, --output <path>      Output directory (required)\n"
               << "  -h, --help               Show this help\n";
 }
 
@@ -145,6 +155,48 @@ int main(int argc, char* argv[]) {
         
         std::cout << "\nDone! Wrote " << analysis.split_points.size() << " track(s)\n";
         return 0;
+    }
+    
+    if (command == "tui") {
+        if (argc < 3) {
+            std::cerr << "Error: vinyl path required\n";
+            return 1;
+        }
+        
+        fs::path vinyl_path = argv[2];
+        fs::path output_dir;
+        
+        // Parse arguments
+        for (int i = 3; i < argc; ++i) {
+            std::string arg = argv[i];
+            if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+                output_dir = argv[++i];
+            }
+        }
+        
+        if (output_dir.empty()) {
+            std::cerr << "Error: -o is required\n";
+            return 1;
+        }
+        
+        // Load audio
+        std::cout << "Loading: " << vinyl_path << "\n";
+        auto load_result = mwaac::load_audio_mono(vinyl_path);
+        if (!load_result) {
+            std::cerr << "Error: Failed to load audio: " << static_cast<int>(load_result.error()) << "\n";
+            return 1;
+        }
+        
+        mwaac::tui::AppState state;
+        state.audio = std::move(load_result.value());
+        state.vinyl_path = vinyl_path;
+        state.output_dir = output_dir;
+        
+        std::cout << "Loaded " << state.audio.samples.size() << " samples at "
+                 << state.audio.sample_rate << " Hz\n";
+        std::cout << "Starting TUI...\n";
+        
+        return mwaac::tui::run_tui(state);
     }
     
     std::cerr << "Unknown command: " << command << "\n";
