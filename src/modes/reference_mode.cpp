@@ -2,9 +2,12 @@
 #include "core/audio_buffer.hpp"
 #include "core/correlation.hpp"
 #include "core/music_detection.hpp"
+#include "core/verbose.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <regex>
+#include <iomanip>
+#include <sstream>
 
 namespace mwaac {
 
@@ -169,25 +172,72 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
     const std::filesystem::path& reference_path,
     int analysis_sr)
 {
+    VerboseTimer timer("reference mode analysis");
+    
     // Load vinyl
+    verbose("Loading vinyl...");
     auto vinyl_result = load_audio_mono(vinyl_path, analysis_sr);
     if (!vinyl_result.ok()) {
+        verbose("ERROR: Failed to load vinyl");
         return ReferenceError::VinylLoadFailed;
     }
     auto vinyl = std::move(vinyl_result.value());
     
+    if (g_verbose) {
+        verbose("  Vinyl loaded: " + std::to_string(vinyl.samples.size()) + 
+               " samples at " + std::to_string(vinyl.sample_rate) + " Hz");
+    }
+    
     // Detect music start
+    verbose("Detecting music start...");
     int64_t music_start = detect_music_start(vinyl.samples, analysis_sr);
     
+    if (g_verbose) {
+        double music_start_sec = static_cast<double>(music_start) / analysis_sr;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << music_start_sec;
+        verbose("  Music starts at sample " + std::to_string(music_start) + 
+               " (" + oss.str() + "s)");
+    }
+    
     // Load reference tracks
+    verbose("Loading reference tracks...");
     auto tracks_result = load_reference_tracks(reference_path, analysis_sr);
     if (!tracks_result) {
+        verbose("ERROR: Failed to load reference tracks");
         return tracks_result.error();
     }
     auto tracks = std::move(tracks_result.value());
     
+    if (g_verbose) {
+        verbose("  Loaded " + std::to_string(tracks.size()) + " reference track(s)");
+        for (size_t i = 0; i < tracks.size(); ++i) {
+            verbose("    Track " + std::to_string(i + 1) + ": " + 
+                    tracks[i].path.filename().string() + 
+                    " (" + std::to_string(tracks[i].duration_samples) + " samples)");
+        }
+    }
+    
     // Align each track
+    verbose("Aligning tracks to vinyl...");
     auto offsets = align_per_track(vinyl, tracks, music_start);
+    
+    if (g_verbose) {
+        verbose_section("Per-Track Alignment Results");
+        for (size_t i = 0; i < offsets.size(); ++i) {
+            double offset_sec = static_cast<double>(offsets[i].first) / analysis_sr;
+            int min = static_cast<int>(offset_sec) / 60;
+            int sec = static_cast<int>(offset_sec) % 60;
+            std::ostringstream conf_oss;
+            conf_oss << std::fixed << std::setprecision(3) << offsets[i].second;
+            std::ostringstream pos_oss;
+            pos_oss << std::fixed << std::setprecision(2) << offset_sec;
+            verbose("  Track " + std::to_string(i + 1) + " (" + tracks[i].path.filename().string() + "):");
+            verbose("    Position: " + std::to_string(offsets[i].first) + " samples" +
+                    " (" + pos_oss.str() + "s = " + std::to_string(min) + ":" + std::to_string(sec) + ")");
+            verbose("    Confidence: " + conf_oss.str());
+        }
+    }
     
     // Build split points
     std::vector<SplitPoint> split_points;
@@ -222,6 +272,14 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
     result.metadata["music_start_sample"] = static_cast<double>(music_start);
     result.metadata["analysis_sr"] = static_cast<double>(analysis_sr);
     result.metadata["num_tracks"] = static_cast<double>(tracks.size());
+    
+    if (g_verbose) {
+        verbose_section("Analysis Parameters");
+        verbose("  Analysis sample rate: " + std::to_string(analysis_sr) + " Hz");
+        verbose("  Music start sample: " + std::to_string(music_start));
+        verbose("  Number of tracks: " + std::to_string(tracks.size()));
+        verbose("  Output sample rate: " + std::to_string(native_sr) + " Hz");
+    }
     
     return result;
 }

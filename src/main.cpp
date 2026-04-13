@@ -7,6 +7,7 @@
 #include "modes/blind_mode.hpp"
 #include "core/audio_file.hpp"
 #include "core/audio_buffer.hpp"
+#include "core/verbose.hpp"
 #include "tui/app.hpp"
 
 namespace fs = std::filesystem;
@@ -62,7 +63,7 @@ int main(int argc, char* argv[]) {
         fs::path reference_path;
         fs::path output_dir;
         bool dry_run = false;
-        [[maybe_unused]] bool verbose = false;  // TODO: implement verbose output
+        bool verbose = false;  // TODO: implement verbose output
         
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
@@ -76,6 +77,12 @@ int main(int argc, char* argv[]) {
             } else if (arg == "-v" || arg == "--verbose") {
                 verbose = true;
             }
+        }
+        
+        // Set verbose mode
+        if (verbose) {
+            mwaac::set_verbose(true);
+            std::cerr << "Verbose mode enabled\n";
         }
         
         if (reference_path.empty() || output_dir.empty()) {
@@ -174,6 +181,7 @@ int main(int argc, char* argv[]) {
         fs::path vinyl_path = argv[2];
         fs::path output_dir;
         bool dry_run = false;
+        bool verbose = false;
         
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
@@ -183,8 +191,14 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--dry-run") {
                 dry_run = true;
             } else if (arg == "-v" || arg == "--verbose") {
-                // TODO: implement verbose output
+                verbose = true;
             }
+        }
+        
+        // Set verbose mode
+        if (verbose) {
+            mwaac::set_verbose(true);
+            std::cerr << "Verbose mode enabled\n";
         }
         
         if (output_dir.empty()) {
