@@ -5,26 +5,32 @@ namespace mwaac {
 
 int64_t DriftModel::ref_to_vinyl_sample(
     int64_t ref_sample, int native_sr, int analysis_sr) const {
-    // If no coefficients, assume linear 1:1 mapping
-    if (coefficients.empty()) {
-        return ref_sample;
+    // If no drift model (empty segment_offsets), just scale
+    if (segment_offsets.empty()) {
+        return static_cast<int64_t>(ref_sample * native_sr / analysis_sr);
     }
     
-    // Evaluate polynomial: y = c[0] + c[1]*x + c[2]*x^2 + ...
-    // We're mapping reference sample to vinyl sample position
-    double x = static_cast<double>(ref_sample);
-    double y = 0.0;
-    double x_power = 1.0;
+    // Get max_pos from last segment_offset
+    int64_t max_pos = segment_offsets.back().first;
+    if (max_pos == 0) {
+        return static_cast<int64_t>(ref_sample * native_sr / analysis_sr);
+    }
+    
+    // Normalize position to 0-1 range for polynomial evaluation
+    double t = static_cast<double>(ref_sample) / static_cast<double>(max_pos);
+    
+    // Evaluate polynomial: offset = c0 + c1*t + c2*t^2 + ...
+    double offset = 0.0;
+    double t_power = 1.0;
     
     for (size_t i = 0; i < coefficients.size(); ++i) {
-        y += coefficients[i] * x_power;
-        x_power *= x;
+        offset += coefficients[i] * t_power;
+        t_power *= t;
     }
     
-    // Apply sample rate conversion: reference_sr / native_sr
-    // The coefficients are in analysis_sr space, so we need to convert
-    double sr_ratio = static_cast<double>(analysis_sr) / static_cast<double>(native_sr);
-    return static_cast<int64_t>(y * sr_ratio);
+    // Apply offset and scale to native sample rate
+    double vinyl_sample = static_cast<double>(ref_sample) + offset;
+    return static_cast<int64_t>(vinyl_sample * native_sr / analysis_sr);
 }
 
 } // namespace mwaac
