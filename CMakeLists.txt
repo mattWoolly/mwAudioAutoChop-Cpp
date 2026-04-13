@@ -64,6 +64,10 @@ FetchContent_Declare(
 )
 
 # Fetch and configure all dependencies
+# Disable tests for dependency projects to avoid running their test suite
+set(BUILD_TESTING OFF CACHE BOOL "Disable dependency tests")
+set(FTXUI_BUILD_TESTS OFF CACHE BOOL "Disable FTXUI tests")
+set(libsndfile_BUILD_TESTS OFF CACHE BOOL "Disable libsndfile tests")
 FetchContent_MakeAvailable(libsndfile ftxui catch2)
 
 # =============================================================================
@@ -107,7 +111,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # =============================================================================
 
 add_executable(test_basic tests/test_basic.cpp)
-target_link_libraries(test_basic PRIVATE Catch2::Catch2 WithMain)
+target_link_libraries(test_basic PRIVATE Catch2::Catch2WithMain)
 
 # Register tests with CTest
 add_test(NAME test_basic COMMAND test_basic)
+
+# Installation rules
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)
