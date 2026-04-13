@@ -400,7 +400,7 @@ Create core data structures:
 
 ### AAC-CPP-022: Chop Point Markers
 **Priority:** P2 (Medium)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-021
 
@@ -417,7 +417,7 @@ Create core data structures:
 
 ### AAC-CPP-023: Keyboard Navigation
 **Priority:** P2 (Medium)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-022
 
@@ -438,7 +438,7 @@ Create core data structures:
 
 ### AAC-CPP-024: Help Overlay
 **Priority:** P3 (Low)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Small  
 **Dependencies:** AAC-CPP-023
 
@@ -454,7 +454,7 @@ Create core data structures:
 
 ### AAC-CPP-025: Export from TUI
 **Priority:** P2 (Medium)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-023, AAC-CPP-005
 
@@ -473,7 +473,7 @@ Create core data structures:
 
 ### AAC-CPP-026: Integration Test Suite
 **Priority:** P1 (High)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Large  
 **Dependencies:** AAC-CPP-018, AAC-CPP-019
 
@@ -541,7 +541,7 @@ Fix minor compiler warnings found during QA:
 
 ### AAC-CPP-030: Complete Lossless Export Tests
 **Priority:** P1 (High)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-005
 
@@ -586,7 +586,7 @@ Track C (Analysis): 002 → 007 → 008 → 009
 
 ### AAC-CPP-029: Implement Verbose Output
 **Priority:** P2 (Low)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Dependencies:** AAC-CPP-017
 
 **Description:**
@@ -611,7 +611,7 @@ Current lossless tests verify header structure but don't verify actual byte-iden
 
 ## Implementation Progress Summary
 
-**Completed (14 PRs merged):**
+**Completed (17 PRs merged):**
 - AAC-CPP-001: Project Setup ✓
 - AAC-CPP-002: Dependencies ✓  
 - AAC-CPP-003: Core Data Structures ✓
@@ -625,13 +625,14 @@ Current lossless tests verify header structure but don't verify actual byte-iden
 - AAC-CPP-016: Blind Mode Pipeline ✓
 - AAC-CPP-017/018: CLI Commands ✓
 - AAC-CPP-020/021: TUI Waveform Display ✓
+- AAC-CPP-022-025: TUI Enhancements (markers, navigation, help, export) ✓
+- AAC-CPP-026: Integration Test Suite ✓
+- AAC-CPP-029: Verbose Output Mode ✓
 - AAC-CPP-030: Enhanced Lossless Verification Tests ✓
 
 **Remaining for Future Work:**
-- AAC-CPP-009: Spectral Analysis (partial)
+- AAC-CPP-009: Spectral Analysis Features
 - AAC-CPP-010: Chromagram Computation
 - AAC-CPP-011: Onset Detection
-- AAC-CPP-015: Noise Floor Estimation
-- AAC-CPP-022-025: TUI Enhancement (keyboard editing, export)
-- AAC-CPP-026-027: Integration Tests & Benchmarks
-- AAC-CPP-029: Verbose Output Mode
+- AAC-CPP-015: Noise Floor Estimation (already implemented, needs documentation)
+- AAC-CPP-027: Performance Benchmarks
