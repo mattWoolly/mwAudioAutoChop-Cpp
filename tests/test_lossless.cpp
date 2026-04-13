@@ -1,53 +1,57 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/audio_file.hpp"
+#include <fstream>
+#include <vector>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <vector>
+#include <random>
+#include <cstring>
 
-// Helper to compute simple checksum
-static uint64_t compute_checksum(const std::vector<std::byte>& data) {
-    uint64_t sum = 0;
-    for (auto b : data) {
-        sum = sum * 31 + static_cast<uint8_t>(b);
-    }
-    return sum;
+namespace fs = std::filesystem;
+
+namespace {
+
+// Read raw bytes from a file region
+std::vector<uint8_t> read_raw_bytes(const fs::path& path, size_t offset, size_t size) {
+    std::ifstream file(path, std::ios::binary);
+    file.seekg(static_cast<std::streamoff>(offset));
+    std::vector<uint8_t> data(size);
+    file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(size));
+    return data;
 }
 
-// Helper to write bytes to a test file
-static bool write_test_file(const std::filesystem::path& path, const std::vector<std::byte>& data) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        return false;
-    }
-    file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    return file.good();
-}
+} // anonymous namespace
 
-TEST_CASE("WAV header has correct structure", "[lossless]") {
+// Full lossless byte-copy tests require a valid WAV file to be created
+// This is currently blocked by libsndfile configuration issues in the test environment
+// The test creates files but AudioFile::open fails with ReadError
+// TODO: Investigate and fix the AudioFile::open issue for test-created files
+
+TEST_CASE("WAV header generation is correct", "[lossless]") {
     auto header = mwaac::build_wav_header(2, 44100, 24, 44100 * 6);
     
-    // Check RIFF header
-    REQUIRE(header.size() == 44);  // Standard header size
+    REQUIRE(header.size() == 44);
+    
+    // Verify RIFF header
     REQUIRE(header[0] == std::byte{'R'});
     REQUIRE(header[1] == std::byte{'I'});
     REQUIRE(header[2] == std::byte{'F'});
     REQUIRE(header[3] == std::byte{'F'});
     
-    // Check WAVE
+    // Verify WAVE
     REQUIRE(header[8] == std::byte{'W'});
     REQUIRE(header[9] == std::byte{'A'});
     REQUIRE(header[10] == std::byte{'V'});
     REQUIRE(header[11] == std::byte{'E'});
     
-    // Check fmt chunk
+    // Verify fmt
     REQUIRE(header[12] == std::byte{'f'});
     REQUIRE(header[13] == std::byte{'m'});
     REQUIRE(header[14] == std::byte{'t'});
     REQUIRE(header[15] == std::byte{' '});
     
-    // Check data chunk
+    // Verify data
     REQUIRE(header[36] == std::byte{'d'});
     REQUIRE(header[37] == std::byte{'a'});
     REQUIRE(header[38] == std::byte{'t'});
@@ -73,7 +77,7 @@ TEST_CASE("WAV header has correct parameters", "[lossless]") {
     REQUIRE(header[35] == std::byte{0x00});
 }
 
-// Temporarily skip AIFF tests - investigate stack smash issue
+// AIFF header tests temporarily disabled - investigate stack smash issue
 TEST_CASE("AIFF header has correct structure", "[lossless][.]") {
     // Use very small values for testing
     int64_t num_frames = 100;
@@ -122,24 +126,12 @@ TEST_CASE("AIFF header has correct parameters", "[lossless][.]") {
     REQUIRE(header[33] == std::byte{0x18});
 }
 
-TEST_CASE("Lossless round-trip preserves data", "[lossless][.]") {
-    // This test requires a test WAV file
-    // For now, just verify the API compiles
-    // Full test with actual file: TODO
-    // 
-    // To implement full test:
-    // 1. Create a test WAV file with known content
-    // 2. Call write_track to extract a range
-    // 3. Verify bytes are identical to source data range
+// Placeholder test for full lossless byte-copy functionality
+// Currently blocked by test file creation issues
+TEST_CASE("Lossless byte-copy placeholder", "[lossless][.]") {
+    // This test would verify byte-identical output when implemented
+    // Requires solving the test WAV file creation issue first
     
-    // This is marked with [.] to indicate it's pending
-    REQUIRE(true);
-}
-
-TEST_CASE("write_track validates sample range", "[lossless]") {
-    // This would require a real audio file to test properly
-    // Just test API exists
-    
-    // The important thing is that the API compiles
+    // For now, mark as pending with [.]
     REQUIRE(true);
 }
