@@ -10,12 +10,52 @@ namespace mwaac {
 
 namespace {
 
-// Natural sort helper
+// Natural sort helper - compares numeric parts as integers
+bool natural_less(const std::string& a, const std::string& b) {
+    auto get_parts = [](const std::string& s) -> std::vector<std::pair<bool, std::string>> {
+        std::vector<std::pair<bool, std::string>> parts;
+        std::string current;
+        bool is_digit = false;
+        
+        for (char c : s) {
+            bool digit = std::isdigit(static_cast<unsigned char>(c));
+            if (!current.empty() && digit != is_digit) {
+                parts.push_back({is_digit, current});
+                current.clear();
+            }
+            current += c;
+            is_digit = digit;
+        }
+        if (!current.empty()) {
+            parts.push_back({is_digit, current});
+        }
+        return parts;
+    };
+    
+    auto a_parts = get_parts(a);
+    auto b_parts = get_parts(b);
+    
+    for (size_t i = 0; i < std::min(a_parts.size(), b_parts.size()); ++i) {
+        if (a_parts[i].first && b_parts[i].first) {
+            // Both numeric - compare as numbers
+            long long num_a = std::stoll(a_parts[i].second);
+            long long num_b = std::stoll(b_parts[i].second);
+            if (num_a != num_b) return num_a < num_b;
+        } else {
+            // At least one is text - compare as strings
+            if (a_parts[i].second != b_parts[i].second) {
+                return a_parts[i].second < b_parts[i].second;
+            }
+        }
+    }
+    return a_parts.size() < b_parts.size();
+}
+
 std::vector<std::filesystem::path> natural_sort(
     std::vector<std::filesystem::path> paths) 
 {
     std::sort(paths.begin(), paths.end(), [](const auto& a, const auto& b) {
-        return a.filename().string() < b.filename().string();
+        return natural_less(a.filename().string(), b.filename().string());
     });
     return paths;
 }
@@ -81,23 +121,44 @@ std::vector<std::pair<int64_t, double>> align_per_track(
 {
     std::vector<std::pair<int64_t, double>> offsets;
     
-    int64_t expected_pos = music_start_sample;
+    // Start searching from music_start_sample for first track
+    int64_t search_start = music_start_sample;
     
-    for (const auto& track : tracks) {
-        // Cross-correlate track against vinyl
-        auto result = cross_correlate(track.audio.samples, vinyl.samples);
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        const auto& track = tracks[i];
         
-        // Convert lag to absolute position
-        int64_t vinyl_start = result.lag;
-        if (vinyl_start < 0) vinyl_start = 0;
-        if (vinyl_start >= static_cast<int64_t>(vinyl.samples.size())) {
-            vinyl_start = vinyl.samples.size() - 1;
+        // Preprocess samples for better correlation
+        auto ref_processed = preprocess_for_correlation(track.audio.samples, track.audio.sample_rate);
+        
+        // Create vinyl slice starting from expected position
+        // For first track, start from music_start
+        // For subsequent tracks, start from previous track's end
+        size_t vinyl_start_idx = std::max(int64_t{0}, search_start);
+        
+        if (vinyl_start_idx >= vinyl.samples.size()) {
+            offsets.push_back({static_cast<int64_t>(vinyl.samples.size() - 1), 0.0});
+            continue;
         }
         
-        offsets.push_back({vinyl_start, result.peak_value});
+        std::vector<float> vinyl_slice(
+            vinyl.samples.begin() + vinyl_start_idx,
+            vinyl.samples.end()
+        );
+        auto vinyl_processed = preprocess_for_correlation(vinyl_slice, vinyl.sample_rate);
         
-        // Update expected position for next track
-        expected_pos = vinyl_start + track.duration_samples;
+        auto result = cross_correlate(ref_processed, vinyl_processed);
+        
+        // Convert relative position to absolute
+        int64_t vinyl_pos = vinyl_start_idx + result.lag;
+        if (vinyl_pos < 0) vinyl_pos = 0;
+        if (vinyl_pos >= static_cast<int64_t>(vinyl.samples.size())) {
+            vinyl_pos = static_cast<int64_t>(vinyl.samples.size()) - 1;
+        }
+        
+        offsets.push_back({vinyl_pos, result.peak_value});
+        
+        // Update search start for next track
+        search_start = vinyl_pos + track.duration_samples;
     }
     
     return offsets;
