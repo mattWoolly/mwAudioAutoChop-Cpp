@@ -55,7 +55,7 @@ float score_gap(
     std::span<const float> samples,
     size_t start_sample,
     size_t end_sample,
-    int sample_rate,
+    [[maybe_unused]] int sample_rate,
     float noise_floor_rms)
 {
     if (end_sample <= start_sample || samples.empty()) {
