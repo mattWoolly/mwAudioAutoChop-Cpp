@@ -100,8 +100,13 @@ set(CORE_SOURCES
     src/core/music_detection.cpp
 )
 
+# Reference mode sources
+set(REFERENCE_SOURCES
+    src/modes/reference_mode.cpp
+)
+
 # Core library
-add_library(mwaac_core STATIC ${CORE_SOURCES})
+add_library(mwaac_core STATIC ${CORE_SOURCES} ${REFERENCE_SOURCES})
 target_include_directories(mwaac_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
@@ -175,6 +180,10 @@ add_test(NAME test_lossless COMMAND test_lossless)
 add_executable(test_analysis tests/test_analysis.cpp)
 target_link_libraries(test_analysis PRIVATE Catch2::Catch2WithMain mwaac_core)
 add_test(NAME test_analysis COMMAND test_analysis)
+
+add_executable(test_reference_mode tests/test_reference_mode.cpp)
+target_link_libraries(test_reference_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
+add_test(NAME test_reference_mode COMMAND test_reference_mode)
 
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
