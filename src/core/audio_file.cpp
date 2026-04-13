@@ -125,14 +125,21 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
         return Expected<AudioFile, AudioError>(AudioError::ReadError);
     }
 
-    // Read first 64KB for header parsing
+    // Read first 64KB for header parsing (or entire file if smaller)
     constexpr size_t HEADER_SIZE = 65536;
     std::vector<uint8_t> header(HEADER_SIZE);
     file.read(reinterpret_cast<char*>(header.data()), HEADER_SIZE);
-    if (!file) {
+    
+    // Check for actual read errors (badbit), not just EOF (failbit)
+    if (file.bad()) {
         return Expected<AudioFile, AudioError>(AudioError::ReadError);
     }
     header.resize(static_cast<size_t>(file.gcount()));
+    
+    // Minimum valid audio file size
+    if (header.size() < 44) {
+        return Expected<AudioFile, AudioError>(AudioError::InvalidFormat);
+    }
 
     // Detect format
     AudioFormat format = detect_format(header);
@@ -259,11 +266,14 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
         // Check for fmt chunk
         if (compare_bytes(data, chunk_offset, magic::fmt_, 4)) {
             if (chunk_size >= 16) {
-                uint16_t audio_format = read_le_u16(data, chunk_offset + 8);
-                info.channels = read_le_u16(data, chunk_offset + 10);
-                info.sample_rate = static_cast<int>(read_le_u32(data, chunk_offset + 12));
-                // bytes_per_frame = read_le_u16(data, chunk_offset + 14);
-                info.bits_per_sample = read_le_u16(data, chunk_offset + 16);
+                // fmt chunk data starts at chunk_offset + 8 (after ID and size)
+                size_t fmt_data = chunk_offset + 8;
+                uint16_t audio_format = read_le_u16(data, fmt_data + 0);
+                info.channels = read_le_u16(data, fmt_data + 2);
+                info.sample_rate = static_cast<int>(read_le_u32(data, fmt_data + 4));
+                // byte_rate at fmt_data + 8
+                // block_align at fmt_data + 12
+                info.bits_per_sample = read_le_u16(data, fmt_data + 14);
 
                 // Check for supported formats
                 if (audio_format == 1 ||    // PCM

@@ -194,7 +194,7 @@ target_link_libraries(test_music_detection PRIVATE Catch2::Catch2WithMain mwaac_
 add_test(NAME test_music_detection COMMAND test_music_detection)
 
 add_executable(test_lossless tests/test_lossless.cpp)
-target_link_libraries(test_lossless PRIVATE Catch2::Catch2WithMain mwaac_core)
+target_link_libraries(test_lossless PRIVATE Catch2::Catch2WithMain mwaac_core mwaac_sndfile)
 add_test(NAME test_lossless COMMAND test_lossless)
 
 add_executable(test_analysis tests/test_analysis.cpp)
