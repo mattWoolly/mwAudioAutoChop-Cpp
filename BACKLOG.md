@@ -290,7 +290,7 @@ Create core data structures:
 
 ### AAC-CPP-016: Blind Mode Pipeline
 **Priority:** P2 (Medium)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Large  
 **Dependencies:** AAC-CPP-015, AAC-CPP-011, AAC-CPP-005
 
@@ -599,7 +599,7 @@ The `-v/--verbose` CLI flag is parsed but not implemented. Add verbose output mo
 
 ### AAC-CPP-030: Enhanced Lossless Verification Tests
 **Priority:** P1 (High)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Dependencies:** AAC-CPP-005
 
 **Description:**
@@ -611,7 +611,7 @@ Current lossless tests verify header structure but don't verify actual byte-iden
 
 ## Implementation Progress Summary
 
-**Completed (12 PRs merged):**
+**Completed (14 PRs merged):**
 - AAC-CPP-001: Project Setup ✓
 - AAC-CPP-002: Dependencies ✓  
 - AAC-CPP-003: Core Data Structures ✓
@@ -622,14 +622,16 @@ Current lossless tests verify header structure but don't verify actual byte-iden
 - AAC-CPP-008: RMS Energy ✓
 - AAC-CPP-012: Music Start Detection ✓
 - AAC-CPP-013/014: Reference Mode Pipeline ✓
+- AAC-CPP-016: Blind Mode Pipeline ✓
 - AAC-CPP-017/018: CLI Commands ✓
 - AAC-CPP-020/021: TUI Waveform Display ✓
+- AAC-CPP-030: Enhanced Lossless Verification Tests ✓
 
 **Remaining for Future Work:**
 - AAC-CPP-009: Spectral Analysis (partial)
 - AAC-CPP-010: Chromagram Computation
 - AAC-CPP-011: Onset Detection
-- AAC-CPP-015: Noise Floor Estimation  
-- AAC-CPP-016: Blind Mode Pipeline
+- AAC-CPP-015: Noise Floor Estimation
 - AAC-CPP-022-025: TUI Enhancement (keyboard editing, export)
 - AAC-CPP-026-027: Integration Tests & Benchmarks
+- AAC-CPP-029: Verbose Output Mode
