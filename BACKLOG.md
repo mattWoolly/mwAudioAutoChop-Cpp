@@ -72,7 +72,7 @@ Create core data structures:
 
 ### AAC-CPP-004: WAV/AIFF Header Parsing
 **Priority:** P0 (Critical)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-003
 
@@ -91,7 +91,7 @@ Create core data structures:
 
 ### AAC-CPP-005: Lossless Track Export
 **Priority:** P0 (Critical)  
-**Status:** `[ ]`  
+**Status:** `[~]`  
 **Estimated Effort:** Medium  
 **Dependencies:** AAC-CPP-004
 
@@ -110,7 +110,7 @@ Create core data structures:
 
 ### AAC-CPP-006: Audio Loading for Analysis
 **Priority:** P1 (High)  
-**Status:** `[ ]`  
+**Status:** `[x]`  
 **Estimated Effort:** Small  
 **Dependencies:** AAC-CPP-002
 
