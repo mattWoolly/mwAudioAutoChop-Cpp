@@ -1,0 +1,42 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# Object files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Precompiled headers
+*.pch
+*.ipch
+
+# Compiler databases
+compile_commands.json
+*.compile_commands
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+*.cmake
+
+# Testing
+Testing/
+CTestTestfile.cmake
