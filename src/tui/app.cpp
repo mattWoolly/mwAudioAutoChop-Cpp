@@ -117,9 +117,10 @@ int run_tui(AppState& state) {
                 text("Keyboard Shortcuts") | bold | center,
                 vbox({
                     text("Navigation:"),
-                    text("  Tab/Shift+Tab  - Navigate between chop points"),
-                    text("  Up/Down       - Zoom in/out"),
-                    text("  Home/End     - Jump to start/end of file"),
+                    text("  Tab          - Next chop point"),
+                    text("  Shift+Tab/P  - Previous chop point"),
+                    text("  Up/Down      - Zoom in/out"),
+                    text("  Home/End     - Pan to start/end of file"),
                     text(""),
                     text("Marker Adjustment:"),
                     text("  +/=/]        - Move marker right 1 sample"),
@@ -157,17 +158,30 @@ int run_tui(AppState& state) {
         }
         
         // AAC-CPP-023: Keyboard Navigation
-        // Tab = Next marker
+        // Tab = Next marker, Shift+Tab = Previous marker
         if (event == Event::Tab) {
             if (!state.split_points.empty()) {
-                state.selected_marker = (state.selected_marker + 1) % state.split_points.size();
+                state.selected_marker = (state.selected_marker + 1) % static_cast<int>(state.split_points.size());
             }
             return true;
         }
-        // Ctrl+[ = Previous marker (alternative to Shift+Tab)
-        if (event == Event::Escape) {
-            // This won't trigger on simple escape, need tracking
-            return false;
+        // Shift+Tab = Previous marker (backtab)
+        if (event == Event::TabReverse) {
+            if (!state.split_points.empty()) {
+                state.selected_marker = state.selected_marker > 0 
+                    ? state.selected_marker - 1 
+                    : static_cast<int>(state.split_points.size()) - 1;
+            }
+            return true;
+        }
+        // Also support 'p' for previous marker (easier than Shift+Tab in some terminals)
+        if (event == Event::Character('p') || event == Event::Character('P')) {
+            if (!state.split_points.empty()) {
+                state.selected_marker = state.selected_marker > 0 
+                    ? state.selected_marker - 1 
+                    : static_cast<int>(state.split_points.size()) - 1;
+            }
+            return true;
         }
         
         // Marker fine adjustment
@@ -209,16 +223,20 @@ int run_tui(AppState& state) {
             return true;
         }
         
-        // Jump to start/end
+        // Jump to start/end (pan view, maintain zoom level)
         if (event == Event::Home) {
+            // Pan to start of file, maintain current zoom level
+            int64_t current_range = state.view_end - state.view_start;
             state.view_start = 0;
-            state.view_end = state.audio.samples.size();
+            state.view_end = std::min(current_range, static_cast<int64_t>(state.audio.samples.size()));
             return true;
         }
         if (event == Event::End) {
+            // Pan to end of file, maintain current zoom level
             int64_t total = state.audio.samples.size();
-            state.view_start = 0;
+            int64_t current_range = state.view_end - state.view_start;
             state.view_end = total;
+            state.view_start = std::max<int64_t>(0, total - current_range);
             return true;
         }
         
