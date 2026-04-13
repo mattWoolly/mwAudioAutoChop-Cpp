@@ -74,6 +74,18 @@ FetchContent_MakeAvailable(libsndfile ftxui catch2)
 # Source files
 # =============================================================================
 
+# Core library source files
+set(CORE_SOURCES
+    src/core/drift_model.cpp
+)
+
+# Core library
+add_library(mwaac_core STATIC ${CORE_SOURCES})
+target_include_directories(mwaac_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_features(mwaac_core PUBLIC cxx_std_20)
+
 set(SOURCES
     src/main.cpp
 )
@@ -86,8 +98,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-# Link dependencies to main executable
+# Link core library and dependencies to main executable
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    mwaac_core
     SndFile::sndfile
     ftxui::component
     ftxui::dom
@@ -98,7 +111,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # =============================================================================
 
 add_executable(test_basic tests/test_basic.cpp)
-target_link_libraries(test_basic PRIVATE Catch2 Catch2WithMain)
+target_link_libraries(test_basic PRIVATE Catch2::Catch2WithMain)
 
 # Register tests with CTest
 add_test(NAME test_basic COMMAND test_basic)
