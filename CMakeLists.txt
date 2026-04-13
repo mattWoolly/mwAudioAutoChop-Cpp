@@ -33,12 +33,26 @@ enable_testing()
 
 include(FetchContent)
 
-# libsndfile - Audio file I/O
-FetchContent_Declare(
-    libsndfile
-    GIT_REPOSITORY https://github.com/libsndfile/libsndfile
-    GIT_TAG        1.2.2
-)
+# Try system libsndfile first, fallback to fetching
+find_package(PkgConfig QUIET)
+pkg_check_modules(PkgConfig_sndfile QUIET sndfile)
+if(PkgConfig_sndfile_FOUND)
+    add_library(sndfile INTERFACE)
+    find_library(SNDFILE_LIBRARY NAMES sndfile)
+    if(SNDFILE_LIBRARY)
+        message(STATUS "Using system libsndfile")
+        add_library(SndFile::sndfile ALIAS sndfile)
+    endif()
+endif()
+
+if(NOT TARGET SndFile::sndfile)
+    # libsndfile - Audio file I/O via FetchContent
+    FetchContent_Declare(
+        libsndfile
+        GIT_REPOSITORY https://github.com/libsndfile/libsndfile
+        GIT_TAG        1.2.2
+    )
+endif()
 
 # FFTW3 - FFT operations
 # TODO: FFTW3 is complex to build from source. Prefer system install.
@@ -67,8 +81,12 @@ FetchContent_Declare(
 # Disable tests for dependency projects to avoid running their test suite
 set(BUILD_TESTING OFF CACHE BOOL "Disable dependency tests")
 set(FTXUI_BUILD_TESTS OFF CACHE BOOL "Disable FTXUI tests")
-set(libsndfile_BUILD_TESTS OFF CACHE BOOL "Disable libsndfile tests")
-FetchContent_MakeAvailable(libsndfile ftxui catch2)
+if(NOT PkgConfig_sndfile_FOUND)
+    set(libsndfile_BUILD_TESTS OFF CACHE BOOL "Disable libsndfile tests")
+    FetchContent_MakeAvailable(libsndfile ftxui catch2)
+else()
+    FetchContent_MakeAvailable(ftxui catch2)
+endif()
 
 # =============================================================================
 # Source files
@@ -77,6 +95,7 @@ FetchContent_MakeAvailable(libsndfile ftxui catch2)
 # Core library source files
 set(CORE_SOURCES
     src/core/drift_model.cpp
+    src/core/audio_buffer.cpp
 )
 
 # Core library
@@ -85,6 +104,7 @@ target_include_directories(mwaac_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 target_compile_features(mwaac_core PUBLIC cxx_std_20)
+target_link_libraries(mwaac_core PUBLIC SndFile::sndfile)
 
 set(SOURCES
     src/main.cpp
@@ -115,6 +135,11 @@ target_link_libraries(test_basic PRIVATE Catch2::Catch2WithMain)
 
 # Register tests with CTest
 add_test(NAME test_basic COMMAND test_basic)
+
+add_executable(test_audio_buffer tests/test_audio_buffer.cpp)
+target_link_libraries(test_audio_buffer PRIVATE Catch2::Catch2WithMain mwaac_core)
+
+add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
 
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
