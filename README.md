@@ -6,9 +6,11 @@
 
 A high-performance C++ tool for automatically splitting continuous vinyl rips into individual tracks. Features both reference-based alignment and blind gap detection modes, with a full-screen terminal UI for visual editing.
 
+> **Lossless by design**: Output samples are byte-identical to the source. No re-encoding, no dithering, no quality loss. Your vinyl rips are too precious for anything less.
+
 ## Features
 
-- **Lossless Export**: Byte-identical output - no re-encoding, no quality loss
+- **Lossless Export**: Bit-perfect sample extraction - audio data is copied, never re-encoded
 - **Reference Mode**: Align vinyl rip to individual reference tracks (CD/digital versions)
 - **Blind Mode**: Detect track boundaries using gap/silence detection
 - **Interactive TUI**: Visual waveform display with keyboard-based chop point editing
@@ -109,9 +111,9 @@ Launch the visual editor:
 ### Reference Mode
 1. Loads vinyl rip and reference tracks
 2. Detects music start (skips lead-in groove noise)
-3. Cross-correlates each reference track against the vinyl
-4. Finds optimal alignment position with confidence scoring
-5. Exports tracks with byte-perfect boundaries
+3. Cross-correlates each reference track against the vinyl (using downsampled audio for speed, then refining at full resolution)
+4. Finds optimal alignment position with sample-accurate precision
+5. Exports tracks with byte-perfect sample data (no re-encoding)
 
 ### Blind Mode
 1. Computes RMS energy envelope
@@ -121,7 +123,17 @@ Launch the visual editor:
 5. Creates split points at gap boundaries
 
 ### Lossless Guarantee
-Output files contain the exact same sample bytes as the source - only the headers are regenerated. This is verified by the test suite comparing SHA-256 checksums of sample data regions.
+
+**Your vinyl rips are preserved exactly as recorded.** This tool guarantees byte-identical sample data between input and output:
+
+- **No re-encoding**: Sample data is copied directly, not decoded and re-encoded
+- **No dithering**: No processing, normalization, or bit-depth conversion
+- **No resampling**: Sample rate is preserved exactly
+- **Bit-perfect verification**: The test suite compares SHA-256 checksums of sample data regions to verify lossless operation
+
+The only difference between your source file and the output tracks is the WAV header (which contains the new file length). The actual audio samples are byte-for-byte identical to the corresponding region in your source file.
+
+This is critical for archival workflows where the vinyl rip represents an irreplaceable master recording.
 
 ## Project Structure
 
