@@ -290,19 +290,22 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
         else if (compare_bytes(data, chunk_offset, magic::data, 4)) {
             found_data = true;
             data_offset = static_cast<int64_t>(chunk_offset + 8);
-            if (is_rf64) {
-                rf64_data_size = chunk_size;
-            } else {
+            // For RF64, data chunk size is 0xFFFFFFFF placeholder - actual size comes from ds64
+            // For regular WAV, use the chunk size directly
+            if (!is_rf64) {
                 data_size = chunk_size;
             }
         }
         // Check for ds64 chunk (RF64)
         else if (compare_bytes(data, chunk_offset, magic::ds64, 4)) {
             found_ds64 = true;
-            // ds64 contains 64-bit size info
+            // ds64 chunk layout (after 8-byte header):
+            //   bytes 0-7:   RIFF size (64-bit)
+            //   bytes 8-15:  data size (64-bit) <-- this is what we need
+            //   bytes 16-23: sample count (64-bit)
+            // chunk_offset points to "ds64", so data size is at chunk_offset + 8 + 8 = +16
             if (chunk_size >= 24) {
-                rf64_data_size = read_le_u64(data, chunk_offset + 8);
-                // skip other ds64 fields: data size, sample count
+                rf64_data_size = read_le_u64(data, chunk_offset + 16);
             }
         }
 
@@ -720,7 +723,8 @@ write_track(
     int64_t bytes_to_read = num_frames * info.bytes_per_frame();
     
     // Read raw bytes from source
-    auto raw_result = source.read_raw_samples(start_sample * info.bytes_per_frame(), bytes_to_read);
+    int64_t byte_offset = start_sample * info.bytes_per_frame();
+    auto raw_result = source.read_raw_samples(byte_offset, bytes_to_read);
     if (!raw_result.has_value()) {
         return Expected<std::filesystem::path, AudioError>(AudioError::ReadError);
     }

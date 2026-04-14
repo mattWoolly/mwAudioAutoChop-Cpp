@@ -1,5 +1,6 @@
 #include "modes/reference_mode.hpp"
 #include "core/audio_buffer.hpp"
+#include "core/audio_file.hpp"
 #include "core/correlation.hpp"
 #include "core/music_detection.hpp"
 #include "core/verbose.hpp"
@@ -259,9 +260,15 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
     // Build split points
     std::vector<SplitPoint> split_points;
     
-    // Get native sample rate for output (assume same as analysis for now)
-    // TODO: Use AudioFile to get actual native rate
-    int native_sr = analysis_sr;  // Placeholder
+    // Get native sample rate from the actual vinyl file
+    int native_sr = analysis_sr;  // Fallback
+    auto audio_file = AudioFile::open(vinyl_path);
+    if (audio_file) {
+        native_sr = audio_file.value().info().sample_rate;
+        if (g_verbose) {
+            verbose("  Native sample rate: " + std::to_string(native_sr) + " Hz");
+        }
+    }
     
     for (size_t i = 0; i < offsets.size(); ++i) {
         SplitPoint sp;
