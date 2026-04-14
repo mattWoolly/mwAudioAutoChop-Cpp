@@ -110,4 +110,105 @@ std::vector<float> preprocess_for_correlation(
     return processed;
 }
 
+std::vector<float> downsample(std::span<const float> samples, int factor) {
+    if (factor <= 1 || samples.empty()) {
+        return std::vector<float>(samples.begin(), samples.end());
+    }
+    
+    size_t output_size = samples.size() / factor;
+    std::vector<float> result(output_size);
+    
+    for (size_t i = 0; i < output_size; ++i) {
+        float sum = 0.0f;
+        size_t start = i * factor;
+        for (int j = 0; j < factor && start + j < samples.size(); ++j) {
+            sum += samples[start + j];
+        }
+        result[i] = sum / factor;
+    }
+    
+    return result;
+}
+
+CorrelationResult cross_correlate_fast(
+    std::span<const float> reference,
+    std::span<const float> target,
+    int downsample_factor)
+{
+    if (reference.empty() || target.empty()) {
+        return {0, 0.0};
+    }
+    
+    // Stage 1: Coarse search with downsampled audio
+    auto ref_ds = downsample(reference, downsample_factor);
+    auto tgt_ds = downsample(target, downsample_factor);
+    
+    auto coarse_result = cross_correlate(ref_ds, tgt_ds);
+    
+    // Convert coarse lag back to full resolution
+    int64_t coarse_lag = coarse_result.lag * downsample_factor;
+    
+    // Stage 2: Refine around coarse position with full resolution
+    // Use a narrow window around the coarse result
+    int64_t refine_radius = downsample_factor * 2;  // Search +/- 2 coarse samples
+    int64_t refine_start = coarse_lag - refine_radius;
+    int64_t refine_end = coarse_lag + refine_radius;
+    
+    // Only search valid lags (where reference overlaps target)
+    int64_t min_valid_lag = 0;
+    int64_t max_valid_lag = static_cast<int64_t>(target.size()) - 1;
+    
+    refine_start = std::max(refine_start, min_valid_lag);
+    refine_end = std::min(refine_end, max_valid_lag);
+    
+    // Normalize reference once
+    float ref_mean = std::accumulate(reference.begin(), reference.end(), 0.0f) / reference.size();
+    std::vector<float> ref_norm(reference.size());
+    std::transform(reference.begin(), reference.end(), ref_norm.begin(),
+                  [ref_mean](float s) { return s - ref_mean; });
+    
+    float ref_energy = 0.0f;
+    for (auto v : ref_norm) ref_energy += v * v;
+    
+    double best_corr = -std::numeric_limits<double>::infinity();
+    int64_t best_lag = coarse_lag;
+    
+    // Fine search
+    for (int64_t lag = refine_start; lag <= refine_end; ++lag) {
+        double sum = 0.0;
+        float tgt_energy = 0.0f;
+        
+        int64_t tgt_start = lag;
+        int64_t overlap_len = std::min(
+            static_cast<int64_t>(ref_norm.size()),
+            static_cast<int64_t>(target.size()) - tgt_start
+        );
+        
+        if (overlap_len <= 0) continue;
+        
+        // Compute mean for this target segment
+        float tgt_mean = 0.0f;
+        for (int64_t i = 0; i < overlap_len; ++i) {
+            tgt_mean += target[tgt_start + i];
+        }
+        tgt_mean /= overlap_len;
+        
+        for (int64_t i = 0; i < overlap_len; ++i) {
+            float t = target[tgt_start + i] - tgt_mean;
+            sum += ref_norm[i] * t;
+            tgt_energy += t * t;
+        }
+        
+        float norm = std::sqrt(ref_energy * tgt_energy);
+        double corr = (norm > 1e-10f) ? (sum / norm) : 0.0;
+        
+        if (corr > best_corr) {
+            best_corr = corr;
+            best_lag = lag;
+        }
+    }
+    
+    return {best_lag, best_corr};
+}
+
 } // namespace mwaac

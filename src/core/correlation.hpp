@@ -34,4 +34,15 @@ void apply_highpass(std::vector<float>& samples, int sample_rate, float cutoff_h
 // RMS normalization
 void normalize_rms(std::vector<float>& samples);
 
+// Downsample audio by factor (averaging)
+std::vector<float> downsample(std::span<const float> samples, int factor);
+
+// Fast correlation using downsampling for coarse search, then refining
+// Much faster for large audio files
+CorrelationResult cross_correlate_fast(
+    std::span<const float> reference,
+    std::span<const float> target,
+    int downsample_factor = 100  // Default 100x reduction
+);
+
 } // namespace mwaac
