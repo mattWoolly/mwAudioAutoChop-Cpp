@@ -1,5 +1,9 @@
 # mwAudioAutoChop
 
+[![CI](https://github.com/mattWoolly/mwAudioAutoChop-C-/actions/workflows/ci.yml/badge.svg)](https://github.com/mattWoolly/mwAudioAutoChop-C-/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+
 A high-performance C++ tool for automatically splitting continuous vinyl rips into individual tracks. Features both reference-based alignment and blind gap detection modes, with a full-screen terminal UI for visual editing.
 
 ## Features
