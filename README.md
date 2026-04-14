@@ -1,1 +1,149 @@
-# mwAudioAutoChop-C-
+# mwAudioAutoChop
+
+A high-performance C++ tool for automatically splitting continuous vinyl rips into individual tracks. Features both reference-based alignment and blind gap detection modes, with a full-screen terminal UI for visual editing.
+
+## Features
+
+- **Lossless Export**: Byte-identical output - no re-encoding, no quality loss
+- **Reference Mode**: Align vinyl rip to individual reference tracks (CD/digital versions)
+- **Blind Mode**: Detect track boundaries using gap/silence detection
+- **Interactive TUI**: Visual waveform display with keyboard-based chop point editing
+- **Format Support**: WAV, AIFF, RF64 (via libsndfile)
+- **Cross-Correlation**: FFT-based alignment for accurate track positioning
+
+## Installation
+
+### Dependencies
+
+- CMake 3.16+
+- C++20 compiler (GCC 10+, Clang 12+)
+- libsndfile
+- FFTW3 (optional, for FFT acceleration)
+
+#### Ubuntu/Debian
+```bash
+sudo apt install build-essential cmake libsndfile1-dev libfftw3-dev
+```
+
+#### macOS
+```bash
+brew install cmake libsndfile fftw
+```
+
+### Build
+
+```bash
+git clone https://github.com/mattWoolly/mwAudioAutoChop-C-.git
+cd mwAudioAutoChop-C-
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+The binary will be at `build/bin/mwAudioAutoChop`.
+
+### Run Tests
+
+```bash
+ctest --test-dir build
+```
+
+## Usage
+
+### Reference Mode
+
+Split a vinyl rip using reference tracks for alignment:
+
+```bash
+./mwAudioAutoChop reference vinyl_rip.wav \
+    -r track1.wav track2.wav track3.wav \
+    -o output_dir/
+```
+
+Options:
+- `-r, --reference` - Reference track files (in order)
+- `-o, --output` - Output directory for split tracks
+- `-v, --verbose` - Show detailed alignment info
+
+### Blind Mode
+
+Split using automatic gap detection (no reference needed):
+
+```bash
+./mwAudioAutoChop blind vinyl_rip.wav -o output_dir/
+```
+
+Options:
+- `-o, --output` - Output directory for split tracks
+- `--min-gap` - Minimum gap duration in seconds (default: 2.0)
+- `--max-gap` - Maximum gap duration in seconds (default: 30.0)
+- `-v, --verbose` - Show detailed detection info
+
+### Interactive TUI
+
+Launch the visual editor:
+
+```bash
+./mwAudioAutoChop tui vinyl_rip.wav -o output_dir/
+```
+
+#### TUI Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Next chop point |
+| `Shift+Tab` / `P` | Previous chop point |
+| `+` / `=` / `]` | Move marker right (fine adjust) |
+| `-` / `_` / `[` | Move marker left (fine adjust) |
+| `Up` / `Down` | Zoom in/out |
+| `Home` / `End` | Pan to start/end |
+| `H` | Toggle help overlay |
+| `Enter` | Export all tracks |
+| `Q` | Quit |
+
+## How It Works
+
+### Reference Mode
+1. Loads vinyl rip and reference tracks
+2. Detects music start (skips lead-in groove noise)
+3. Cross-correlates each reference track against the vinyl
+4. Finds optimal alignment position with confidence scoring
+5. Exports tracks with byte-perfect boundaries
+
+### Blind Mode
+1. Computes RMS energy envelope
+2. Estimates noise floor from quietest regions
+3. Detects gaps where energy drops below threshold
+4. Scores gaps by depth and duration
+5. Creates split points at gap boundaries
+
+### Lossless Guarantee
+Output files contain the exact same sample bytes as the source - only the headers are regenerated. This is verified by the test suite comparing SHA-256 checksums of sample data regions.
+
+## Project Structure
+
+```
+src/
+├── main.cpp              # CLI entry point
+├── core/
+│   ├── audio_file.hpp    # Audio I/O, header parsing, lossless export
+│   ├── audio_buffer.hpp  # Audio loading for analysis
+│   ├── correlation.hpp   # FFT cross-correlation
+│   ├── analysis.hpp      # RMS, spectral features
+│   └── music_detection.hpp
+├── modes/
+│   ├── reference_mode.hpp  # Reference alignment pipeline
+│   └── blind_mode.hpp      # Gap detection pipeline
+└── tui/
+    ├── app.hpp           # FTXUI application
+    └── waveform.hpp      # Waveform rendering
+```
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## Acknowledgments
+
+- Original Python implementation: [audio-auto-chop](https://github.com/mattWoolly/audio-auto-chop)
+- Terminal UI: [FTXUI](https://github.com/ArthurSonzogni/FTXUI)
+- Audio I/O: [libsndfile](https://github.com/libsndfile/libsndfile)
