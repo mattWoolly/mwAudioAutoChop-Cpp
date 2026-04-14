@@ -38,16 +38,18 @@ jobs:
     
     - name: Configure CMake
       run: |
-        # Set Homebrew paths for Apple Silicon and Intel
-        export HOMEBREW_PREFIX="$(brew --prefix)"
-        export PKG_CONFIG_PATH="$HOMEBREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+        HOMEBREW_PREFIX=$(brew --prefix)
         cmake -B build -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_PREFIX_PATH="$HOMEBREW_PREFIX" \
-          -DCMAKE_LIBRARY_PATH="$HOMEBREW_PREFIX/lib" \
-          -DCMAKE_INCLUDE_PATH="$HOMEBREW_PREFIX/include"
+          -DSNDFILE_LIBRARY="$HOMEBREW_PREFIX/lib/libsndfile.dylib" \
+          -DSNDFILE_INCLUDE_DIR="$HOMEBREW_PREFIX/include"
     
     - name: Build
-      run: cmake --build build --parallel
+      run: |
+        export LIBRARY_PATH="$(brew --prefix)/lib:$LIBRARY_PATH"
+        cmake --build build --parallel
     
     - name: Run tests
-      run: ctest --test-dir build --output-on-failure
+      run: |
+        export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
+        ctest --test-dir build --output-on-failure
