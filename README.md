@@ -14,8 +14,9 @@ A high-performance C++ tool for automatically splitting continuous vinyl rips in
 - **Reference Mode**: Align vinyl rip to individual reference tracks (CD/digital versions)
 - **Blind Mode**: Detect track boundaries using gap/silence detection
 - **Interactive TUI**: Visual waveform display with keyboard-based chop point editing
-- **Format Support**: WAV, AIFF, RF64 (via libsndfile)
-- **Cross-Correlation**: FFT-based alignment for accurate track positioning
+- **Format Support**: WAV, AIFF, RF64 for large files >4GB (via libsndfile)
+- **High-Resolution Support**: Tested with 192kHz/24-bit vinyl rips
+- **Cross-Correlation**: Downsampled correlation with full-resolution refinement
 
 ## Installation
 
@@ -24,16 +25,15 @@ A high-performance C++ tool for automatically splitting continuous vinyl rips in
 - CMake 3.16+
 - C++20 compiler (GCC 10+, Clang 12+)
 - libsndfile
-- FFTW3 (optional, for FFT acceleration)
 
 #### Ubuntu/Debian
 ```bash
-sudo apt install build-essential cmake libsndfile1-dev libfftw3-dev
+sudo apt install build-essential cmake libsndfile1-dev
 ```
 
 #### macOS
 ```bash
-brew install cmake libsndfile fftw
+brew install cmake libsndfile
 ```
 
 ### Build
@@ -57,18 +57,19 @@ ctest --test-dir build
 
 ### Reference Mode
 
-Split a vinyl rip using reference tracks for alignment:
+Split a vinyl rip using reference tracks (e.g., CD rips or digital purchases) for alignment:
 
 ```bash
 ./mwAudioAutoChop reference vinyl_rip.wav \
-    -r track1.wav track2.wav track3.wav \
+    -r /path/to/reference_tracks/ \
     -o output_dir/
 ```
 
 Options:
-- `-r, --reference` - Reference track files (in order)
+- `-r, --reference` - Directory containing reference tracks (sorted alphabetically/numerically)
 - `-o, --output` - Output directory for split tracks
 - `-v, --verbose` - Show detailed alignment info
+- `--dry-run` - Preview splits without writing files
 
 ### Blind Mode
 
@@ -143,7 +144,7 @@ src/
 ├── core/
 │   ├── audio_file.hpp    # Audio I/O, header parsing, lossless export
 │   ├── audio_buffer.hpp  # Audio loading for analysis
-│   ├── correlation.hpp   # FFT cross-correlation
+│   ├── correlation.hpp   # Cross-correlation (downsampled + refined)
 │   ├── analysis.hpp      # RMS, spectral features
 │   └── music_detection.hpp
 ├── modes/
