@@ -20,4 +20,18 @@ float estimate_noise_floor(
     float window_seconds = 2.0f  // Window for searching quietest region
 );
 
+// Compute optimal threshold using Otsu's method
+// This finds the threshold that best separates "silence" from "music"
+// Returns the optimal RMS threshold value
+float compute_otsu_threshold(
+    std::span<const float> rms_values
+);
+
+// Compute threshold as a sensitivity value (0.0 to 1.0)
+// Returns sensitivity that would produce the Otsu threshold
+float compute_auto_sensitivity(
+    std::span<const float> rms_values,
+    float noise_floor
+);
+
 } // namespace mwaac

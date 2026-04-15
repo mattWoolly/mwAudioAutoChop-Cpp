@@ -11,10 +11,17 @@
 namespace mwaac {
 
 struct BlindModeConfig {
-    float min_gap_seconds{2.0f};   // Minimum gap to detect as boundary
+    float min_gap_seconds{1.0f};   // Minimum gap to detect as boundary
     float max_gap_seconds{30.0f};  // Maximum gap (longer = lead-in/out)
-    float confidence_threshold{0.6f};
-    int analysis_sr{44100};
+    float confidence_threshold{0.3f}; // Minimum confidence to accept gap
+    int analysis_sr{22050};        // Analysis sample rate
+    
+    // Sensitivity control: -1 = auto (Otsu's method), 0.0-1.0 = manual
+    // Higher sensitivity = detect shallower gaps
+    float sensitivity{-1.0f};
+    
+    // Expected track count: -1 = auto-detect, >0 = select best N-1 gaps
+    int expected_tracks{-1};
 };
 
 enum class BlindError {

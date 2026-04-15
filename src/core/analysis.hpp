@@ -44,4 +44,16 @@ std::vector<float> compute_zero_crossing_rate(
     int hop_length = 512
 );
 
+// Find where trailing silence begins in a sample range
+// Returns the sample position where audio content ends (before silence)
+// threshold: RMS level below which is considered silence (-1 = auto-detect)
+// buffer_seconds: how much silence to keep after audio ends
+// Returns end_sample if no significant silence found
+int64_t find_trailing_silence_start(
+    std::span<const float> samples,
+    int sample_rate,
+    float threshold = -1.0f,
+    float buffer_seconds = 0.3f
+);
+
 } // namespace mwaac

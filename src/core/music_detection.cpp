@@ -79,4 +79,85 @@ int64_t detect_music_start(
     return 0;  // No sustained music found
 }
 
+float compute_otsu_threshold(std::span<const float> rms_values) {
+    if (rms_values.empty()) return 0.0f;
+    
+    // Find min and max for histogram range
+    float min_val = *std::min_element(rms_values.begin(), rms_values.end());
+    float max_val = *std::max_element(rms_values.begin(), rms_values.end());
+    
+    if (max_val - min_val < 1e-10f) return min_val;
+    
+    // Build histogram with 256 bins
+    constexpr int num_bins = 256;
+    std::vector<int> histogram(num_bins, 0);
+    float bin_width = (max_val - min_val) / num_bins;
+    
+    for (float val : rms_values) {
+        int bin = static_cast<int>((val - min_val) / bin_width);
+        bin = std::clamp(bin, 0, num_bins - 1);
+        histogram[bin]++;
+    }
+    
+    // Compute total mean
+    float total = static_cast<float>(rms_values.size());
+    float sum = 0.0f;
+    for (int i = 0; i < num_bins; ++i) {
+        sum += i * histogram[i];
+    }
+    
+    // Otsu's method: find threshold that maximizes between-class variance
+    float sum_b = 0.0f;
+    float w_b = 0.0f;
+    float max_variance = 0.0f;
+    int best_threshold = 0;
+    
+    for (int t = 0; t < num_bins; ++t) {
+        w_b += histogram[t];  // Weight of background
+        if (w_b == 0) continue;
+        
+        float w_f = total - w_b;  // Weight of foreground
+        if (w_f == 0) break;
+        
+        sum_b += t * histogram[t];
+        
+        float mean_b = sum_b / w_b;           // Mean of background
+        float mean_f = (sum - sum_b) / w_f;   // Mean of foreground
+        
+        // Between-class variance
+        float variance = w_b * w_f * (mean_b - mean_f) * (mean_b - mean_f);
+        
+        if (variance > max_variance) {
+            max_variance = variance;
+            best_threshold = t;
+        }
+    }
+    
+    // Convert bin index back to RMS value
+    return min_val + (best_threshold + 0.5f) * bin_width;
+}
+
+float compute_auto_sensitivity(
+    std::span<const float> rms_values,
+    float noise_floor)
+{
+    if (rms_values.empty() || noise_floor < 1e-10f) return 0.5f;
+    
+    // Compute Otsu threshold
+    float otsu_threshold = compute_otsu_threshold(rms_values);
+    
+    // Convert threshold to sensitivity
+    // threshold = noise_floor * multiplier
+    // multiplier = max_mult - (max_mult - min_mult) * sensitivity
+    // sensitivity = (max_mult - multiplier) / (max_mult - min_mult)
+    
+    float multiplier = otsu_threshold / noise_floor;
+    
+    constexpr float min_mult = 1.5f;
+    constexpr float max_mult = 10.0f;
+    
+    float sensitivity = (max_mult - multiplier) / (max_mult - min_mult);
+    return std::clamp(sensitivity, 0.0f, 1.0f);
+}
+
 } // namespace mwaac

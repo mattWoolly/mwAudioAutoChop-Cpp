@@ -1,12 +1,14 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <span>
 #include <filesystem>
 #include <iomanip>
 #include "modes/reference_mode.hpp"
 #include "modes/blind_mode.hpp"
 #include "core/audio_file.hpp"
 #include "core/audio_buffer.hpp"
+#include "core/analysis.hpp"
 #include "core/verbose.hpp"
 #include "tui/app.hpp"
 
@@ -27,11 +29,18 @@ void print_help() {
               << "Reference Options:\n"
               << "  -r, --reference <path>   Reference tracks directory (required)\n"
               << "  -o, --output <path>      Output directory (required)\n"
+              << "  --trim-silence           Trim trailing silence from tracks\n"
+              << "  --trim-threshold <rms>   Silence threshold (default: auto from noise floor)\n"
+              << "  --trim-buffer <seconds>  Keep this much silence for fade-out (default: 0.3)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
               << "\n"
               << "Blind Options:\n"
               << "  -o, --output <path>      Output directory (required)\n"
+              << "  -s, --sensitivity <0-1>  Gap detection sensitivity (default: auto)\n"
+              << "  -n, --tracks <N>         Expected number of tracks (optional)\n"
+              << "  --min-gap <seconds>      Minimum gap duration (default: 1.0)\n"
+              << "  --max-gap <seconds>      Maximum gap duration (default: 30.0)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
               << "\n"
@@ -63,7 +72,10 @@ int main(int argc, char* argv[]) {
         fs::path reference_path;
         fs::path output_dir;
         bool dry_run = false;
-        bool verbose = false;  // TODO: implement verbose output
+        bool verbose = false;
+        bool trim_silence = false;
+        float trim_threshold = -1.0f;  // -1 = auto from noise floor
+        float trim_buffer = 0.3f;      // seconds of silence to keep
         
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
@@ -76,6 +88,12 @@ int main(int argc, char* argv[]) {
                 dry_run = true;
             } else if (arg == "-v" || arg == "--verbose") {
                 verbose = true;
+            } else if (arg == "--trim-silence") {
+                trim_silence = true;
+            } else if (arg == "--trim-threshold" && i + 1 < argc) {
+                trim_threshold = std::stof(argv[++i]);
+            } else if (arg == "--trim-buffer" && i + 1 < argc) {
+                trim_buffer = std::stof(argv[++i]);
             }
         }
         
@@ -120,6 +138,59 @@ int main(int argc, char* argv[]) {
             } else {
                 sp.end_sample = total_frames - 1;
             }
+        }
+        
+        // Trim trailing silence if requested
+        if (trim_silence && audio_file.has_value()) {
+            std::cout << "Trimming trailing silence...\n";
+            
+            // Load audio at a lower sample rate for faster analysis
+            int analysis_sr = 22050;
+            auto audio_result = mwaac::load_audio_mono(vinyl_path, analysis_sr);
+            if (audio_result.ok()) {
+                auto& audio = audio_result.value();
+                double sr_ratio = static_cast<double>(native_sr) / analysis_sr;
+                
+                for (size_t i = 0; i < analysis.split_points.size(); ++i) {
+                    auto& sp = analysis.split_points[i];
+                    
+                    // Convert sample positions to analysis rate
+                    int64_t start_analysis = static_cast<int64_t>(sp.start_sample / sr_ratio);
+                    int64_t end_analysis = static_cast<int64_t>(sp.end_sample / sr_ratio);
+                    
+                    // Clamp to valid range
+                    start_analysis = std::max<int64_t>(0, start_analysis);
+                    end_analysis = std::min<int64_t>(static_cast<int64_t>(audio.samples.size()) - 1, end_analysis);
+                    
+                    if (end_analysis > start_analysis) {
+                        // Extract track samples
+                        std::span<const float> track_samples(
+                            audio.samples.data() + start_analysis,
+                            end_analysis - start_analysis + 1
+                        );
+                        
+                        // Find where trailing silence starts
+                        int64_t trim_pos = mwaac::find_trailing_silence_start(
+                            track_samples, analysis_sr, trim_threshold, trim_buffer
+                        );
+                        
+                        // Convert back to native rate and update end_sample
+                        int64_t new_end = sp.start_sample + static_cast<int64_t>(trim_pos * sr_ratio);
+                        
+                        // Only trim if we found significant silence (at least 1 second saved)
+                        int64_t saved_samples = sp.end_sample - new_end;
+                        if (saved_samples > native_sr) {  // More than 1 second
+                            if (verbose) {
+                                double saved_sec = static_cast<double>(saved_samples) / native_sr;
+                                std::cout << "  Track " << (i + 1) << ": trimmed " 
+                                          << std::fixed << std::setprecision(1) << saved_sec << "s\n";
+                            }
+                            sp.end_sample = new_end;
+                        }
+                    }
+                }
+            }
+            std::cout << "\n";
         }
         
         // Print track info
@@ -182,6 +253,7 @@ int main(int argc, char* argv[]) {
         fs::path output_dir;
         bool dry_run = false;
         bool verbose = false;
+        mwaac::BlindModeConfig config;
         
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
@@ -192,6 +264,22 @@ int main(int argc, char* argv[]) {
                 dry_run = true;
             } else if (arg == "-v" || arg == "--verbose") {
                 verbose = true;
+            } else if ((arg == "-s" || arg == "--sensitivity") && i + 1 < argc) {
+                config.sensitivity = std::stof(argv[++i]);
+                if (config.sensitivity < 0.0f || config.sensitivity > 1.0f) {
+                    std::cerr << "Error: sensitivity must be between 0.0 and 1.0\n";
+                    return 1;
+                }
+            } else if ((arg == "-n" || arg == "--tracks") && i + 1 < argc) {
+                config.expected_tracks = std::stoi(argv[++i]);
+                if (config.expected_tracks < 1) {
+                    std::cerr << "Error: track count must be at least 1\n";
+                    return 1;
+                }
+            } else if (arg == "--min-gap" && i + 1 < argc) {
+                config.min_gap_seconds = std::stof(argv[++i]);
+            } else if (arg == "--max-gap" && i + 1 < argc) {
+                config.max_gap_seconds = std::stof(argv[++i]);
             }
         }
         
@@ -209,7 +297,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Analyzing vinyl (blind mode): " << vinyl_path << "\n\n";
         
         // Run analysis
-        auto result = mwaac::analyze_blind_mode(vinyl_path);
+        auto result = mwaac::analyze_blind_mode(vinyl_path, config);
         if (!result) {
             std::cerr << "Error: Analysis failed: ";
             switch (result.error()) {

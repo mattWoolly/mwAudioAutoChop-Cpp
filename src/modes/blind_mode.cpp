@@ -54,11 +54,56 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
     return gaps;
 }
 
+float compute_edge_sharpness(
+    std::span<const float> samples,
+    size_t boundary_sample,
+    [[maybe_unused]] int sample_rate,
+    size_t window_samples)
+{
+    // Measure how abruptly the signal level changes at the boundary
+    // Returns 0-1, where 1 = very sharp transition
+    
+    if (samples.empty() || boundary_sample >= samples.size()) {
+        return 0.0f;
+    }
+    
+    size_t before_start = (boundary_sample > window_samples) ? 
+                          (boundary_sample - window_samples) : 0;
+    size_t after_end = std::min(boundary_sample + window_samples, samples.size());
+    
+    // RMS before boundary
+    float sum_sq_before = 0.0f;
+    size_t count_before = boundary_sample - before_start;
+    for (size_t i = before_start; i < boundary_sample && i < samples.size(); ++i) {
+        sum_sq_before += samples[i] * samples[i];
+    }
+    float rms_before = (count_before > 0) ? std::sqrt(sum_sq_before / count_before) : 0.0f;
+    
+    // RMS after boundary
+    float sum_sq_after = 0.0f;
+    size_t count_after = after_end - boundary_sample;
+    for (size_t i = boundary_sample; i < after_end && i < samples.size(); ++i) {
+        sum_sq_after += samples[i] * samples[i];
+    }
+    float rms_after = (count_after > 0) ? std::sqrt(sum_sq_after / count_after) : 0.0f;
+    
+    // Sharpness is based on ratio difference
+    // High sharpness = one side is much louder than the other
+    float max_rms = std::max(rms_before, rms_after);
+    float min_rms = std::min(rms_before, rms_after);
+    
+    if (max_rms < 1e-10f) return 0.0f;
+    
+    // Ratio of difference to max
+    float sharpness = (max_rms - min_rms) / max_rms;
+    return std::clamp(sharpness, 0.0f, 1.0f);
+}
+
 float score_gap(
     std::span<const float> samples,
     size_t start_sample,
     size_t end_sample,
-    [[maybe_unused]] int sample_rate,
+    int sample_rate,
     float noise_floor_rms)
 {
     if (end_sample <= start_sample || samples.empty()) {
@@ -80,16 +125,38 @@ float score_gap(
     }
     float gap_rms = std::sqrt(sum_sq / gap_samples.size());
     
-    // Energy score: how far below noise floor (higher = better)
+    // 1. Energy score: how far below noise floor (higher = better)
     float energy_score = 0.0f;
     if (noise_floor_rms > 1e-10f) {
         float ratio = gap_rms / noise_floor_rms;
         energy_score = std::max(0.0f, 1.0f - ratio);
     }
     
-    // Confidence is primarily energy-based for now
-    // Could add spectral flatness later
-    return std::clamp(energy_score, 0.0f, 1.0f);
+    // 2. Duration score: longer gaps are more likely to be real track boundaries
+    // Peaks at ~5s gap, tails off for very short or very long gaps
+    float gap_duration_sec = static_cast<float>(end_sample - start_sample) / sample_rate;
+    float ideal_gap = 5.0f;  // 5 seconds is a typical inter-track gap
+    float duration_score;
+    if (gap_duration_sec < ideal_gap) {
+        // Short gaps: score increases with duration
+        duration_score = gap_duration_sec / ideal_gap;
+    } else {
+        // Long gaps: slight penalty but still high
+        duration_score = 1.0f - 0.1f * std::min((gap_duration_sec - ideal_gap) / 20.0f, 0.5f);
+    }
+    duration_score = std::clamp(duration_score, 0.0f, 1.0f);
+    
+    // 3. Edge sharpness: sharp transitions are more likely to be track boundaries
+    size_t edge_window = static_cast<size_t>(0.5f * sample_rate);  // 500ms window
+    float start_sharpness = compute_edge_sharpness(samples, start_sample, sample_rate, edge_window);
+    float end_sharpness = compute_edge_sharpness(samples, end_sample, sample_rate, edge_window);
+    float edge_score = (start_sharpness + end_sharpness) / 2.0f;
+    
+    // Combined score with weights
+    // Energy is most important, then duration, then edge sharpness
+    float combined = 0.5f * energy_score + 0.3f * duration_score + 0.2f * edge_score;
+    
+    return std::clamp(combined, 0.0f, 1.0f);
 }
 
 Expected<AnalysisResult, BlindError> analyze_blind_mode(
@@ -98,7 +165,25 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
 {
     VerboseTimer timer("blind mode analysis");
     
-    // Load audio
+    // Get native sample rate for conversion
+    auto audio_file = AudioFile::open(vinyl_path);
+    if (!audio_file.has_value()) {
+        verbose("ERROR: Failed to open audio file for info");
+        return BlindError::LoadFailed;
+    }
+    int native_sr = audio_file.value().info().sample_rate;
+    int64_t native_frames = audio_file.value().info().frames;
+    
+    // Calculate conversion ratio from analysis rate to native rate
+    double sr_ratio = static_cast<double>(native_sr) / config.analysis_sr;
+    
+    if (g_verbose) {
+        verbose("  Native sample rate: " + std::to_string(native_sr) + " Hz");
+        verbose("  Analysis sample rate: " + std::to_string(config.analysis_sr) + " Hz");
+        verbose("  Conversion ratio: " + std::to_string(sr_ratio));
+    }
+    
+    // Load audio at analysis sample rate
     verbose("Loading audio...");
     auto load_result = load_audio_mono(vinyl_path, config.analysis_sr);
     if (!load_result.ok()) {
@@ -133,21 +218,60 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
     
-    // Gap threshold: just above noise floor (6 dB)
-    float threshold = noise_floor * 2.0f;
+    // Calculate threshold based on sensitivity
+    // sensitivity = -1: auto (Otsu's method)
+    // sensitivity = 0.0: very low sensitivity (only deep gaps) -> threshold = noise_floor * 10
+    // sensitivity = 0.5: moderate -> threshold = noise_floor * 4
+    // sensitivity = 1.0: very high sensitivity -> threshold = noise_floor * 1.5
+    float threshold;
+    float effective_sensitivity = config.sensitivity;
+    bool auto_sensitivity = (effective_sensitivity < 0);
+    
+    if (auto_sensitivity) {
+        // Use Otsu's method to find optimal threshold
+        effective_sensitivity = compute_auto_sensitivity(rms, noise_floor);
+        if (g_verbose) {
+            verbose("  Using Otsu's method for auto-threshold...");
+        }
+    }
+    
+    // Map sensitivity [0,1] to threshold multiplier [10, 1.5]
+    // Higher sensitivity = lower threshold multiplier = more gaps detected
+    float min_multiplier = 1.5f;  // Most sensitive
+    float max_multiplier = 10.0f; // Least sensitive
+    float multiplier = max_multiplier - (max_multiplier - min_multiplier) * effective_sensitivity;
+    threshold = noise_floor * multiplier;
     
     if (g_verbose) {
         std::ostringstream oss;
         oss << std::scientific << std::setprecision(2) << noise_floor;
         std::ostringstream thresh_oss;
         thresh_oss << std::scientific << std::setprecision(2) << threshold;
+        std::ostringstream mult_oss;
+        mult_oss << std::fixed << std::setprecision(1) << multiplier;
+        std::ostringstream sens_oss;
+        sens_oss << std::fixed << std::setprecision(2) << effective_sensitivity;
         verbose("  Noise floor RMS: " + oss.str());
-        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor)");
+        verbose("  Sensitivity: " + sens_oss.str() + (config.sensitivity < 0 ? " (auto)" : " (manual)"));
+        verbose("  Threshold multiplier: " + mult_oss.str() + "x noise floor");
+        verbose("  Gap threshold: " + thresh_oss.str());
     }
     
     // Find gaps
     verbose("Detecting gaps...");
-    auto gaps = detect_gaps(rms, threshold, hop_length, config.analysis_sr,
+    
+    // If expected_tracks is specified, use a more permissive threshold to find candidates
+    float search_threshold = threshold;
+    if (config.expected_tracks > 0) {
+        // Use a lower threshold to find more candidates when we know track count
+        search_threshold = noise_floor * 1.2f;  // Very sensitive for candidate detection
+        if (g_verbose) {
+            verbose("  Track count specified: " + std::to_string(config.expected_tracks));
+            verbose("  Using permissive threshold for candidate search");
+        }
+    }
+    
+    auto gaps = detect_gaps(rms, search_threshold, hop_length, config.analysis_sr,
                             config.min_gap_seconds, config.max_gap_seconds);
     
     if (g_verbose) {
@@ -161,32 +285,29 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         return BlindError::NoGapsFound;
     }
     
-    // Convert gaps to split points
-    // Each gap boundary marks the START of a new track
-    std::vector<SplitPoint> split_points;
+    // Score all gaps
+    struct ScoredGap {
+        std::pair<size_t, size_t> gap;
+        float confidence;
+        int64_t track_start;
+    };
+    std::vector<ScoredGap> scored_gaps;
     
-    // First track starts at 0
-    SplitPoint first_track;
-    first_track.start_sample = 0;
-    first_track.source = "blind";
-    first_track.confidence = 1.0;  // First track is certain
-    split_points.push_back(first_track);
-    
-    // Each gap end marks start of new track
     if (g_verbose) {
-        verbose_section("Gap Detection Details");
+        verbose_section("Gap Scoring");
     }
     
     for (const auto& gap : gaps) {
         int64_t track_start = static_cast<int64_t>(gap.second * hop_length);
         int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * hop_length);
         
-        // Score this gap
         float confidence = score_gap(audio.samples, 
                                      gap.first * hop_length,
                                      gap.second * hop_length,
                                      config.analysis_sr,
                                      noise_floor);
+        
+        scored_gaps.push_back({gap, confidence, track_start});
         
         if (g_verbose) {
             double gap_start_sec = static_cast<double>(gap.first * hop_length) / config.analysis_sr;
@@ -195,33 +316,126 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
             conf_oss << std::fixed << std::setprecision(3) << confidence;
             std::ostringstream dur_oss;
             dur_oss << std::fixed << std::setprecision(2) << gap_duration_sec;
-            verbose("  Gap " + std::to_string(split_points.size()) + ":");
-            verbose("    Frame range: " + std::to_string(gap.first) + " - " + std::to_string(gap.second));
-            verbose("    Duration: " + dur_oss.str() + "s");
-            verbose("    Confidence: " + conf_oss.str());
+            std::ostringstream start_oss;
+            start_oss << std::fixed << std::setprecision(2) << gap_start_sec;
+            verbose("  Gap at " + start_oss.str() + "s: duration=" + dur_oss.str() + "s, confidence=" + conf_oss.str());
+        }
+    }
+    
+    // Select gaps based on mode
+    std::vector<ScoredGap> selected_gaps;
+    
+    // Minimum track duration to avoid selecting gaps that create tiny segments
+    // For most albums, tracks are at least 90 seconds (1.5 minutes)
+    const float min_track_duration_sec = 90.0f;  // At least 1.5 minutes per track
+    const size_t min_track_samples = static_cast<size_t>(min_track_duration_sec * config.analysis_sr);
+    
+    if (config.expected_tracks > 0) {
+        // N-best selection with constraint: gaps must not create tracks shorter than min_track_duration
+        int gaps_needed = config.expected_tracks - 1;
+        
+        // Sort by confidence (descending)
+        std::sort(scored_gaps.begin(), scored_gaps.end(),
+                  [](const ScoredGap& a, const ScoredGap& b) {
+                      return a.confidence > b.confidence;
+                  });
+        
+        // Greedy selection: take highest confidence gaps that maintain minimum track length
+        for (const auto& candidate : scored_gaps) {
+            if (static_cast<int>(selected_gaps.size()) >= gaps_needed) break;
+            
+            // Check if adding this gap would create a track that's too short
+            // First, find where this gap would fit in the currently selected gaps
+            auto insert_pos = std::lower_bound(
+                selected_gaps.begin(), selected_gaps.end(), candidate,
+                [](const ScoredGap& a, const ScoredGap& b) {
+                    return a.track_start < b.track_start;
+                });
+            
+            // Check distance to previous track boundary
+            int64_t prev_boundary = 0;
+            if (insert_pos != selected_gaps.begin()) {
+                prev_boundary = std::prev(insert_pos)->track_start;
+            }
+            
+            // Check distance to next track boundary
+            int64_t next_boundary = static_cast<int64_t>(audio.samples.size());
+            if (insert_pos != selected_gaps.end()) {
+                next_boundary = insert_pos->track_start;
+            }
+            
+            // Would the track before this gap be too short?
+            bool prev_ok = (candidate.track_start - prev_boundary) >= static_cast<int64_t>(min_track_samples);
+            
+            // Would the track after this gap be too short?
+            bool next_ok = (next_boundary - candidate.track_start) >= static_cast<int64_t>(min_track_samples);
+            
+            if (prev_ok && next_ok) {
+                // Insert in sorted position
+                selected_gaps.insert(insert_pos, candidate);
+            } else if (g_verbose) {
+                double gap_start_sec = static_cast<double>(candidate.track_start) / config.analysis_sr;
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(2) << gap_start_sec;
+                verbose("  Skipped gap at " + oss.str() + "s (would create track < " + 
+                       std::to_string(static_cast<int>(min_track_duration_sec)) + "s)");
+            }
         }
         
-        if (confidence >= config.confidence_threshold) {
-            SplitPoint sp;
-            sp.start_sample = track_start;
-            sp.confidence = confidence;
-            sp.source = "blind";
-            sp.evidence["gap_start_frame"] = static_cast<double>(gap.first);
-            sp.evidence["gap_end_frame"] = static_cast<double>(gap.second);
-            split_points.push_back(sp);
+        if (g_verbose) {
+            verbose("  Selected " + std::to_string(selected_gaps.size()) + 
+                   " gaps for " + std::to_string(config.expected_tracks) + " tracks");
+            if (static_cast<int>(selected_gaps.size()) < gaps_needed) {
+                verbose("  WARNING: Could only find " + std::to_string(selected_gaps.size() + 1) + 
+                       " tracks with min duration " + std::to_string(static_cast<int>(min_track_duration_sec)) + "s");
+            }
         }
+    } else {
+        // Threshold-based selection
+        for (const auto& sg : scored_gaps) {
+            if (sg.confidence >= config.confidence_threshold) {
+                selected_gaps.push_back(sg);
+            }
+        }
+        
+        if (g_verbose) {
+            verbose("  Selected " + std::to_string(selected_gaps.size()) + 
+                   " gaps above confidence threshold " + std::to_string(config.confidence_threshold));
+        }
+    }
+    
+    // Convert to split points (converting from analysis samples to native samples)
+    std::vector<SplitPoint> split_points;
+    
+    // First track starts at 0
+    SplitPoint first_track;
+    first_track.start_sample = 0;
+    first_track.source = "blind";
+    first_track.confidence = 1.0;
+    split_points.push_back(first_track);
+    
+    for (const auto& sg : selected_gaps) {
+        SplitPoint sp;
+        // Convert from analysis sample rate to native sample rate
+        sp.start_sample = static_cast<int64_t>(sg.track_start * sr_ratio);
+        sp.confidence = sg.confidence;
+        sp.source = "blind";
+        sp.evidence["gap_start_frame"] = static_cast<double>(sg.gap.first);
+        sp.evidence["gap_end_frame"] = static_cast<double>(sg.gap.second);
+        split_points.push_back(sp);
     }
     
     if (g_verbose) {
-        verbose("  Valid gaps (above threshold): " + std::to_string(split_points.size() - 1));
+        verbose("  Total tracks: " + std::to_string(split_points.size()));
     }
     
-    // Set end samples
+    // Set end samples (in native sample rate)
     for (size_t i = 0; i < split_points.size(); ++i) {
         if (i + 1 < split_points.size()) {
             split_points[i].end_sample = split_points[i + 1].start_sample - 1;
         } else {
-            split_points[i].end_sample = static_cast<int64_t>(audio.samples.size()) - 1;
+            // Last track ends at end of file (in native samples)
+            split_points[i].end_sample = native_frames - 1;
         }
     }
     
