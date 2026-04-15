@@ -68,6 +68,9 @@ Split a vinyl rip using reference tracks (e.g., CD rips or digital purchases) fo
 Options:
 - `-r, --reference` - Directory containing reference tracks (sorted alphabetically/numerically)
 - `-o, --output` - Output directory for split tracks
+- `--trim-silence` - Trim trailing silence from each track (e.g., from flipping the record)
+- `--trim-threshold <rms>` - Silence threshold (default: auto-detect from noise floor)
+- `--trim-buffer <seconds>` - Silence to keep for natural fade-out (default: 0.3)
 - `-v, --verbose` - Show detailed alignment info
 - `--dry-run` - Preview splits without writing files
 
@@ -76,14 +79,24 @@ Options:
 Split using automatic gap detection (no reference needed):
 
 ```bash
+# Basic usage (auto-detects gaps)
 ./mwAudioAutoChop blind vinyl_rip.wav -o output_dir/
+
+# With known track count (more accurate)
+./mwAudioAutoChop blind vinyl_rip.wav -o output_dir/ --tracks 12
+
+# With manual sensitivity
+./mwAudioAutoChop blind vinyl_rip.wav -o output_dir/ --sensitivity 0.5
 ```
 
 Options:
 - `-o, --output` - Output directory for split tracks
-- `--min-gap` - Minimum gap duration in seconds (default: 2.0)
-- `--max-gap` - Maximum gap duration in seconds (default: 30.0)
+- `-n, --tracks <N>` - Expected number of tracks (selects N-1 best gaps)
+- `-s, --sensitivity <0-1>` - Gap detection sensitivity (default: auto via Otsu's method)
+- `--min-gap <seconds>` - Minimum gap duration (default: 1.0)
+- `--max-gap <seconds>` - Maximum gap duration (default: 30.0)
 - `-v, --verbose` - Show detailed detection info
+- `--dry-run` - Preview splits without writing files
 
 ### Interactive TUI
 
@@ -119,9 +132,11 @@ Launch the visual editor:
 ### Blind Mode
 1. Computes RMS energy envelope
 2. Estimates noise floor from quietest regions
-3. Detects gaps where energy drops below threshold
-4. Scores gaps by depth and duration
-5. Creates split points at gap boundaries
+3. Auto-detects optimal threshold using Otsu's method (or uses manual sensitivity)
+4. Detects candidate gaps where energy drops below threshold
+5. Scores gaps using multiple features: energy depth (50%), duration (30%), edge sharpness (20%)
+6. If track count is specified, selects N-1 best gaps with minimum track duration constraint
+7. Creates split points at gap boundaries
 
 ### Lossless Guarantee
 
