@@ -33,7 +33,7 @@ sudo apt install build-essential cmake libsndfile1-dev
 
 #### macOS
 ```bash
-brew install cmake libsndfile
+brew install cmake libsndfile pkg-config
 ```
 
 ### Build

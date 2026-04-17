@@ -39,7 +39,7 @@ pkg_check_modules(PkgConfig_sndfile QUIET sndfile)
 if(PkgConfig_sndfile_FOUND)
     message(STATUS "Using system libsndfile")
     add_library(mwaac_sndfile INTERFACE)
-    target_link_libraries(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_LIBRARIES})
+    target_link_libraries(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_LINK_LIBRARIES})
     target_include_directories(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_INCLUDE_DIRS})
 endif()
 
