@@ -199,6 +199,87 @@ std::vector<EndDecision> compute_track_ends(
     return out;
 }
 
+// Measure the duration of a gradual fade-in at the start of the reference.
+// A fade-in is characterized by a monotonic-ish rise from very quiet to
+// near-steady-state over multiple seconds. Returns the number of samples
+// from sample 0 until the signal first reaches steady_state - 6 dB; zero
+// if the signal is already near steady-state (no meaningful fade-in) or if
+// the rise is too abrupt (digital-silence-then-loud, handled elsewhere).
+int64_t measure_fade_in_samples(
+    std::span<const float> samples,
+    int sample_rate,
+    double max_search_seconds = 20.0,
+    double min_fade_seconds = 1.0,
+    double max_fade_seconds = 2.5)
+{
+    if (samples.empty()) return 0;
+    const int64_t frame_size = std::max<int64_t>(1, sample_rate / 10);  // 100 ms
+    int64_t n_frames = std::min(
+        static_cast<int64_t>(samples.size()) / frame_size,
+        static_cast<int64_t>(max_search_seconds * 10));
+    if (n_frames < 20) return 0;
+
+    // Compute 100 ms-frame RMS values
+    std::vector<double> rms(n_frames);
+    for (int64_t f = 0; f < n_frames; ++f) {
+        double ss = 0.0;
+        for (int64_t i = 0; i < frame_size; ++i) {
+            double s = samples[f * frame_size + i];
+            ss += s * s;
+        }
+        rms[f] = std::sqrt(ss / frame_size);
+    }
+
+    // Estimate steady-state RMS as the median of frames 8 s to max_search.
+    // Starting past 8 s gives headroom for slow fade-ins (like Bicep-style
+    // ambient buildups) to reach steady before the median window begins.
+    int64_t ss_start = std::min(n_frames - 1, static_cast<int64_t>(80));
+    std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
+    if (ss_samples.empty()) return 0;
+    std::nth_element(ss_samples.begin(),
+                     ss_samples.begin() + ss_samples.size() / 2,
+                     ss_samples.end());
+    double steady_rms = ss_samples[ss_samples.size() / 2];
+    if (steady_rms < 1e-6) return 0;
+
+    // Target for "end of fade-in": 10 dB below steady state. Loose enough to
+    // catch slow fades without requiring the signal to nearly reach steady.
+    double target = steady_rms * 0.316;  // -10 dB
+
+    // Find first frame reaching target. If it's before `min_fade_seconds`,
+    // the track doesn't have a meaningful fade-in — return 0.
+    int64_t fade_end_frame = -1;
+    for (int64_t f = 0; f < ss_start; ++f) {
+        if (rms[f] >= target) { fade_end_frame = f; break; }
+    }
+    if (fade_end_frame < 0) return 0;
+
+    double fade_end_s = static_cast<double>(fade_end_frame) * 0.1;
+    if (fade_end_s < min_fade_seconds) return 0;
+
+    // Cap the reported fade-in at max_fade_seconds. Tracks with very slow
+    // multi-second buildups (loud steady state, gradual approach) would
+    // otherwise report implausibly long fade-ins that over-shift the output
+    // past the real track boundary. Real fade-ins are 1-3 seconds.
+    if (fade_end_s > max_fade_seconds) {
+        fade_end_frame = static_cast<int64_t>(max_fade_seconds * 10);
+        fade_end_s = max_fade_seconds;
+    }
+
+    // Sanity check: the rise must be GRADUAL, not a sudden step.
+    // Require that the frame *min_fade_seconds* before fade_end is at least
+    // 10 dB quieter than steady. A "digital-silence then loud" intro
+    // (like ROLA) fails this: the frame just before fade_end is already
+    // loud (only separated by silence), so it's not a true fade-in.
+    int64_t pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
+    if (fade_end_frame - pre_frames >= 0) {
+        double pre_rms = rms[fade_end_frame - pre_frames];
+        if (pre_rms > steady_rms * 0.316) return 0;  // within 10 dB of steady
+    }
+
+    return fade_end_frame * frame_size;
+}
+
 // Count the number of leading samples that are essentially digital silence.
 // Digital silence is distinguished from quiet-but-audible content (like a
 // fade-in) by the absolute sample magnitude: digital zero reads as 0 or
@@ -818,6 +899,27 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                 oss << std::fixed << std::setprecision(3);
                 oss << "    Skipped " << skip_s << "s of leading digital"
                     << " silence in reference (not reproducible on vinyl)";
+                verbose(oss.str());
+            }
+        }
+
+        // Fade-in compensation: correlation finds its peak where content is
+        // distinctive, which for a gradual fade-in is *past* the fade (the
+        // quiet ramp contributes little). The chosen position ends up inside
+        // the fade rather than at its start, truncating the intro. Detect a
+        // meaningful gradual fade-in in the reference and shift back by its
+        // duration so the output captures the whole fade-in.
+        int64_t fade_in_samples = measure_fade_in_samples(
+            track.audio.samples, track.audio.sample_rate);
+        if (fade_in_samples > 0) {
+            chosen_pos -= fade_in_samples;
+            if (g_verbose) {
+                double fade_s = static_cast<double>(fade_in_samples)
+                                / track.audio.sample_rate;
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(3);
+                oss << "    Fade-in detected (" << fade_s << "s) — shifted"
+                    << " track start back to include the full fade";
                 verbose(oss.str());
             }
         }
