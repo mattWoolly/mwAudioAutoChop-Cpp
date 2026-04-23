@@ -199,6 +199,23 @@ std::vector<EndDecision> compute_track_ends(
     return out;
 }
 
+// Count the number of leading samples that are essentially digital silence.
+// Digital silence is distinguished from quiet-but-audible content (like a
+// fade-in) by the absolute sample magnitude: digital zero reads as 0 or
+// ~1e-6, whereas a -60 dB fade-in reads ~1e-3. We use 1e-4 (~-80 dBFS) as
+// the cutoff. Returns the length of the leading region whose samples are
+// all below the cutoff; zero if the signal is audible from sample 0.
+int64_t count_leading_digital_silence(
+    std::span<const float> samples,
+    double linear_threshold = 1e-4)
+{
+    int64_t n = static_cast<int64_t>(samples.size());
+    for (int64_t i = 0; i < n; ++i) {
+        if (std::abs(samples[i]) > linear_threshold) return i;
+    }
+    return n;
+}
+
 // Find the first "music onset" in a signal: the first 10ms frame whose RMS
 // rises above `threshold_db` (dBFS, assuming samples roughly in [-1, 1]) and
 // stays above for at least `min_sustain_ms`. Returns the absolute sample
@@ -662,11 +679,17 @@ std::vector<std::pair<int64_t, double>> align_per_track(
         auto ref_processed = preprocess_for_correlation(track.audio.samples, track.audio.sample_rate);
 
         // If the expected position sits in a long silent stretch (flip gap),
-        // jump past the silence to where music actually resumes. This keeps
-        // the correlation window focused on real content and not on dead air.
+        // jump past the silence to where music actually resumes. Uses a
+        // long sustain requirement (1 s) and a tighter threshold (-45 dB)
+        // to avoid stopping on stylus-drop thumps / transient clicks —
+        // only sustained actual music should trigger the skip's end.
         int64_t pre_skip_expected = expected_position;
         expected_position = skip_leading_silence(
-            vinyl.samples, vinyl.sample_rate, expected_position);
+            vinyl.samples, vinyl.sample_rate, expected_position,
+            /*threshold_db=*/-45.0,
+            /*min_skip_seconds=*/3.0,
+            /*max_skip_seconds=*/180.0,
+            /*min_music_ms=*/1000.0);
         if (g_verbose && expected_position != pre_skip_expected) {
             double skipped = static_cast<double>(expected_position - pre_skip_expected)
                              / vinyl.sample_rate;
@@ -775,6 +798,27 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                     oss << std::fixed << std::setprecision(3) << confidence;
                     verbose("    Low confidence (" + oss.str() + ") — falling back to expected position");
                 }
+            }
+        }
+
+        // If the reference starts with a block of digital silence (zeros),
+        // don't try to reproduce that silence using vinyl content — the
+        // vinyl has surface noise there, not zeros. Shift track_start past
+        // the reference's leading digital silence so the output begins on
+        // the first real sample of the track. Fade-ins (quiet but audible
+        // content) sit above the 1e-4 threshold and are preserved.
+        int64_t leading_digital_silence = count_leading_digital_silence(
+            track.audio.samples);
+        if (leading_digital_silence > 0) {
+            chosen_pos += leading_digital_silence;
+            if (g_verbose) {
+                double skip_s = static_cast<double>(leading_digital_silence)
+                                / track.audio.sample_rate;
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(3);
+                oss << "    Skipped " << skip_s << "s of leading digital"
+                    << " silence in reference (not reproducible on vinyl)";
+                verbose(oss.str());
             }
         }
 
