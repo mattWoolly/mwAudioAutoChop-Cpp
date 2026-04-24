@@ -33,18 +33,23 @@ enable_testing()
 
 include(FetchContent)
 
-# Try system libsndfile first, fallback to fetching
+# Try system libsndfile first, fallback to fetching.
+#
+# IMPORTED_TARGET is important: it creates PkgConfig::mwaac_sndfile_pc carrying
+# full -L, -I, and -Wl,-rpath flags from pkg-config. Using the bare
+# ${..._LIBRARIES} variable loses the library dir, producing `-lsndfile` with
+# no `-L` — which fails to link unless libsndfile happens to live in the
+# default system search path.
 find_package(PkgConfig QUIET)
-pkg_check_modules(PkgConfig_sndfile QUIET sndfile)
-if(PkgConfig_sndfile_FOUND)
-    message(STATUS "Using system libsndfile")
-    add_library(mwaac_sndfile INTERFACE)
-    target_link_libraries(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_LIBRARIES})
-    target_include_directories(mwaac_sndfile INTERFACE ${PkgConfig_sndfile_INCLUDE_DIRS})
+if(PkgConfig_FOUND)
+    pkg_check_modules(mwaac_sndfile_pc QUIET IMPORTED_TARGET sndfile)
 endif()
-
-if(NOT TARGET SndFile::sndfile)
-    # libsndfile - Audio file I/O via FetchContent
+if(mwaac_sndfile_pc_FOUND)
+    message(STATUS "Using system libsndfile (pkg-config)")
+    add_library(mwaac_sndfile INTERFACE)
+    target_link_libraries(mwaac_sndfile INTERFACE PkgConfig::mwaac_sndfile_pc)
+else()
+    # libsndfile - Audio file I/O via FetchContent.
     FetchContent_Declare(
         libsndfile
         GIT_REPOSITORY https://github.com/libsndfile/libsndfile
@@ -52,14 +57,9 @@ if(NOT TARGET SndFile::sndfile)
     )
 endif()
 
-# FFTW3 - FFT operations
-# TODO: FFTW3 is complex to build from source. Prefer system install.
-# For now, check if system-installed first with find_package
-find_package(FFTW3 QUIET)
-if(NOT FFTW3_FOUND)
-    message(STATUS "FFTW3 not found. Please install system-wide or add support later.")
-    # TODO: Add FetchContent build for FFTW3 when ready
-endif()
+# FFT is provided by vendored pocketfft_hdronly.h (BSD-3, Martin Reinecke).
+# See src/core/pocketfft_hdronly.h; no linkage required. An earlier iteration
+# of this project used FFTW3 — keep that out of the dependency graph.
 
 # FTXUI - Terminal UI
 FetchContent_Declare(
@@ -75,13 +75,17 @@ FetchContent_Declare(
     GIT_TAG        v3.5.2
 )
 
-# Fetch and configure all dependencies
-# Disable tests for dependency projects to avoid running their test suite
+# Fetch and configure all dependencies.
+# Disable tests for dependency projects to avoid running their test suite.
 set(BUILD_TESTING OFF CACHE BOOL "Disable dependency tests")
 set(FTXUI_BUILD_TESTS OFF CACHE BOOL "Disable FTXUI tests")
-if(NOT PkgConfig_sndfile_FOUND)
+if(NOT mwaac_sndfile_pc_FOUND)
     set(libsndfile_BUILD_TESTS OFF CACHE BOOL "Disable libsndfile tests")
     FetchContent_MakeAvailable(libsndfile ftxui catch2)
+    # FetchContent'd libsndfile exports as SndFile::sndfile. Normalize so the
+    # rest of CMakeLists.txt always links `mwaac_sndfile`.
+    add_library(mwaac_sndfile INTERFACE)
+    target_link_libraries(mwaac_sndfile INTERFACE SndFile::sndfile)
 else()
     FetchContent_MakeAvailable(ftxui catch2)
 endif()
@@ -119,11 +123,7 @@ target_include_directories(mwaac_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 target_compile_features(mwaac_core PUBLIC cxx_std_20)
-if(PkgConfig_sndfile_FOUND)
-    target_link_libraries(mwaac_core PUBLIC mwaac_sndfile)
-else()
-    target_link_libraries(mwaac_core PUBLIC SndFile::sndfile)
-endif()
+target_link_libraries(mwaac_core PUBLIC mwaac_sndfile)
 
 set(SOURCES
     src/main.cpp
@@ -148,24 +148,15 @@ target_link_libraries(mwaac_tui PRIVATE
     ftxui::dom
 )
 
-# Link core library and dependencies to main executable
-if(PkgConfig_sndfile_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        mwaac_core
-        mwaac_tui
-        mwaac_sndfile
-        ftxui::component
-        ftxui::dom
-    )
-else()
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        mwaac_core
-        mwaac_tui
-        SndFile::sndfile
-        ftxui::component
-        ftxui::dom
-    )
-endif()
+# Link core library and dependencies to main executable.
+# mwaac_sndfile is a single normalized target name for libsndfile regardless
+# of whether pkg-config or FetchContent supplied the dependency.
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    mwaac_core
+    mwaac_tui
+    ftxui::component
+    ftxui::dom
+)
 
 # =============================================================================
 # Tests
