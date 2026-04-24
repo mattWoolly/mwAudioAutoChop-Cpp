@@ -1,638 +1,613 @@
-# mwAudioAutoChop C++ - Development Backlog
+# Remediation Backlog
 
-## Status Legend
-- `[ ]` Pending
-- `[~]` In Progress
-- `[x]` Complete
-- `[!]` Blocked
+This backlog implements the Knuth-level review of `mwAudioAutoChop-C++`. Every
+item has an ID corresponding to the review (C-#, M-#, Mi-#, N-#) or a new ID
+minted here (FIXTURE-#, INV-#, DOC-#). The prior BACKLOG.md is archived at
+`BACKLOG.archive.md`.
 
----
+Execution rules (from the remediation plan):
 
-## Phase 1: Foundation & Build System
+- **One backlog item per PR.** No batching.
+- **Every item closes via an audit-agent pass.** The fix-agent's self-check
+  does not close the item.
+- **Critical items get two audit passes.**
+- **Red CI halts new dispatches.** Fix the regression before starting anything
+  new.
+- **Deviations are recorded in `docs/deviations.md`**, not negotiated silently.
 
-### AAC-CPP-001: Project Setup & CMake Configuration
-**Priority:** P0 (Critical)  
-**Status:** `[x]`  
-**Estimated Effort:** Small  
-**Dependencies:** None
-
-**Description:**
-- Initialize CMake project structure
-- Set up directory layout as per PROJECT_SPEC.md
-- Configure C++20 standard
-- Add .gitignore for build artifacts
-- Create placeholder files for initial structure
-
-**Acceptance Criteria:**
-- `cmake -B build && cmake --build build` succeeds
-- Project compiles with empty main.cpp
-- Directory structure matches spec
+Status legend: `[ ]` pending · `[~]` in progress · `[x]` closed · `[!]`
+blocked · `[D]` deviated (see docs/deviations.md).
 
 ---
 
-### AAC-CPP-002: Dependency Integration
-**Priority:** P0 (Critical)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-001
+## Phase 0 — Foundation (COMPLETE)
 
-**Description:**
-- Integrate libsndfile for audio I/O
-- Integrate FFTW3 or KissFFT for FFT
-- Integrate FTXUI for terminal UI
-- Integrate Catch2 for testing
-- CMake find_package or FetchContent setup
+Recorded here for the paper trail.
 
-**Acceptance Criteria:**
-- All dependencies resolve and link
-- Simple test using each library compiles
+- [x] **F-1** pkg-config IMPORTED_TARGET for libsndfile *(M-1)* — commit
+  d3c2043.
+- [x] **F-2** MWAAC_WERROR + MWAAC_SANITIZE harness — commit b48159d.
+- [x] **F-3** CI matrix: Debug, sanitizers, clang-tidy — commit 35fee39.
+- [x] **F-4** Re-enable disabled AIFF tests *(C-1 surfacing)* — commit c32d081.
+- [x] **F-5** Neutralize CHECK(true) patterns — commit d5f8c1e.
 
----
-
-### AAC-CPP-003: Core Data Structures
-**Priority:** P0 (Critical)  
-**Status:** `[x]`  
-**Estimated Effort:** Small  
-**Dependencies:** AAC-CPP-001
-
-**Description:**
-Create core data structures:
-- `AudioInfo`: File metadata (sample rate, channels, bit depth, etc.)
-- `SplitPoint`: Start/end samples, confidence, evidence
-- `AnalysisResult`: Collection of split points with metadata
-- `AlignmentResult`: Alignment data from reference mode
-
-**Acceptance Criteria:**
-- All structs compile with proper C++20 idioms
-- Unit tests for basic operations
+After Phase 0, the build is red in a disciplined way: 89 warning-as-error
+findings (one dominant category per file), 1 sanitizer-confirmed stack smash
+(C-1), and two newly-honest integration test failures (blind mode returning
+only 1 split, 24-bit 2ch write failing). Each is a clean target for Phase 2.
 
 ---
 
-## Phase 2: Audio I/O (Lossless Foundation)
+## Tier 1 — Unblockers (test fixtures)
 
-### AAC-CPP-004: WAV/AIFF Header Parsing
-**Priority:** P0 (Critical)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-003
+Produce the reproducible synthetic fixtures the existing tests pretend they
+have. Without these, reference-mode tests can't assert correctness.
 
-**Description:**
-- Parse WAV (RIFF) and RF64 headers to find data chunk offset
-- Parse AIFF headers to find SSND chunk offset
-- Extract bit depth, channels, sample rate
-- Cross-validate with libsndfile
+### FIXTURE-REF — Realistic synthetic vinyl fixture
 
-**Acceptance Criteria:**
-- Correctly parse test WAV and AIFF files
-- Data offset matches manual inspection
-- Unit tests with various bit depths (16, 24, 32)
+- **Defect.** Integration tests for reference mode generate tones-in-noise,
+  which reference mode cannot reliably align against (no distinctive envelope
+  shape, rhythmic tones produce ambiguous correlation peaks). Tests that
+  depended on this currently `SKIP()`.
+- **Invariant established.** "Reference mode aligns each track of a known
+  fixture within ±N samples of the ground-truth boundary, where N ≤ 1 ms
+  at the fixture's sample rate."
+- **Files touched.** `tests/fixtures/build_fixtures.cpp` (new),
+  `tests/fixtures/README.md` (new), `tests/fixtures/ref_fixture_v1/` (generated
+  artifacts + ground-truth JSON), `tests/test_integration.cpp` (swap SKIP for
+  REQUIRE on the three reference cases).
+- **Tests added/re-enabled.**
+  - `Reference mode pipeline: basic detection` (un-SKIP)
+  - `Reference mode pipeline: track positions within tolerance` (un-SKIP)
+  - `Reference mode pipeline: lossless export verification` (un-SKIP)
+- **Exit criteria.**
+  - [ ] Fixture is reproducible from `build_fixtures` invocation; no binary
+        blobs in-tree unless a SHA-256 checksum is also committed.
+  - [ ] Three previously-SKIP'd test cases now run and pass.
+  - [ ] Each test asserts position within a named tolerance constant.
+  - [ ] Fixture README lists what each fixture exercises.
 
----
+### FIXTURE-RF64 — >4 GiB RF64 fixture (sparse file)
 
-### AAC-CPP-005: Lossless Track Export
-**Priority:** P0 (Critical)  
-**Status:** `[~]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-004
+- **Defect.** No RF64 round-trip coverage. Required for C-3.
+- **Invariant established.** "For an RF64 input, write_track produces an RF64
+  output whose sample-data region is byte-identical to the source region."
+- **Files touched.** `tests/fixtures/build_fixtures.cpp`,
+  `tests/test_lossless.cpp`.
+- **Tests added.**
+  - `Lossless: RF64 round-trip preserves sample bytes` (new).
+  - `RF64 header parsing: ds64 before data` (new).
+  - `RF64 header parsing: ds64 after data` (new, M-4).
+- **Exit criteria.**
+  - [ ] Sparse-file creation runs in <1 s on CI workers; disk footprint
+        near zero.
+  - [ ] Round-trip compares SHA-256 of sample region, not full file.
 
-**Description:**
-- Raw byte-copy from source file at calculated offset
-- Build valid WAV header for output
-- Build valid AIFF header for output
-- No DSP processing, no format conversion
+### FIXTURE-WAVEEXT — 24-bit WAVE_FORMAT_EXTENSIBLE fixture
 
-**Acceptance Criteria:**
-- Output bytes are identical to source range (SHA-256 verification)
-- Output files play correctly in audio software
-- Unit tests verify lossless invariant
+- **Defect.** No coverage for the format Pro Tools / REAPER / modern Audacity
+  emit. Required for M-3 and the newly-surfaced 24-bit-2ch write failure.
+- **Invariant established.** "AudioFile::open accepts WAVE_FORMAT_EXTENSIBLE
+  (0xFFFE) whose SubFormat GUID identifies PCM or IEEE-float."
+- **Files touched.** `tests/fixtures/build_fixtures.cpp`,
+  `tests/test_audio_file.cpp`, `tests/test_lossless.cpp`.
+- **Tests added.**
+  - `AudioFile::open: WAVE_FORMAT_EXTENSIBLE 24-bit stereo` (new).
+  - `Lossless round-trip: 24-bit 2-channel WAV (extensible)` (re-enable
+    the currently-failing e2e format test).
+- **Exit criteria.**
+  - [ ] Fixture is produced from raw byte assembly (not libsndfile, which
+        would write legacy PCM format-tag 1), so the extensible path is
+        exercised in the parser.
 
----
+### FIXTURE-MALFORMED — Truncated and malformed header corpus
 
-### AAC-CPP-006: Audio Loading for Analysis
-**Priority:** P1 (High)  
-**Status:** `[x]`  
-**Estimated Effort:** Small  
-**Dependencies:** AAC-CPP-002
-
-**Description:**
-- Load audio as float samples for analysis using libsndfile
-- Mono conversion for correlation
-- Resampling to analysis rate (22050 Hz)
-
-**Acceptance Criteria:**
-- Load test files successfully
-- Mono conversion produces expected output
-- Unit tests for various formats
-
----
-
-## Phase 3: Signal Processing & Analysis
-
-### AAC-CPP-007: FFT-Based Cross-Correlation
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-002, AAC-CPP-006
-
-**Description:**
-- Implement O(n log n) FFT-based cross-correlation
-- Return lag (offset) and peak correlation value
-- Preprocessing: highpass filter + RMS normalization
-
-**Acceptance Criteria:**
-- Correctly aligns known offset signals
-- Performance acceptable for multi-minute files
-- Unit tests with synthetic signals
-
----
-
-### AAC-CPP-008: RMS Energy Computation
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Small  
-**Dependencies:** AAC-CPP-006
-
-**Description:**
-- Frame-based RMS energy calculation
-- Configurable frame length and hop size
-- Return vector of per-frame RMS values
-
-**Acceptance Criteria:**
-- Matches expected RMS for known signals
-- Performance suitable for real-time display
-- Unit tests
+- **Defect.** Parser hardening (M-3, M-4, M-5) needs inputs; currently none
+  exist.
+- **Invariant established.** "Every malformed header returns `InvalidFormat`
+  within bounded time; none triggers ASan/UBSan findings."
+- **Files touched.** `tests/fixtures/malformed/` (new: tiny hand-written
+  files), `tests/test_audio_file.cpp`.
+- **Tests added.** Parametric over `tests/fixtures/malformed/*.wav|aiff`.
+- **Exit criteria.**
+  - [ ] At least: <12-byte file, valid RIFF + truncated fmt chunk, data
+        chunk claiming size > file size, RF64 without ds64, SSND with
+        non-zero offset field.
 
 ---
 
-### AAC-CPP-009: Spectral Analysis Features
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-007
+## Tier 2 — Critical correctness (review IDs C-* and latent-Critical M-*)
 
-**Description:**
-- Spectral flatness (noise vs. tonal detection)
-- Spectral centroid
-- Zero-crossing rate
-- Optional: Spectral contrast
+Order within this tier is by dependency: the Expected unification (M-14) is a
+Tier 3 item but touches every C-2 call site, so C-2 is scoped to *signalling
+the UB in the existing type* first (assert-or-terminate), and the full
+migration to `std::expected`-style storage happens in M-14.
 
-**Acceptance Criteria:**
-- Features match Python librosa output within tolerance
-- Unit tests with known audio characteristics
+### C-1 — encode_float80 stack buffer overflow
 
----
+- **Defect.** `encode_float80` writes 11 bytes into a 10-byte `std::byte`
+  buffer at `audio_file.cpp:496` (`out[10] = ...`). Buffer declared at
+  `:659, :670` as `std::byte float80[10]`.
+- **Invariant established.** "encode_float80 writes exactly 10 bytes to its
+  output buffer, matching IEEE 754 80-bit extended precision wire format."
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added/re-enabled.** Two `[lossless]` AIFF tests already re-enabled
+  in F-4 currently crash under ASan. The fix makes them pass.
+- **Exit criteria.**
+  - [ ] ASan reports no stack-buffer-overflow on `test_lossless` under
+        `MWAAC_SANITIZE=ON`.
+  - [ ] AIFF mantissa layout matches a reference implementation (see
+        comment citation in the diff).
+  - [ ] Re-audit comment on the function explains why 10 bytes is correct.
 
-### AAC-CPP-010: Chromagram Computation
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-007
+### C-2 — `Expected<T,E>::value()` is UB when holding error
 
-**Description:**
-- CQT-based or STFT-based chromagram (12 pitch classes)
-- Used for reference correlation (invariant to EQ/mastering)
+- **Defect.** `audio_file.hpp:106–116` `return *reinterpret_cast<T*>(&storage_)`
+  without checking `has_value_`. Call sites: `main.cpp:160, 250–260, 300`.
+- **Invariant established.** "Every `Expected<T,E>::value()` call is a
+  precondition contract; violation is noisy (assert / terminate), not silent
+  UB."
+- **Files touched.** `src/core/audio_file.hpp`, `src/main.cpp`.
+- **Tests added.**
+  - `Expected: value() on errored object aborts under debug` (new, uses
+    `Catch::Matchers::Throws` or a death-test equivalent).
+  - `main: failed AudioFile::open exits cleanly` (new, subprocess test).
+- **Exit criteria.**
+  - [ ] `Expected<T,E>::value()` has a precondition check (`assert` in
+        Debug, `std::terminate` otherwise) — *not* a full reimplementation;
+        that lands in M-14.
+  - [ ] Every `audio_file.value()` call in `main.cpp` is guarded by
+        `if (!audio_file) { ... return 1; }` on first use.
+  - [ ] UBSan passes on full test suite.
 
-**Acceptance Criteria:**
-- Produces 12-bin chroma features per frame
-- Unit tests with known musical content
+### C-3 — RF64 output silently truncated above 4 GiB
 
----
+- **Defect.** `build_wav_header` writes `file_size` / `data_size` as `uint32_t`
+  fields (`audio_file.cpp:531, 591–594`). write_track never emits RF64.
+- **Invariant established.** "For any `bytes_to_write > 0xFFFFFFFE`, or when
+  the source file format is RF64, write_track emits a valid RF64 header with
+  ds64."
+- **Files touched.** `src/core/audio_file.hpp` (add `build_rf64_header`),
+  `src/core/audio_file.cpp` (implement, route from write_track),
+  `tests/test_lossless.cpp` (assertion; needs FIXTURE-RF64).
+- **Tests added.**
+  - `build_rf64_header: RIFF+ds64+data layout` (new, unit).
+  - `Lossless: RF64 round-trip preserves sample bytes` (new, via
+    FIXTURE-RF64).
+- **Depends on.** FIXTURE-RF64.
+- **Exit criteria.**
+  - [ ] For any data_size ≥ 0xFFFFFFFE, header is RF64 not RIFF.
+  - [ ] For RF64 *input*, output is RF64 regardless of size (preserves
+        format identity).
+  - [ ] Round-trip SHA-256 on sample region matches source.
 
-### AAC-CPP-011: Onset Detection
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-009
+### C-4 — Rate-conversion truncation breaks "sample-accurate" claim
 
-**Description:**
-- Onset strength envelope
-- Peak picking for onset frames
-- Onset detection for boundary refinement
+- **Defect.** `reference_mode.cpp:1109, 1111` convert analysis-rate sample
+  indices to native-rate via integer division, truncating up to ~9 samples
+  at 192 kHz.
+- **Invariant established.** "Reference mode boundaries are within one
+  native-rate sample of the analysis-rate result."
+- **Files touched.** `src/modes/reference_mode.cpp`.
+- **Tests added.**
+  - `Reference mode: native-rate boundary is rounded not truncated` (new,
+    unit-level, using a direct analysis→native conversion helper).
+- **Exit criteria.**
+  - [ ] Conversion uses rounding (`std::llround` or `(a*num + den/2)/den`).
+  - [ ] A dedicated helper function carries the rounding; inline
+        multiplications by native_sr/analysis_sr are removed.
+  - [ ] README's "sample-accurate" claim is reconciled (DOC-1) with the
+        achievable tolerance.
 
-**Acceptance Criteria:**
-- Detects onsets in test audio
-- Unit tests with click tracks
+### C-5 — `compute_spectral_flatness` unsigned wrap + stub implementation
 
----
+- **Defect.** `analysis.cpp:82–84` wraps on `samples.size() < frame_length`,
+  requesting a ~2⁶³ allocation. The body also returns all-0.5 placeholder
+  values.
+- **Invariant established.** "Every analysis function that declares a public
+  signature delivers on it (no stub returns that masquerade as data) or is
+  removed from the public header."
+- **Files touched.** `src/core/analysis.hpp`, `src/core/analysis.cpp`,
+  `tests/test_analysis.cpp`.
+- **Tests added.**
+  - `compute_spectral_flatness: short input returns empty, not crash` (new).
+  - `compute_spectral_flatness: flat noise gives flatness near 1` (new).
+  - `compute_spectral_flatness: pure tone gives flatness near 0` (new).
+- **Exit criteria.**
+  - [ ] Either a real FFT-based implementation lands (using the vendored
+        pocketfft) or the function is removed from the public header and
+        all call sites (none currently).
+  - [ ] Guard mirrors `compute_rms_energy`.
 
-## Phase 4: Alignment & Mode Implementation
+### M-2 — AudioFile::open does not cross-check parser vs libsndfile
 
-### AAC-CPP-012: Music Start Detection
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-008, AAC-CPP-009
+- **Defect.** `audio_file.cpp:151–176` mixes hand-parser fields and libsndfile
+  fields without reconciliation.
+- **Invariant established.** "After AudioFile::open, `info.frames *
+  info.bytes_per_frame() == info.data_size`. Violation returns
+  `InvalidFormat`."
+- **Files touched.** `src/core/audio_file.cpp`, `tests/test_audio_file.cpp`.
+- **Tests added.**
+  - `AudioFile::open: parser/libsndfile disagreement surfaces as
+    InvalidFormat` (new, needs a malformed fixture).
+- **Depends on.** FIXTURE-MALFORMED.
+- **Exit criteria.**
+  - [ ] Assert or error-return on size mismatch.
+  - [ ] bits_per_sample comes from a single authoritative source.
 
-**Description:**
-- Detect where music begins (skip lead-in groove noise)
-- Uses RMS + spectral flatness thresholding
-- Sustained region detection
+### M-15 — CLI continues after failed AudioFile::open with total_frames=0
 
-**Acceptance Criteria:**
-- Correctly identifies music start in vinyl rip
-- Unit tests with synthetic lead-in + music
+- **Defect.** `main.cpp:253–260` uses `audio_file ? ... : 0` pattern then
+  unconditionally writes tracks, producing `sp.end_sample = -1`.
+- **Invariant established.** "Every CLI branch that depends on a successful
+  AudioFile::open must short-circuit on failure before using the result."
+- **Files touched.** `src/main.cpp`.
+- **Tests added.**
+  - Covered by C-2's `main: failed AudioFile::open exits cleanly` test.
+- **Exit criteria.**
+  - [ ] Single guard immediately after the `open` call.
+  - [ ] No `audio_file.value()` calls in main.cpp that aren't preceded by a
+        validated guard.
 
----
+### M-16 — write_track is not atomic on partial write
 
-### AAC-CPP-013: Per-Track Alignment
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Large  
-**Dependencies:** AAC-CPP-007, AAC-CPP-012
-
-**Description:**
-- Align each reference track individually to vinyl
-- Handles cumulative drift by widening search window
-- Returns per-track offset and confidence
-
-**Acceptance Criteria:**
-- Tracks align with < 0.1s accuracy
-- Confidence scores reflect alignment quality
-- Integration test with multi-track reference
-
----
-
-### AAC-CPP-014: Reference Mode Pipeline
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Large  
-**Dependencies:** AAC-CPP-013, AAC-CPP-005
-
-**Description:**
-- Full reference mode implementation
-- Load vinyl + reference
-- Per-track alignment
-- Boundary refinement
-- Generate split points
-
-**Acceptance Criteria:**
-- Produces correct splits for test data
-- Integration test matching Python output
-
----
-
-### AAC-CPP-015: Noise Floor Estimation
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-008, AAC-CPP-009
-
-**Description:**
-- Estimate vinyl surface noise characteristics
-- RMS level, spectral flatness of noise regions
-- Sliding window for adaptive threshold
-
-**Acceptance Criteria:**
-- Correctly identifies noise floor in vinyl rip
-- Unit tests
-
----
-
-### AAC-CPP-016: Blind Mode Pipeline
-**Priority:** P2 (Medium)  
-**Status:** `[x]`  
-**Estimated Effort:** Large  
-**Dependencies:** AAC-CPP-015, AAC-CPP-011, AAC-CPP-005
-
-**Description:**
-- Full blind mode implementation
-- Gap candidate detection via RMS threshold
-- Multi-feature scoring for confidence
-- Onset-based boundary refinement
-
-**Acceptance Criteria:**
-- Detects track boundaries in test vinyl rip
-- Reasonable confidence scores
-
----
-
-## Phase 5: CLI Interface
-
-### AAC-CPP-017: Argument Parsing
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Small  
-**Dependencies:** AAC-CPP-003
-
-**Description:**
-- Parse command-line arguments (reference/blind mode)
-- Support all options from Python CLI
-- Help text and version info
-
-**Acceptance Criteria:**
-- `--help` displays usage
-- All options parsed correctly
+- **Defect.** `audio_file.cpp:414` writes directly to the output path; a
+  partial write leaves a corrupt file masquerading as valid output.
+- **Invariant established.** "write_track produces either the complete output
+  file or no file — never a partial file at the target path."
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added.**
+  - `write_track: partial write (disk full simulation) leaves no target
+    file` (new, using a constrained filesystem or a hooked ofstream).
+- **Exit criteria.**
+  - [ ] Uses temp-sibling + `std::filesystem::rename` idiom.
+  - [ ] Temp file is cleaned on any error path.
 
 ---
 
-### AAC-CPP-018: CLI Reference Mode Command
-**Priority:** P1 (High)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-014, AAC-CPP-017
+## Tier 3 — Contract unification
 
-**Description:**
-- `mwaac reference <vinyl> -r <ref> -o <out>`
-- Progress reporting
-- Report formatting (matches Python output style)
+### M-14 — Collapse LoadResult and Expected
 
-**Acceptance Criteria:**
-- CLI produces same output as Python version
-- Error messages are clear
-
----
-
-### AAC-CPP-019: CLI Blind Mode Command
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-016, AAC-CPP-017
-
-**Description:**
-- `mwaac blind <vinyl> -o <out>`
-- All blind mode options
-- Report formatting
-
-**Acceptance Criteria:**
-- CLI produces expected output
-- Options function correctly
+- **Defect.** Two parallel error-wrappers (`LoadResult<T>`,
+  `Expected<T,E>`) with different semantics, including the reinterpret_cast
+  UB pattern from C-2.
+- **Invariant established.** "The codebase has exactly one error-result
+  wrapper. Its value/error accessors have defined behavior on every input."
+- **Files touched.** `src/core/audio_file.hpp` (replace Expected),
+  `src/core/audio_buffer.hpp` (remove LoadResult), `src/core/audio_buffer.cpp`,
+  `src/modes/*.cpp`, `src/tui/app.cpp`, `src/main.cpp`, every test that uses
+  either type.
+- **Tests added.**
+  - `Expected: move from errored; move from valued; value() on error
+    aborts` (new).
+- **Depends on.** C-2 (the precondition-check version).
+- **Exit criteria.**
+  - [ ] Backed by `std::variant<T, E>` internally — no reinterpret_cast.
+  - [ ] Implicit conversions from T and E are deliberate and documented.
+  - [ ] `LoadResult` removed from the tree.
 
 ---
 
-## Phase 6: Interactive TUI
+## Tier 4 — Parser hardening
 
-### AAC-CPP-020: TUI Application Shell
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-002
+### M-3 — WAVE_FORMAT_EXTENSIBLE (0xFFFE) rejected
 
-**Description:**
-- Basic FTXUI application setup
-- Full-screen terminal mode
-- Event loop and keyboard handling
-- Exit handling (Ctrl+C, Q)
+- **Defect.** `audio_file.cpp:279–286` returns UnsupportedFormat for the
+  format tag most modern DAWs emit.
+- **Invariant established.** "parse_wav_header accepts 0xFFFE when the
+  SubFormat GUID identifies PCM or IEEE-float; all other subtypes return
+  UnsupportedFormat."
+- **Depends on.** FIXTURE-WAVEEXT.
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added.**
+  - `parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM accepted`.
+  - `parse_wav_header: extensible with non-PCM/float subformat rejected`.
+- **Exit criteria.**
+  - [ ] Both previously-failing integration tests
+        (`Lossless end-to-end: verify exported file formats`) now pass.
 
-**Acceptance Criteria:**
-- Application launches full-screen
-- Clean exit on quit command
+### M-4 — RF64 data placeholder confuses chunk walker
 
----
+- **Defect.** `audio_file.cpp:263–317`: chunk_size == 0xFFFFFFFF placeholder
+  causes the walker to skip ahead past any subsequent ds64/LIST chunks.
+- **Invariant established.** "For RF64 files where ds64 appears after data,
+  parse_wav_header still recovers the correct data_size."
+- **Depends on.** FIXTURE-RF64.
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added.**
+  - Shared with FIXTURE-RF64's `ds64 after data` case.
+- **Exit criteria.**
+  - [ ] Two-pass scan, or use ds64's RIFF-size when present to cap the
+        walker, or break out of the loop after recognising RF64 + data.
 
-### AAC-CPP-021: Waveform Rendering
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Large  
-**Dependencies:** AAC-CPP-006, AAC-CPP-020
+### M-5 — AIFF SSND offset field assumed zero
 
-**Description:**
-- Render audio waveform using Unicode blocks
-- Downsampling for display resolution
-- Peak/RMS display modes
-- Zoom in/out functionality
+- **Defect.** `audio_file.cpp:376–381` ignores the 4-byte SSND offset field.
+- **Invariant established.** "parse_aiff_header honors SSND offset: data
+  begins at SSND_body + 8 + offset, data_size is chunk_size - 8 - offset."
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added.**
+  - `parse_aiff_header: non-zero SSND offset is honored` (new, malformed
+    fixture).
+- **Exit criteria.**
+  - [ ] Read SSND offset; apply to data_offset and data_size.
 
-**Acceptance Criteria:**
-- Waveform visually represents audio
-- Zoom levels work correctly
-- Renders at 60fps (or acceptable refresh rate)
+### Mi-1 — parse_aiff_header returns sample_rate = 0
 
----
-
-### AAC-CPP-022: Chop Point Markers
-**Priority:** P2 (Medium)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-021
-
-**Description:**
-- Display chop points as vertical markers on waveform
-- Different colors for selected/unselected
-- Marker labels (track numbers)
-
-**Acceptance Criteria:**
-- Markers visible and distinct
-- Selected marker highlighted
-
----
-
-### AAC-CPP-023: Keyboard Navigation
-**Priority:** P2 (Medium)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-022
-
-**Description:**
-- Left/Right: Navigate between chop points
-- Up/Down: Zoom in/out
-- +/-: Fine-adjust selected chop point
-- Space: Toggle preview mode
-- Enter: Confirm and export
-- H: Toggle help overlay
-- Q/Esc: Exit
-
-**Acceptance Criteria:**
-- All keys function as specified
-- Help overlay shows bindings
+- **Defect.** Comment says "libsndfile validates later"; function contract is
+  violated when called directly.
+- **Invariant established.** "parse_aiff_header produces a fully-populated
+  AudioInfo matching the file header, or returns InvalidFormat."
+- **Files touched.** `src/core/audio_file.cpp`.
+- **Tests added.**
+  - `parse_aiff_header: sample_rate decoded from 80-bit float`.
+- **Exit criteria.**
+  - [ ] Decode the IEEE 80-bit extended sample-rate field (inverse of the
+        fixed encode_float80).
 
 ---
 
-### AAC-CPP-024: Help Overlay
-**Priority:** P3 (Low)  
-**Status:** `[x]`  
-**Estimated Effort:** Small  
-**Dependencies:** AAC-CPP-023
+## Tier 5 — Algorithmic correctness
 
-**Description:**
-- Toggleable help panel showing keyboard shortcuts
-- Non-obstructive overlay design
+### M-9 — std::clamp with hi < lo when vinyl is empty
 
-**Acceptance Criteria:**
-- Help displays all commands
-- Toggle works reliably
+- **Defect.** `reference_mode.cpp:994` clamp upper bound may be -1.
+- **Invariant established.** "align_per_track skips tracks against empty
+  vinyl rather than invoking std::clamp with invalid bounds."
+- **Files touched.** `src/modes/reference_mode.cpp`,
+  `tests/test_reference_mode.cpp`.
+- **Tests added.**
+  - `align_per_track: empty vinyl returns empty offsets, no UB` (new).
+- **Exit criteria.**
+  - [ ] Guard at top of per-track loop.
 
----
+### M-10 — compute_zero_crossing_rate divides by zero
 
-### AAC-CPP-025: Export from TUI
-**Priority:** P2 (Medium)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-023, AAC-CPP-005
+- **Defect.** `analysis.cpp:68` when `end - start == 1`.
+- **Invariant established.** "ZCR is defined as 0 for frames of length
+  less than 2."
+- **Files touched.** `src/core/analysis.cpp`, `tests/test_analysis.cpp`.
+- **Tests added.**
+  - `compute_zero_crossing_rate: single-sample frame returns 0, not NaN`.
+- **Exit criteria.** [ ] Guard and test.
 
-**Description:**
-- Export tracks with current chop points
-- Progress indicator during export
-- Success/error feedback
+### Mi-4 — Naive cross_correlate normalization documentation
 
-**Acceptance Criteria:**
-- Exports match CLI output
-- Progress shown during write
-
----
-
-## Phase 7: Quality Assurance
-
-### AAC-CPP-026: Integration Test Suite
-**Priority:** P1 (High)  
-**Status:** `[x]`  
-**Estimated Effort:** Large  
-**Dependencies:** AAC-CPP-018, AAC-CPP-019
-
-**Description:**
-- End-to-end tests with real audio files
-- Compare output to Python version
-- Lossless verification suite
-
-**Acceptance Criteria:**
-- All integration tests pass
-- Output matches Python within tolerance
+- **Defect.** The naive impl uses a global norm factor, which is not Pearson
+  NCC per-lag. The docstring doesn't say so.
+- **Invariant established.** "The naive `cross_correlate` is a verification
+  shim for the FFT implementation; callers treating its peak value as a
+  probability are using it wrong."
+- **Files touched.** `src/core/correlation.hpp`, `src/core/correlation.cpp`.
+- **Tests added.**
+  - `cross_correlate and cross_correlate_fft agree on lag` (already in
+    test suite; just re-verify after comment).
+- **Exit criteria.**
+  - [ ] Header docstring notes the normalization difference explicitly.
+  - [ ] Consider marking `[[deprecated]]` or `/* testing-only */`.
 
 ---
 
-### AAC-CPP-027: Performance Benchmarks
-**Priority:** P3 (Low)  
-**Status:** `[ ]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-014, AAC-CPP-016
+## Tier 6 — API hygiene
 
-**Description:**
-- Benchmark correlation on various file sizes
-- Memory usage profiling
-- TUI frame rate measurement
+### M-6 — score_gap units are ambiguous
 
-**Acceptance Criteria:**
-- Performance acceptable for 1-hour files
-- No memory leaks
+- **Defect.** `blind_mode.cpp:57–93` takes sample indices; `detect_gaps`
+  returns frame indices. Call sites multiply by hop_length to bridge.
+- **Invariant established.** "Sample-index and frame-index types are not
+  implicitly convertible."
+- **Files touched.** `src/modes/blind_mode.hpp`,
+  `src/modes/blind_mode.cpp`, `tests/test_blind_mode.cpp`.
+- **Tests added.** Compile-time tests that mixing units fails.
+- **Exit criteria.**
+  - [ ] `SampleIndex`/`FrameIndex` tagged int types, or at minimum
+        unambiguous parameter names + a header comment stating units.
 
----
+### M-7 — score_gap ignores sample_rate parameter
 
-### AAC-CPP-028: Final QA Validation
-**Priority:** P0 (Critical)  
-**Status:** `[x]`  
-**Estimated Effort:** Large  
-**Dependencies:** All
+- **Defect.** Parameter marked `[[maybe_unused]]`.
+- **Invariant established.** "Public APIs do not carry dead parameters."
+- **Files touched.** `src/modes/blind_mode.hpp`, `src/modes/blind_mode.cpp`,
+  `tests/test_blind_mode.cpp` (signature update).
+- **Exit criteria.**
+  - [ ] Either use sample_rate (spectral-flatness scoring) or remove it.
 
-**Description:**
-- Full functionality testing
-- Edge case testing
-- Cross-platform validation (if applicable)
-- Create tickets for any issues found
+### M-8 — Blind mode returns error on single-track rips
 
-**Acceptance Criteria:**
-- All functionality verified
-- No P0/P1 issues open
+- **Defect.** `NoGapsFound` is a legitimate outcome, not an error.
+- **Invariant established.** "Blind mode returns a single-split result on a
+  gap-free input, with confidence reflecting the absence of evidence."
+- **Files touched.** `src/modes/blind_mode.cpp`, `src/main.cpp`
+  (handling tweak).
+- **Tests added.**
+  - `analyze_blind_mode: single-track input returns 1 split` (new).
+- **Exit criteria.**
+  - [ ] No error return on empty `gaps`.
 
----
+### M-11 — LoadResult default-constructed state is ambiguous
 
-### AAC-CPP-029: Fix Compiler Warnings
-**Priority:** P2 (Medium)  
-**Status:** `[ ]`  
-**Estimated Effort:** Small  
-**Dependencies:** None
+- **Defect.** Default ctor sets error but also default-constructs the value.
+- **Invariant established.** "No default construction leaves a result
+  wrapper in an ambiguous state."
+- **Files touched.** Resolved by M-14.
+- **Exit criteria.** Closed as a duplicate of M-14 once M-14 lands.
 
-**Description:**
-Fix minor compiler warnings found during QA:
-- Remove unused variable `blocks` in `src/tui/waveform.cpp:49`
-- Remove or use variable `verbose` in `src/main.cpp:57`
+### Mi-7 — score_gap drops sample_rate
 
-**Acceptance Criteria:**
-- Build completes with no -Wall -Wextra warnings
+- Duplicate of M-7 / same resolution.
 
----
+### NEW-BLIND-GAP — Blind mode returns only 1 split on clear 2-track fixture
 
-### AAC-CPP-030: Complete Lossless Export Tests
-**Priority:** P1 (High)  
-**Status:** `[x]`  
-**Estimated Effort:** Medium  
-**Dependencies:** AAC-CPP-005
-
-**Description:**
-Complete the skipped tests in `test_lossless.cpp`:
-- Implement full lossless round-trip test with actual WAV data
-- Verify byte-identical preservation
-- Remove `[.]` tags from pending tests
-
-**Acceptance Criteria:**
-- Tests verify lossless invariant
-- No skipped tests in lossless test suite
+- **Defect.** Surfaced by Phase 0.5 at `test_integration.cpp:479` and `:762`.
+  Blind mode on a clear tone+3s-silence+tone fixture returns only 1 split.
+- **Invariant established.** "Blind mode on a clean 2-track fixture with a
+  silence ≥ min_gap_seconds returns ≥2 splits."
+- **Files touched.** Likely `src/modes/blind_mode.cpp`,
+  `src/core/music_detection.cpp`.
+- **Tests added.** Already present; fix is to make them pass.
+- **Exit criteria.**
+  - [ ] Root cause traced (noise-floor estimator? gap detector? threshold?).
+  - [ ] Two integration tests (`clear silence detection`, `combined
+        workflow`) pass.
 
 ---
 
-## Execution Order
+## Tier 7 — TUI invariants
 
-**Parallel Tracks (after Phase 1):**
+### Mi-8 — TUI marker nudge breaks start≤end invariant
 
-Track A (Core): 001 → 003 → 004 → 005
-Track B (Dependencies): 001 → 002 → 006
-Track C (Analysis): 002 → 007 → 008 → 009
+- **Defect.** `tui/app.cpp:191–204` increments/decrements without bounds.
+- **Invariant established.** "For every SplitPoint:
+  `0 ≤ start_sample ≤ end_sample ≤ total_samples - 1`."
+- **Files touched.** `src/tui/app.cpp`.
+- **Tests added.** TUI tests are currently absent; add a headless unit test
+  at the state-mutator level.
+  - `tui: nudge clamps against neighbor start_sample` (new).
+- **Exit criteria.**
+  - [ ] Nudge handlers clamp against sibling markers and global limits.
 
-**Then Sequential:**
-- Phase 4 depends on Phase 2 + 3
-- Phase 5 depends on Phase 4
-- Phase 6 can start after Phase 2 basics
-- Phase 7 is final
+### Mi-9 — TUI view bounds can invert
 
----
+- **Defect.** `tui/app.cpp:208–241` — view_end < view_start possible.
+- **Invariant established.** "0 ≤ view_start < view_end ≤ total_samples."
+- **Files touched.** `src/tui/app.cpp`.
+- **Tests added.** Same headless-unit-test harness as Mi-8.
+  - `tui: view handlers never invert or zero the range`.
+- **Exit criteria.**
+  - [ ] Post-handler normalization helper.
 
-## Notes
+### Mi-10 — run_tui exit-code documentation
 
-- Each backlog item should be implemented as a separate PR
-- PRs require agent review before merge
-- Update this backlog as work progresses
-- New issues discovered during QA get added as new items
-
----
-
-## Post-Implementation QA Findings
-
-### AAC-CPP-029: Implement Verbose Output
-**Priority:** P2 (Low)  
-**Status:** `[x]`  
-**Dependencies:** AAC-CPP-017
-
-**Description:**
-The `-v/--verbose` CLI flag is parsed but not implemented. Add verbose output mode that shows:
-- Per-track alignment details
-- Correlation scores
-- Processing timing information
+- **Defect.** `tui/app.cpp:271` inverted return value on non-quit exit.
+- **Invariant established.** "run_tui returns 0 on normal exit (Q, Ctrl-C);
+  non-zero only on initialization failure."
+- **Files touched.** `src/tui/app.cpp`.
+- **Exit criteria.**
+  - [ ] Header docstring restated.
+  - [ ] Exit code matches doc.
 
 ---
 
-### AAC-CPP-030: Enhanced Lossless Verification Tests
-**Priority:** P1 (High)  
-**Status:** `[x]`  
-**Dependencies:** AAC-CPP-005
+## Tier 8 — Documentation, attribution, hygiene
 
-**Description:**
-Current lossless tests verify header structure but don't verify actual byte-identical output. Add:
-- Round-trip test: read → split → concatenate → compare SHA-256
-- Tests with real audio samples (16/24/32 bit)
+### M-12 — FFTW3 is dead
+
+- **Defect.** Already resolved in Phase 0.3 (CMake + CI). Close on
+  audit-agent verification.
+
+### M-13 — pocketfft attribution
+
+- **Defect.** Vendored pocketfft_hdronly.h has no LICENSE/attribution in-tree.
+- **Invariant established.** "Every third-party file in-tree is accompanied
+  by attribution satisfying its license."
+- **Files touched.** `THIRD_PARTY_LICENSES.md` (new), `README.md`
+  (acknowledgments).
+- **Exit criteria.**
+  - [ ] pocketfft BSD-3 text reproduced; author + URL listed.
+
+### Mi-5 — Magic threshold soup in reference mode
+
+- **Defect.** `reference_mode.cpp:584–585` (and ~12 other sites) have
+  unexplained numeric thresholds.
+- **Invariant established.** "Every decision threshold is a `constexpr` at
+  top of translation unit with a comment citing the observation or corpus
+  that produced it."
+- **Files touched.** `src/modes/reference_mode.cpp`.
+- **Exit criteria.**
+  - [ ] No magic numbers remain in the per-track loop bodies.
+
+### DOC-1 — README "sample-accurate" claim reconciliation
+
+- **Defect.** README uses "sample-accurate" in a context where the code
+  rounds ±1 native-rate sample (post-C-4 fix).
+- **Invariant established.** "Every README claim is either enforced by a
+  test or rewritten to match behavior."
+- **Files touched.** `README.md`.
+- **Exit criteria.**
+  - [ ] Claim reworded to match the tolerance guaranteed by C-4's new test.
+
+### DOC-2 — PROJECT_SPEC.md reconciliation
+
+- **Files touched.** `PROJECT_SPEC.md`.
+- **Exit criteria.** Spec and CMakeLists.txt agree on warning flags, standard,
+  and dependencies.
+
+### DOC-3 — docs/invariants.md living document
+
+- **Invariant established.** "Every invariant named in this backlog has an
+  entry in docs/invariants.md citing the enforcement site(s)."
+- **Files touched.** `docs/invariants.md` (new).
+- **Exit criteria.** File exists, maintained by invariant-agent every 3–5
+  completed items.
 
 ---
 
-## Implementation Progress Summary
+## Tier 9 — Cleanup (Minor, Nit)
 
-**Completed (17 PRs merged):**
-- AAC-CPP-001: Project Setup ✓
-- AAC-CPP-002: Dependencies ✓  
-- AAC-CPP-003: Core Data Structures ✓
-- AAC-CPP-004: Header Parsing ✓
-- AAC-CPP-005: Lossless Export ✓
-- AAC-CPP-006: Audio Loading ✓
-- AAC-CPP-007: Cross-Correlation ✓
-- AAC-CPP-008: RMS Energy ✓
-- AAC-CPP-012: Music Start Detection ✓
-- AAC-CPP-013/014: Reference Mode Pipeline ✓
-- AAC-CPP-016: Blind Mode Pipeline ✓
-- AAC-CPP-017/018: CLI Commands ✓
-- AAC-CPP-020/021: TUI Waveform Display ✓
-- AAC-CPP-022-025: TUI Enhancements (markers, navigation, help, export) ✓
-- AAC-CPP-026: Integration Test Suite ✓
-- AAC-CPP-029: Verbose Output Mode ✓
-- AAC-CPP-030: Enhanced Lossless Verification Tests ✓
+### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`.
+### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`.
+### Mi-6 — `min` identifier shadows std::min — `src/main.cpp`, `src/modes/reference_mode.cpp`.
+### Mi-11 — test_deps.cpp is dead — delete or compile.
+### Mi-12 — src/core/core.hpp is dead — delete.
+### Mi-13 — verbose.hpp g_timer_start is unused — delete.
+### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&.
+### Mi-15 — explicit ctors audit on result wrappers — resolved by M-14.
+### Mi-16 — encode_float80 NaN fallback to zero — reject with assert.
+### Mi-17 — std::stoll in natural_less can throw — bound digit count.
+### Mi-18 — -Wconversion findings — systematic cleanup (one PR per TU).
 
-**Remaining for Future Work:**
-- AAC-CPP-009: Spectral Analysis Features
-- AAC-CPP-010: Chromagram Computation
-- AAC-CPP-011: Onset Detection
-- AAC-CPP-015: Noise Floor Estimation (already implemented, needs documentation)
-- AAC-CPP-027: Performance Benchmarks
+Each of these is a ≤ 30-line diff; one item, one PR, one audit.
+
+### Nits — N-1 through N-~12
+
+The review's Nit list (dead `static` on constexpr magic bytes, `M_PI` →
+`std::numbers::pi`, `tui/waveform.cpp:57` over-allocation, etc.) ride along
+with their enclosing TU's -Wconversion pass (Mi-18), one commit per TU.
+
+---
+
+## New invariants surfaced during remediation
+
+Items opened by Phase 0:
+
+- **NEW-BLIND-GAP** (above) — blind mode on a clean 2-track fixture returns
+  only 1 split.
+- **NEW-WAVEEXT-WRITE** — `test_integration.cpp:691`'s
+  `export_result.has_value()` fails for a 48kHz 2ch 24-bit file. Likely
+  subsumed by M-3 once WAVE_FORMAT_EXTENSIBLE lands, but track separately
+  until confirmed.
+
+---
+
+## Deferred / out of scope
+
+- **Property-based tests / fuzzing infrastructure** — planned, but the first
+  pass is the structured malformed corpus (FIXTURE-MALFORMED). A real
+  libFuzzer harness is a later item.
+- **Windows CI** — PROJECT_SPEC.md lists it as optional; not in the
+  review's must-fix list; deferred.
+
+---
+
+## Dispatch order
+
+Strict precedence:
+
+1. FIXTURE-REF, FIXTURE-RF64, FIXTURE-WAVEEXT, FIXTURE-MALFORMED
+   (test-fixture-agent; these unblock many downstream items).
+2. C-1, M-16 (atomic-write), C-2 (precondition check only), M-15
+   (call-site guards).
+3. M-14 (contract unification, depends on C-2).
+4. C-3 (depends on FIXTURE-RF64), M-2.
+5. M-3 (depends on FIXTURE-WAVEEXT), M-4, M-5, Mi-1.
+6. C-4, M-9, M-10, Mi-4.
+7. C-5 (spectral flatness).
+8. M-6, M-7, M-8, M-11, NEW-BLIND-GAP.
+9. Mi-8, Mi-9, Mi-10.
+10. M-12, M-13, Mi-5, DOC-1, DOC-2, DOC-3.
+11. Cleanup (Mi-2, Mi-3, Mi-6, Mi-11, Mi-12, Mi-13, Mi-14, Mi-16, Mi-17,
+    Mi-18 with Nits folded in).
+
+Within each tier, dispatch items whose file-region scope doesn't overlap in
+parallel. Serialize items that touch the same TU.
