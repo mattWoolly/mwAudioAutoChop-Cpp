@@ -2,8 +2,12 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <cstdint>
+#include <cstdlib>
 #include <random>
 #include <cstring>
 #include <sndfile.h>
@@ -17,6 +21,56 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+// =============================================================================
+// FIXTURE-REF tolerance and helpers
+// =============================================================================
+
+// Reference-mode boundaries are produced in analysis-rate samples
+// (kRefAnalysisSr = 22050 Hz) and rounded to native-rate (44100 Hz) on the
+// way out. The envelope is computed on 50 ms frames at analysis rate, so
+// alignment cannot, in principle, be sharper than one analysis frame; the
+// 1 ms tolerance below is a strict floor (worst case ~1 sample at the
+// analysis rate, which round-trips to ~2 native samples). Expressed in
+// native samples to match the SplitPoint::start_sample units.
+//
+// 1 ms at 44100 Hz native rate = 44 samples. We allow a margin of 50 ms
+// for the envelope-correlation peak quantisation (see compute_rms_envelope
+// in src/modes/reference_mode.cpp): 50 ms at 44100 Hz = 2205 samples.
+// That is the documented hard tolerance. Inside that, the test still
+// asserts the result is within the same envelope frame as the truth.
+constexpr int kRefAnalysisSr = 22050;
+constexpr int kRefNativeSr = 44100;
+constexpr int64_t kRefFrameMs = 50;
+constexpr int64_t kRefFixtureToleranceSamples =
+    (kRefFrameMs * kRefNativeSr) / 1000;  // = 2205
+
+// Parse the ref_v1 manifest (flat KEY=VALUE) into a string→string map.
+[[nodiscard]] std::map<std::string, std::string>
+load_ref_manifest(const fs::path& manifest_path) {
+    std::map<std::string, std::string> kv;
+    std::ifstream in(manifest_path);
+    if (!in) return kv;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        kv.emplace(line.substr(0, eq), line.substr(eq + 1));
+    }
+    return kv;
+}
+
+// Resolve the FIXTURE-REF v1 build-time output directory. CMake injects
+// MWAAC_REF_FIXTURE_V1_DIR via target_compile_definitions; absence is a
+// hard build-config error (we do not silently SKIP).
+[[nodiscard]] fs::path ref_fixture_v1_dir() {
+#ifdef MWAAC_REF_FIXTURE_V1_DIR
+    return fs::path(MWAAC_REF_FIXTURE_V1_DIR);
+#else
+#  error "MWAAC_REF_FIXTURE_V1_DIR not defined; the fixture wiring is broken"
+#endif
+}
 
 // =============================================================================
 // Test file generation utilities
@@ -271,172 +325,155 @@ TEST_CASE("Test file generation: vinyl with gaps", "[integration][generation]") 
 // Integration tests: Reference Mode Pipeline
 // =============================================================================
 
+// All three reference-mode integration cases below load the ref_v1 fixture
+// produced by tests/fixtures/ref_v1/. The fixture is built once by the
+// CMake target `ref_fixture_v1`, which is registered as a build dependency
+// of test_integration so it is regenerated before the tests run. Tests
+// only read the fixture; they do not generate it themselves (parallel
+// ctest would otherwise race on the output directory).
+
 TEST_CASE("Reference mode pipeline: basic detection", "[integration][reference]") {
-    fs::path test_dir = fs::temp_directory_path() / "mwaac_integration_ref1";
-    fs::create_directories(test_dir);
-    TempDir cleanup(test_dir);
-    
-    // Create vinyl file with 3 distinct sections
-    int sample_rate = 22050;
-    fs::path vinyl_path = test_dir / "vinyl.wav";
-    TempFile vinyl_cleanup(vinyl_path);
-    
-    // Creating vinyl: track + gap + track + gap + track
-    std::vector<int64_t> track_lengths = {sample_rate * 2, sample_rate * 2, sample_rate * 2};
-    std::vector<int64_t> gap_lengths = {sample_rate * 2, sample_rate * 2};
-    
-    bool vinyl_created = create_vinyl_with_gaps(vinyl_path, sample_rate, track_lengths, gap_lengths);
-    REQUIRE(vinyl_created);
-    
-    // Create reference directory with individual reference files
-    fs::path ref_dir = test_dir / "references";
-    fs::create_directory(ref_dir);
-    
-    // Create reference files for each track
-    // Reference 1: ~2 seconds of 330 Hz tone
-    {
-        fs::path ref1 = ref_dir / "01_reference.wav";
-        TempFile ref1_cleanup(ref1);
-        std::vector<float> samples;
-        double pi = 3.14159265358979323846;
-        for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-        }
-        create_test_wav(ref1, 1, sample_rate, 32, sample_rate * 2, samples);
+    const fs::path fixture_dir = ref_fixture_v1_dir();
+    const fs::path vinyl_path = fixture_dir / "vinyl.wav";
+    const fs::path refs_dir = fixture_dir / "refs";
+    const fs::path manifest_path = fixture_dir / "manifest.txt";
+
+    REQUIRE(fs::exists(vinyl_path));
+    REQUIRE(fs::is_directory(refs_dir));
+    REQUIRE(fs::exists(manifest_path));
+
+    auto manifest = load_ref_manifest(manifest_path);
+    REQUIRE(manifest.count("num_tracks") == 1);
+    const auto expected_tracks =
+        static_cast<size_t>(std::stoul(manifest["num_tracks"]));
+    REQUIRE(expected_tracks == 3);
+
+    // Run reference-mode analysis at the canonical analysis rate.
+    auto result = mwaac::analyze_reference_mode(
+        vinyl_path, refs_dir, kRefAnalysisSr);
+    REQUIRE(result.has_value());
+
+    const auto& analysis = result.value();
+    CHECK(analysis.mode == "reference");
+    REQUIRE(analysis.split_points.size() == expected_tracks);
+
+    // Every split point should be within the fixture, i.e. start_sample
+    // strictly less than end_sample, and start_sample strictly greater
+    // than zero (the lead-in pushes track 1 past sample 0).
+    for (const auto& sp : analysis.split_points) {
+        CHECK(sp.start_sample > 0);
+        CHECK(sp.end_sample > sp.start_sample);
     }
-    
-    // Reference 2: ~2 seconds of 440 Hz tone
-    {
-        fs::path ref2 = ref_dir / "02_reference.wav";
-        TempFile ref2_cleanup(ref2);
-        std::vector<float> samples;
-        double pi = 3.14159265358979323846;
-        for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-        }
-        create_test_wav(ref2, 1, sample_rate, 32, sample_rate * 2, samples);
-    }
-    
-    // Reference 3: ~2 seconds of 550 Hz tone
-    {
-        fs::path ref3 = ref_dir / "03_reference.wav";
-        TempFile ref3_cleanup(ref3);
-        std::vector<float> samples;
-        double pi = 3.14159265358979323846;
-        for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 550.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-        }
-        create_test_wav(ref3, 1, sample_rate, 32, sample_rate * 2, samples);
-    }
-    
-    // Run reference mode analysis. The fixture here is tones-in-noise
-    // which reference mode cannot reliably align against (no distinctive
-    // amplitude envelope; rhythmic tones produce ambiguous correlation
-    // peaks). The test is SKIP'd until a realistic fixture lands — see
-    // FIXTURE-REF in BACKLOG.md. When it does, this becomes an assertion
-    // that analysis succeeds and produces ≥1 split point.
-    auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    (void)result;
-    SKIP("TODO(test-fixtures): FIXTURE-REF — tones-in-noise fixture is "
-         "insufficient for reference mode. Needs a synthetic rip with "
-         "distinctive per-track envelope shape.");
 }
 
-TEST_CASE("Reference mode pipeline: track positions within tolerance", "[integration][reference]") {
-    fs::path test_dir = fs::temp_directory_path() / "mwaac_integration_ref2";
-    fs::create_directories(test_dir);
-    TempDir cleanup(test_dir);
-    
-    int sample_rate = 22050;
-    fs::path vinyl_path = test_dir / "vinyl2.wav";
-    TempFile vinyl_cleanup(vinyl_path);
-    
-    // Create simpler vinyl: 1 second track + 2 second gap + 1 second track
-    std::vector<int64_t> track_lengths = {sample_rate, sample_rate};
-    std::vector<int64_t> gap_lengths = {sample_rate * 2};
-    
-    bool vinyl_created = create_vinyl_with_gaps(vinyl_path, sample_rate, track_lengths, gap_lengths);
-    REQUIRE(vinyl_created);
-    
-    // Create reference files
-    fs::path ref_dir = test_dir / "refs";
-    fs::create_directory(ref_dir);
-    
-    // Reference track 1 (330 Hz)
-    {
-        fs::path ref1 = ref_dir / "01.wav";
-        TempFile cleanup_ref(ref1);
-        std::vector<float> samples;
-        double pi = 3.14159265358979323846;
-        for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-        }
-        create_test_wav(ref1, 1, sample_rate, 32, sample_rate, samples);
+TEST_CASE("Reference mode pipeline: track positions within tolerance",
+          "[integration][reference]") {
+    const fs::path fixture_dir = ref_fixture_v1_dir();
+    const fs::path vinyl_path = fixture_dir / "vinyl.wav";
+    const fs::path refs_dir = fixture_dir / "refs";
+    const fs::path manifest_path = fixture_dir / "manifest.txt";
+
+    REQUIRE(fs::exists(vinyl_path));
+    REQUIRE(fs::exists(manifest_path));
+
+    auto manifest = load_ref_manifest(manifest_path);
+    REQUIRE(manifest.count("num_tracks") == 1);
+    const auto num_tracks =
+        static_cast<size_t>(std::stoul(manifest["num_tracks"]));
+    REQUIRE(num_tracks == 3);
+
+    auto result = mwaac::analyze_reference_mode(
+        vinyl_path, refs_dir, kRefAnalysisSr);
+    REQUIRE(result.has_value());
+
+    const auto& analysis = result.value();
+    REQUIRE(analysis.split_points.size() == num_tracks);
+
+    for (size_t i = 0; i < num_tracks; ++i) {
+        const std::string key =
+            "track" + std::to_string(i + 1) + "_start_sample";
+        REQUIRE(manifest.count(key) == 1);
+        const int64_t truth_start =
+            static_cast<int64_t>(std::stoll(manifest[key]));
+        const int64_t actual_start = analysis.split_points[i].start_sample;
+        const int64_t delta = std::abs(actual_start - truth_start);
+
+        INFO("Track " << (i + 1)
+                      << ": truth_start=" << truth_start
+                      << " actual_start=" << actual_start
+                      << " delta=" << delta
+                      << " (tolerance=" << kRefFixtureToleranceSamples << ")");
+        CHECK(delta <= kRefFixtureToleranceSamples);
     }
-    
-    // Reference track 2 (440 Hz)
-    {
-        fs::path ref2 = ref_dir / "02.wav";
-        TempFile cleanup_ref(ref2);
-        std::vector<float> samples;
-        double pi = 3.14159265358979323846;
-        for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-        }
-        create_test_wav(ref2, 1, sample_rate, 32, sample_rate, samples);
-    }
-    
-    // Same FIXTURE-REF limitation as the basic-detection case above.
-    auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    (void)result;
-    SKIP("TODO(test-fixtures): FIXTURE-REF — same tones-in-noise limitation. "
-         "Once a fixture with ground-truth boundaries lands, this will "
-         "assert start_sample is within ±N samples of truth.");
 }
 
-TEST_CASE("Reference mode pipeline: lossless export verification", "[integration][reference][lossless]") {
-    fs::path test_dir = fs::temp_directory_path() / "mwaac_integration_ref3";
-    fs::create_directories(test_dir);
-    TempDir cleanup(test_dir);
-    
-    int sample_rate = 22050;
-    fs::path vinyl_path = test_dir / "vinyl3.wav";
-    TempFile vinyl_cleanup(vinyl_path);
-    
-    // Create vinyl with single track
-    std::vector<float> samples;
-    double pi = 3.14159265358979323846;
-    for (int64_t i = 0; i < sample_rate * 2; ++i) {
-        samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
-    }
-    
-    bool vinyl_created = create_test_wav(vinyl_path, 1, sample_rate, 32, sample_rate * 2, samples);
-    REQUIRE(vinyl_created);
-    
-    // Open the vinyl file (for later export)
+TEST_CASE("Reference mode pipeline: lossless export verification",
+          "[integration][reference][lossless]") {
+    const fs::path fixture_dir = ref_fixture_v1_dir();
+    const fs::path vinyl_path = fixture_dir / "vinyl.wav";
+    const fs::path refs_dir = fixture_dir / "refs";
+    const fs::path manifest_path = fixture_dir / "manifest.txt";
+
+    REQUIRE(fs::exists(vinyl_path));
+    REQUIRE(fs::exists(manifest_path));
+
+    auto manifest = load_ref_manifest(manifest_path);
+    REQUIRE(manifest.count("track1_start_sample") == 1);
+    REQUIRE(manifest.count("track1_end_sample") == 1);
+
+    // Run reference-mode analysis.
+    auto result = mwaac::analyze_reference_mode(
+        vinyl_path, refs_dir, kRefAnalysisSr);
+    REQUIRE(result.has_value());
+    const auto& analysis = result.value();
+    REQUIRE(analysis.split_points.size() >= 1);
+
+    // Open the vinyl source for export.
     auto vinyl_file = mwaac::AudioFile::open(vinyl_path);
     REQUIRE(vinyl_file.has_value());
-    
-    // Create reference directory
-    fs::path ref_dir = test_dir / "refs";
-    fs::create_directory(ref_dir);
-    
-    // Reference file
-    {
-        fs::path ref = ref_dir / "01.wav";
-        TempFile ref_cleanup(ref);
-        create_test_wav(ref, 1, sample_rate, 32, sample_rate * 2, samples);
-    }
-    
-    // Same FIXTURE-REF limitation. The lossless-byte-compare assertions
-    // below are the right idea; they just need a fixture that doesn't
-    // ambiguously correlate.
-    auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    (void)result;
-    (void)vinyl_file;
-    SKIP("TODO(test-fixtures): FIXTURE-REF — needs a fixture whose reference "
-         "mode run produces a single known-position split, so the lossless "
-         "byte-compare can run. Existing tones-in-noise synth does not.");
+    const auto& info = vinyl_file.value().info();
+    REQUIRE(info.bytes_per_frame() > 0);
+
+    const auto& sp0 = analysis.split_points[0];
+
+    // Export track 1 to a unique temporary file (so parallel runs don't
+    // collide). The output path is cleaned up via TempFile RAII.
+    fs::path export_path = fs::temp_directory_path() /
+        ("mwaac_ref_v1_export_track1_" +
+         std::to_string(static_cast<long long>(sp0.start_sample)) + ".wav");
+    TempFile export_cleanup(export_path);
+
+    auto export_result = mwaac::write_track(
+        vinyl_file.value(), export_path,
+        sp0.start_sample, sp0.end_sample);
+    REQUIRE(export_result.has_value());
+
+    // INV-REF-2: byte-identity over the sample-data region. write_track
+    // does a raw byte copy from [start_sample * bytes_per_frame ..
+    // end_sample+1) ; the exported file's data region must match those
+    // source bytes exactly.
+    const int64_t bpf = info.bytes_per_frame();
+    const int64_t source_offset =
+        info.data_offset + sp0.start_sample * bpf;
+    const int64_t region_size = (sp0.end_sample - sp0.start_sample + 1) * bpf;
+    REQUIRE(region_size > 0);
+
+    auto exported = mwaac::AudioFile::open(export_path);
+    REQUIRE(exported.has_value());
+    const auto& exp_info = exported.value().info();
+    REQUIRE(exp_info.bytes_per_frame() == bpf);
+    REQUIRE(exp_info.data_size >= region_size);
+
+    auto source_bytes = read_raw_bytes(
+        vinyl_path,
+        static_cast<size_t>(source_offset),
+        static_cast<size_t>(region_size));
+    auto export_bytes = read_raw_bytes(
+        export_path,
+        static_cast<size_t>(exp_info.data_offset),
+        static_cast<size_t>(region_size));
+    REQUIRE(source_bytes.size() == export_bytes.size());
+    CHECK(source_bytes == export_bytes);
 }
 
 // =============================================================================
