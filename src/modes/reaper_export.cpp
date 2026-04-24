@@ -247,7 +247,10 @@ bool write_reaper_project(
     os << "  MASTER_NCH 2 2\n";
     os << "  MASTER_VOLUME 1 0 -1 -1 1\n";
     os << "  MASTERTRACKHEIGHT 0 0\n";
-    // Render config: match project rate and write 24-bit PCM WAV.
+    // Render config. RENDER_RESAMPLE's third field = 1 makes renders use
+    // the project sample rate, so combined with the locked SAMPLERATE
+    // above, renders come out at the vinyl's native rate. RENDER_FMT
+    // 0 2 0 selects 24-bit PCM WAV.
     os << "  RENDER_FILE \"\"\n";
     os << "  RENDER_PATTERN \"$project-$track\"\n";
     os << "  RENDER_FMT 0 2 0\n";
@@ -257,8 +260,6 @@ bool write_reaper_project(
     os << "  RENDER_ADDTOPROJ 0\n";
     os << "  RENDER_STEMS 0\n";
     os << "  RENDER_DITHER 0\n";
-    // Force render sample rate to project rate (0 = use project rate).
-    os << "  RENDER_SRATE " << native_sample_rate << "\n";
 
     // Track 1: References
     write_track_header(os, "  ", "References", 1);
