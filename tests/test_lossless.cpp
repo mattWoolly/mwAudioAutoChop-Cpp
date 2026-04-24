@@ -134,8 +134,13 @@ TEST_CASE("WAV header has correct parameters", "[lossless]") {
     REQUIRE(header[35] == std::byte{0x00});
 }
 
-// AIFF header tests temporarily disabled - investigate stack smash issue
-TEST_CASE("AIFF header has correct structure", "[lossless][.]") {
+// Previously disabled with the [.] tag and the comment
+// "temporarily disabled - investigate stack smash issue". Disabling the
+// test masked a real live defect: encode_float80 writes 11 bytes into a
+// 10-byte std::byte buffer (see C-1 in REMEDIATION_REPORT/BACKLOG).
+// Re-enabled so the stack smash surfaces under ASan. Do not re-tag [.]
+// without fixing the underlying encode_float80 overrun.
+TEST_CASE("AIFF header has correct structure", "[lossless]") {
     // Use very small values for testing
     int64_t num_frames = 100;
     int64_t data_size = num_frames * 2 * 3;  // 100 frames * 2 channels * 3 bytes per sample
@@ -167,7 +172,9 @@ TEST_CASE("AIFF header has correct structure", "[lossless][.]") {
     REQUIRE(header[41] == std::byte{'D'});
 }
 
-TEST_CASE("AIFF header has correct parameters", "[lossless][.]") {
+// Re-enabled alongside the "has correct structure" case above. See the
+// comment there for context on the encode_float80 defect this exposes.
+TEST_CASE("AIFF header has correct parameters", "[lossless]") {
     int64_t num_frames = 48000;
     int64_t data_size = num_frames * 2 * 3;
     

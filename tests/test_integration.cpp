@@ -822,7 +822,3 @@ TEST_CASE("Combined workflow: reference then blind analysis", "[integration][com
     }
 }
 
-TEST_CASE("Integration test cleanup", "[integration][.]") {
-    // Placeholder to ensure [integration] tag exists even if all tests are skipped
-    REQUIRE(true);
-}
