@@ -5,6 +5,7 @@
 #include <iomanip>
 #include "modes/reference_mode.hpp"
 #include "modes/blind_mode.hpp"
+#include "modes/reaper_export.hpp"
 #include "core/audio_file.hpp"
 #include "core/audio_buffer.hpp"
 #include "core/verbose.hpp"
@@ -27,6 +28,8 @@ void print_help() {
               << "Reference Options:\n"
               << "  -r, --reference <path>   Reference tracks directory (required)\n"
               << "  -o, --output <path>      Output directory (required)\n"
+              << "  --reaper <path>          Also write a REAPER .rpp project for A/B\n"
+              << "                           comparison and non-destructive fine-tuning\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
               << "\n"
@@ -62,9 +65,10 @@ int main(int argc, char* argv[]) {
         fs::path vinyl_path = argv[2];
         fs::path reference_path;
         fs::path output_dir;
+        fs::path reaper_path;
         bool dry_run = false;
         bool verbose = false;  // TODO: implement verbose output
-        
+
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
             std::string arg = argv[i];
@@ -72,6 +76,8 @@ int main(int argc, char* argv[]) {
                 reference_path = argv[++i];
             } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
                 output_dir = argv[++i];
+            } else if ((arg == "--reaper") && i + 1 < argc) {
+                reaper_path = argv[++i];
             } else if (arg == "--dry-run") {
                 dry_run = true;
             } else if (arg == "-v" || arg == "--verbose") {
@@ -161,9 +167,24 @@ int main(int argc, char* argv[]) {
         }
         
         std::cout << "\nDone! Wrote " << analysis.split_points.size() << " track(s)\n";
+
+        // Optionally write a REAPER project so the user can A/B-compare the
+        // chops against the references and drag item edges to fix any
+        // boundaries that aren't quite right. Non-destructive — items
+        // reference the original vinyl and reference files directly.
+        if (!reaper_path.empty()) {
+            bool ok = mwaac::write_reaper_project(
+                reaper_path, vinyl_path, reference_path,
+                analysis.split_points, native_sr);
+            if (ok) {
+                std::cout << "Wrote REAPER project: " << reaper_path << "\n";
+            } else {
+                std::cerr << "Failed to write REAPER project to " << reaper_path << "\n";
+            }
+        }
         return 0;
     }
-    
+
     if (command == "blind") {
         if (argc < 3) {
             std::cerr << "Error: vinyl path required\n";

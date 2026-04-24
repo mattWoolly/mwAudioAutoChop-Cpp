@@ -280,6 +280,85 @@ int64_t measure_fade_in_samples(
     return fade_end_frame * frame_size;
 }
 
+// Compute the RMS envelope of a signal at fixed-duration frames. Returns
+// one RMS value per `frame_ms` of audio. Used for envelope cross-correlation,
+// which aligns tracks based on their amplitude profile over time — much
+// more robust to content ambiguity than waveform correlation for signals
+// with distinctive shape (fade-ins, breakdowns, sparse rhythmic content).
+std::vector<float> compute_rms_envelope(
+    std::span<const float> samples,
+    int sample_rate,
+    double frame_ms = 50.0)
+{
+    int64_t frame_size = std::max<int64_t>(1,
+        static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
+    int64_t n_frames = static_cast<int64_t>(samples.size()) / frame_size;
+    std::vector<float> env(static_cast<size_t>(n_frames));
+    for (int64_t f = 0; f < n_frames; ++f) {
+        double ss = 0.0;
+        int64_t base = f * frame_size;
+        for (int64_t i = 0; i < frame_size; ++i) {
+            double s = samples[base + i];
+            ss += s * s;
+        }
+        env[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(ss / frame_size));
+    }
+    return env;
+}
+
+// Envelope cross-correlation: align the reference's RMS envelope with the
+// vinyl's RMS envelope in a window around the expected start. Because the
+// envelope captures the track's amplitude *shape* over time — fade-ins,
+// breakdowns, peaks, outros — correlating envelopes is insensitive to the
+// musical ambiguity (rhythmic repetition, bar offsets) that fools waveform
+// correlation on electronic music, and it locks on the global shape
+// including the fade-in region.
+//
+// Returns the refined absolute vinyl track start, or -1 if the window
+// couldn't be built. Also writes the envelope peak confidence to
+// *out_conf when provided.
+int64_t envelope_refine_start(
+    std::span<const float> vinyl_samples,
+    std::span<const float> ref_samples,
+    int sample_rate,
+    int64_t expected_track_start,
+    double search_radius_s = 12.0,
+    double frame_ms = 50.0,
+    double* out_conf = nullptr)
+{
+    if (out_conf) *out_conf = 0.0;
+    if (ref_samples.empty() || vinyl_samples.empty()) return -1;
+
+    int64_t frame_size = std::max<int64_t>(1,
+        static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
+
+    // Build the vinyl window
+    int64_t radius = static_cast<int64_t>(search_radius_s * sample_rate);
+    int64_t window_start = std::max<int64_t>(0, expected_track_start - radius);
+    int64_t window_end = std::min(
+        static_cast<int64_t>(vinyl_samples.size()),
+        expected_track_start + radius + static_cast<int64_t>(ref_samples.size()));
+    if (window_end - window_start < static_cast<int64_t>(ref_samples.size())) {
+        return -1;
+    }
+
+    std::vector<float> ref_env = compute_rms_envelope(ref_samples, sample_rate, frame_ms);
+    std::span<const float> window_span(
+        vinyl_samples.data() + window_start,
+        static_cast<size_t>(window_end - window_start));
+    std::vector<float> vinyl_env = compute_rms_envelope(window_span, sample_rate, frame_ms);
+
+    if (ref_env.size() < 2 || vinyl_env.size() < ref_env.size() + 1) return -1;
+
+    CorrelationResult r = cross_correlate_fft(ref_env, vinyl_env);
+    if (out_conf) *out_conf = r.peak_value;
+
+    // Envelope-frame lag -> sample position. The envelope starts at sample 0
+    // of the window, so frame `r.lag` is at sample `r.lag * frame_size`
+    // from window_start.
+    return window_start + r.lag * frame_size;
+}
+
 // Count the number of leading samples that are essentially digital silence.
 // Digital silence is distinguished from quiet-but-audible content (like a
 // fade-in) by the absolute sample magnitude: digital zero reads as 0 or
@@ -392,13 +471,14 @@ struct SnippetVote {
     int64_t snippet_offset_in_ref{0};  // for logging/debug
 };
 
-// Correlate a 5-second (or given length) slice of reference, starting at
-// `snippet_offset_in_ref`, against a narrow window of the vinyl at full
-// resolution. Returns the track-start implied by the peak, together with
-// the correlation confidence. The track start is derived by subtracting
-// `snippet_offset_in_ref` from the vinyl position where the snippet was
-// located — this works regardless of whether the snippet came from the
-// intro, the middle, or the tail of the track.
+// Correlate a short reference snippet starting at `snippet_offset_in_ref`
+// against a vinyl window via FFT-based normalized cross-correlation. With
+// FFT, the search window can be wide (tens of seconds) without a runtime
+// penalty — crucial for tracks where coarse correlation misses the true
+// peak by several seconds (fade-ins, repetitive rhythmic content).
+//
+// Returns the implied track start (vinyl sample where ref[0] would be)
+// along with the peak correlation value.
 SnippetVote correlate_snippet(
     std::span<const float> vinyl_processed,
     std::span<const float> ref_processed,
@@ -417,7 +497,7 @@ SnippetVote correlate_snippet(
         static_cast<int64_t>(ref_processed.size()) - snippet_offset_in_ref);
     if (snippet_len < sample_rate / 2) return vote;  // need ≥0.5 s
 
-    // Where we expect the snippet to land in the vinyl:
+    // Build a wide vinyl window centered on where we expect the snippet.
     int64_t expected_snippet_pos = expected_track_start + snippet_offset_in_ref;
     int64_t search_radius = static_cast<int64_t>(search_radius_s * sample_rate);
     int64_t window_start = std::max<int64_t>(0, expected_snippet_pos - search_radius);
@@ -426,64 +506,19 @@ SnippetVote correlate_snippet(
         expected_snippet_pos + search_radius + snippet_len);
     if (window_end - window_start < snippet_len + 1) return vote;
 
-    // Zero-mean the snippet
-    double ref_mean = 0.0;
-    for (int64_t i = 0; i < snippet_len; ++i) {
-        ref_mean += ref_processed[snippet_offset_in_ref + i];
-    }
-    ref_mean /= snippet_len;
+    // Slice views for the FFT routine.
+    std::span<const float> ref_span(
+        ref_processed.data() + snippet_offset_in_ref,
+        static_cast<size_t>(snippet_len));
+    std::span<const float> tgt_span(
+        vinyl_processed.data() + window_start,
+        static_cast<size_t>(window_end - window_start));
 
-    std::vector<double> ref_norm(snippet_len);
-    double ref_energy = 0.0;
-    for (int64_t i = 0; i < snippet_len; ++i) {
-        ref_norm[i] = ref_processed[snippet_offset_in_ref + i] - ref_mean;
-        ref_energy += ref_norm[i] * ref_norm[i];
-    }
-    if (ref_energy < 1e-10) return vote;
+    CorrelationResult r = cross_correlate_fft(ref_span, tgt_span);
+    int64_t snippet_vinyl_pos = window_start + r.lag;
 
-    // Prefix sums for O(1) per-lag target mean/energy
-    int64_t window_size = window_end - window_start;
-    std::vector<double> prefix_sum(window_size + 1, 0.0);
-    std::vector<double> prefix_sum_sq(window_size + 1, 0.0);
-    for (int64_t i = 0; i < window_size; ++i) {
-        double s = vinyl_processed[window_start + i];
-        prefix_sum[i + 1]    = prefix_sum[i]    + s;
-        prefix_sum_sq[i + 1] = prefix_sum_sq[i] + s * s;
-    }
-
-    int64_t max_lag = window_size - snippet_len;
-    double best_corr = -std::numeric_limits<double>::infinity();
-    int64_t best_lag = expected_snippet_pos - window_start;  // default
-
-    for (int64_t lag = 0; lag <= max_lag; ++lag) {
-        double tgt_sum    = prefix_sum[lag + snippet_len]    - prefix_sum[lag];
-        double tgt_sum_sq = prefix_sum_sq[lag + snippet_len] - prefix_sum_sq[lag];
-        double tgt_mean   = tgt_sum / snippet_len;
-        double tgt_energy = tgt_sum_sq - (tgt_sum * tgt_sum) / snippet_len;
-        if (tgt_energy < 1e-10) continue;
-
-        double sum = 0.0;
-        const float* tgt_ptr = vinyl_processed.data() + window_start + lag;
-        for (int64_t i = 0; i < snippet_len; ++i) {
-            double t = tgt_ptr[i] - tgt_mean;
-            sum += ref_norm[i] * t;
-        }
-
-        double norm = std::sqrt(ref_energy * tgt_energy);
-        double corr = sum / norm;
-        if (corr > best_corr) {
-            best_corr = corr;
-            best_lag = lag;
-        }
-    }
-
-    if (!std::isfinite(best_corr)) best_corr = 0.0;
-
-    // Vinyl position where the snippet landed:
-    int64_t snippet_vinyl_pos = window_start + best_lag;
-    // Imply the track start (where ref[0] would be):
     vote.implied_track_start = snippet_vinyl_pos - snippet_offset_in_ref;
-    vote.snippet_conf = best_corr;
+    vote.snippet_conf = r.peak_value;
     return vote;
 }
 
@@ -525,11 +560,13 @@ MultiRefineResult multi_snippet_refine(
     int64_t ref_size = static_cast<int64_t>(ref_processed.size());
     int64_t snippet_samples = static_cast<int64_t>(snippet_seconds * sample_rate);
 
+    // With FFT-backed correlation, wide radii are free — let the refine
+    // reach the true peak even when coarse was off by many seconds.
     struct SnippetSpec { int64_t offset; double radius; };
     std::vector<SnippetSpec> specs = {
-        { onset,                                1.5 },
-        { std::max<int64_t>(onset, (ref_size * 2) / 5), 2.5 },
-        { std::max<int64_t>(onset, (ref_size * 4) / 5), 2.5 },
+        { onset,                                        10.0 },
+        { std::max<int64_t>(onset, (ref_size * 2) / 5), 10.0 },
+        { std::max<int64_t>(onset, (ref_size * 4) / 5), 10.0 },
     };
     for (auto& s : specs) {
         if (s.offset + snippet_samples > ref_size) {
@@ -903,23 +940,51 @@ std::vector<std::pair<int64_t, double>> align_per_track(
             }
         }
 
-        // Fade-in compensation: correlation finds its peak where content is
-        // distinctive, which for a gradual fade-in is *past* the fade (the
-        // quiet ramp contributes little). The chosen position ends up inside
-        // the fade rather than at its start, truncating the intro. Detect a
-        // meaningful gradual fade-in in the reference and shift back by its
-        // duration so the output captures the whole fade-in.
-        int64_t fade_in_samples = measure_fade_in_samples(
-            track.audio.samples, track.audio.sample_rate);
-        if (fade_in_samples > 0) {
-            chosen_pos -= fade_in_samples;
-            if (g_verbose) {
-                double fade_s = static_cast<double>(fade_in_samples)
-                                / track.audio.sample_rate;
+        // Envelope-based fine alignment: cross-correlate the RMS envelope
+        // of the reference against the vinyl's envelope in a wide window
+        // around the current chosen position. The envelope captures the
+        // track's amplitude shape (fade-ins, dynamics, breakdowns), which
+        // is distinctive even when raw-waveform correlation is ambiguous
+        // (repetitive rhythmic content, gradual fade-ins). Applied after
+        // the waveform-based multi-snippet refine; accepted only when the
+        // envelope shows a clear peak AND the shift from the waveform
+        // result is modest, so it corrects fade-in truncation without
+        // introducing new drift on well-anchored tracks.
+        if (track.duration_samples >= static_cast<int64_t>(10 * track.audio.sample_rate)) {
+            double env_conf = 0.0;
+            int64_t env_start = envelope_refine_start(
+                vinyl.samples, track.audio.samples, vinyl.sample_rate,
+                chosen_pos,
+                /*search_radius_s=*/5.0,
+                /*frame_ms=*/50.0,
+                &env_conf);
+
+            if (env_start >= 0 && std::isfinite(env_conf) && env_conf >= 0.60) {
+                int64_t shift = env_start - chosen_pos;
+                double shift_s = static_cast<double>(shift) / vinyl.sample_rate;
+                // Only apply modest corrections; large envelope shifts are
+                // usually spurious (envelope repeats at long intervals too).
+                if (std::abs(shift_s) <= 4.0) {
+                    chosen_pos = env_start;
+                    if (g_verbose) {
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision(3);
+                        oss << "    Envelope refine: " << shift_s
+                            << "s shift, conf " << env_conf;
+                        verbose(oss.str());
+                    }
+                } else if (g_verbose) {
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(3);
+                    oss << "    Envelope refine: would shift " << shift_s
+                        << "s (conf " << env_conf << ") — too large, ignored";
+                    verbose(oss.str());
+                }
+            } else if (g_verbose) {
                 std::ostringstream oss;
                 oss << std::fixed << std::setprecision(3);
-                oss << "    Fade-in detected (" << fade_s << "s) — shifted"
-                    << " track start back to include the full fade";
+                oss << "    Envelope refine: low conf " << env_conf
+                    << " — keeping waveform result";
                 verbose(oss.str());
             }
         }

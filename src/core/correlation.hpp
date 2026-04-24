@@ -45,4 +45,22 @@ CorrelationResult cross_correlate_fast(
     int downsample_factor = 100  // Default 100x reduction
 );
 
+// FFT-based normalized cross-correlation. Returns the best lag (sample
+// offset in target where reference aligns) and its normalized peak value.
+// Searches only valid lags [0, target.size - reference.size] — the
+// reference must fully fit inside the target slice.
+//
+// Vastly faster than the naive implementation for long signals, so the
+// caller can use a MUCH wider target window (e.g. +-10 s instead of
+// +-1.5 s) without runtime penalty. This is the key to reliable
+// alignment on tracks where coarse correlation misses the true peak.
+//
+// Correlation is zero-mean on both sides and normalized per-lag by each
+// slice's own energy (standard Pearson NCC), so the peak value is in
+// [-1, 1] and directly comparable to the naive version.
+CorrelationResult cross_correlate_fft(
+    std::span<const float> reference,
+    std::span<const float> target
+);
+
 } // namespace mwaac
