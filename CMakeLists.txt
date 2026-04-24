@@ -12,12 +12,72 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 endif()
 
-# Compiler warnings
+# Warning and sanitizer harness.
+#
+# MWAAC_WERROR defaults ON because PROJECT_SPEC.md's quality gate demands
+# warning-free builds. Clearing it is only for local investigative builds;
+# CI must keep it ON.
+#
+# MWAAC_SANITIZE turns on AddressSanitizer + UndefinedBehaviorSanitizer.
+# Keep OFF in Release, ON in the dedicated CI sanitizer job (Debug build).
+# The two sanitizers compose cleanly; together they catch the UB paths the
+# Knuth-level review flagged (reinterpret_cast into wrong-type storage,
+# stack buffer overflow in encode_float80, division-by-zero in ZCR on
+# one-sample frames, etc.).
+#
+# The warning set below is scoped to OUR targets only (see mwaac_apply_flags
+# helper and its uses after the FetchContent_MakeAvailable calls).
+# Applying -Werror to third-party code via add_compile_options would fail
+# to build FTXUI / libsndfile / Catch2, which legitimately produce warnings
+# under -Wconversion / -Wold-style-cast.
+option(MWAAC_WERROR "Treat warnings as errors" ON)
+option(MWAAC_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
 if(MSVC)
-    add_compile_options(/W4 /WX)
+    set(MWAAC_WARNINGS /W4 /permissive-)
+    if(MWAAC_WERROR)
+        list(APPEND MWAAC_WARNINGS /WX)
+    endif()
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    set(MWAAC_WARNINGS
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wconversion
+        -Wsign-conversion
+        -Wold-style-cast
+        -Wcast-align
+        -Wnon-virtual-dtor
+        -Wdouble-promotion
+        -Wformat=2
+        -Wimplicit-fallthrough
+    )
+    if(MWAAC_WERROR)
+        list(APPEND MWAAC_WARNINGS -Werror)
+    endif()
 endif()
+
+# Sanitizers go on every target we build (our code AND tests). Third-party
+# code compiled by FetchContent does not need them — the sanitizer runtime
+# is whole-program. Putting these in add_compile_options (directory scope)
+# is correct here because the runtime needs to be consistent across all TUs.
+if(MWAAC_SANITIZE)
+    if(MSVC)
+        message(WARNING "MWAAC_SANITIZE is not supported on MSVC; ignoring")
+    else()
+        message(STATUS "Sanitizers enabled: address, undefined")
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address,undefined)
+    endif()
+endif()
+
+# Apply the warning set to one of our targets. Use after the target is
+# declared. Keep this as a function so every target goes through one
+# check-point.
+function(mwaac_apply_flags target)
+    target_compile_options(${target} PRIVATE ${MWAAC_WARNINGS})
+endfunction()
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -124,6 +184,7 @@ target_include_directories(mwaac_core PUBLIC
 )
 target_compile_features(mwaac_core PUBLIC cxx_std_20)
 target_link_libraries(mwaac_core PUBLIC mwaac_sndfile)
+mwaac_apply_flags(mwaac_core)
 
 set(SOURCES
     src/main.cpp
@@ -136,6 +197,7 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
+mwaac_apply_flags(${PROJECT_NAME})
 
 # TUI library
 add_library(mwaac_tui STATIC ${TUI_SOURCES})
@@ -147,6 +209,7 @@ target_link_libraries(mwaac_tui PRIVATE
     ftxui::component
     ftxui::dom
 )
+mwaac_apply_flags(mwaac_tui)
 
 # Link core library and dependencies to main executable.
 # mwaac_sndfile is a single normalized target name for libsndfile regardless
@@ -162,48 +225,25 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # Tests
 # =============================================================================
 
-add_executable(test_basic tests/test_basic.cpp)
-target_link_libraries(test_basic PRIVATE Catch2::Catch2WithMain)
+# Test targets. Factored through a helper so every test binary goes
+# through the same warning-and-sanitizer flags as production code.
+function(mwaac_add_test name)
+    add_executable(${name} tests/${name}.cpp)
+    target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ${ARGN})
+    mwaac_apply_flags(${name})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-add_executable(test_audio_file tests/test_audio_file.cpp)
-target_link_libraries(test_audio_file PRIVATE mwaac_core Catch2::Catch2WithMain)
-
-# Register tests with CTest
-add_test(NAME test_basic COMMAND test_basic)
-add_test(NAME test_audio_file COMMAND test_audio_file)
-
-add_executable(test_audio_buffer tests/test_audio_buffer.cpp)
-target_link_libraries(test_audio_buffer PRIVATE Catch2::Catch2WithMain mwaac_core)
-
-add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
-
-add_executable(test_correlation tests/test_correlation.cpp)
-target_link_libraries(test_correlation PRIVATE Catch2::Catch2WithMain mwaac_core)
-add_test(NAME test_correlation COMMAND test_correlation)
-
-add_executable(test_music_detection tests/test_music_detection.cpp)
-target_link_libraries(test_music_detection PRIVATE Catch2::Catch2WithMain mwaac_core)
-add_test(NAME test_music_detection COMMAND test_music_detection)
-
-add_executable(test_lossless tests/test_lossless.cpp)
-target_link_libraries(test_lossless PRIVATE Catch2::Catch2WithMain mwaac_core mwaac_sndfile)
-add_test(NAME test_lossless COMMAND test_lossless)
-
-add_executable(test_analysis tests/test_analysis.cpp)
-target_link_libraries(test_analysis PRIVATE Catch2::Catch2WithMain mwaac_core)
-add_test(NAME test_analysis COMMAND test_analysis)
-
-add_executable(test_reference_mode tests/test_reference_mode.cpp)
-target_link_libraries(test_reference_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
-add_test(NAME test_reference_mode COMMAND test_reference_mode)
-
-add_executable(test_blind_mode tests/test_blind_mode.cpp)
-target_link_libraries(test_blind_mode PRIVATE Catch2::Catch2WithMain mwaac_core)
-add_test(NAME test_blind_mode COMMAND test_blind_mode)
-
-add_executable(test_integration tests/test_integration.cpp)
-target_link_libraries(test_integration PRIVATE Catch2::Catch2WithMain mwaac_core mwaac_sndfile)
-add_test(NAME test_integration COMMAND test_integration)
+mwaac_add_test(test_basic)
+mwaac_add_test(test_audio_file        mwaac_core)
+mwaac_add_test(test_audio_buffer      mwaac_core)
+mwaac_add_test(test_correlation       mwaac_core)
+mwaac_add_test(test_music_detection   mwaac_core)
+mwaac_add_test(test_lossless          mwaac_core mwaac_sndfile)
+mwaac_add_test(test_analysis          mwaac_core)
+mwaac_add_test(test_reference_mode    mwaac_core)
+mwaac_add_test(test_blind_mode        mwaac_core)
+mwaac_add_test(test_integration       mwaac_core mwaac_sndfile)
 
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
