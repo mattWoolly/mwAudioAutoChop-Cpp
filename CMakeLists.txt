@@ -104,6 +104,7 @@ set(CORE_SOURCES
 set(REFERENCE_SOURCES
     src/modes/reference_mode.cpp
     src/modes/blind_mode.cpp
+    src/modes/reaper_export.cpp
 )
 
 # TUI sources
