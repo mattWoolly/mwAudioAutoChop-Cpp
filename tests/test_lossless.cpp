@@ -373,6 +373,103 @@ TEST_CASE("Lossless export with different bit depths", "[lossless]") {
     }
 }
 
+// =============================================================================
+// FIXTURE-WAVEEXT — round-trip a 24-bit WAVE_FORMAT_EXTENSIBLE source.
+//
+// Today this fails for two reasons:
+//   1) AudioFile::open rejects audio_format == 0xFFFE outright, so we
+//      can't even begin (M-3).
+//   2) Even if we could open it, write_track's header builder does not
+//      know how to emit an EXTENSIBLE header back, which is the
+//      separately-tracked NEW-WAVEEXT-WRITE defect.
+//
+// `[!shouldfail]` until both M-3 and the EXTENSIBLE-emit pieces land;
+// the tag is removed in the same PR that lands those fixes.
+// =============================================================================
+
+#ifndef MWAAC_FIXTURE_WAVEEXT_DIR
+#error "MWAAC_FIXTURE_WAVEEXT_DIR must be defined by tests/fixtures/waveext/CMakeLists.txt"
+#endif
+
+namespace {
+
+std::vector<uint8_t> slurp_full_file(const fs::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    auto size = file.tellg();
+    file.seekg(0);
+    std::vector<uint8_t> data(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char*>(data.data()), size);
+    return data;
+}
+
+} // namespace
+
+TEST_CASE("Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes",
+          "[lossless][waveext][!shouldfail]") {
+    fs::path source_path =
+        fs::path(MWAAC_FIXTURE_WAVEEXT_DIR) / "pcm_24bit_stereo.wav";
+    REQUIRE(fs::exists(source_path));
+
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_waveext";
+    fs::create_directories(test_dir);
+    fs::path output_path = test_dir / "output_waveext_stereo.wav";
+    TempFile output_cleanup(output_path);
+    TempFile dir_cleanup(test_dir);
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    auto& audio_file = open_result.value();
+    const auto& info = audio_file.info();
+    REQUIRE(info.channels == 2);
+    REQUIRE(info.sample_rate == 48000);
+    REQUIRE(info.bits_per_sample == 24);
+    REQUIRE(info.frames == 48000);
+
+    // Extract a deterministic mid-file region so we know we are
+    // exercising the offset arithmetic, not just a from-zero copy.
+    constexpr int64_t start_sample = 1000;
+    constexpr int64_t end_sample   = 5000;
+    constexpr int64_t extract_frames = end_sample - start_sample + 1;
+
+    auto write_result = mwaac::write_track(audio_file, output_path,
+                                           start_sample, end_sample);
+    REQUIRE(write_result.has_value());
+
+    int64_t bytes_per_frame = info.bytes_per_frame();
+    int64_t source_offset   = info.data_offset + start_sample * bytes_per_frame;
+    int64_t extract_bytes   = extract_frames * bytes_per_frame;
+
+    auto source_data_bytes = read_raw_bytes(source_path,
+                                            static_cast<size_t>(source_offset),
+                                            static_cast<size_t>(extract_bytes));
+
+    // The output must itself be a valid (re-openable) WAV whose data
+    // section equals the source's extracted region byte-for-byte. We
+    // re-open through AudioFile rather than assuming a 44-byte header,
+    // because a correctly-written EXTENSIBLE output will have a larger
+    // header than 44 bytes.
+    auto output_open = mwaac::AudioFile::open(output_path);
+    REQUIRE(output_open.has_value());
+    const auto& out_info = output_open.value().info();
+    CHECK(out_info.channels == 2);
+    CHECK(out_info.sample_rate == 48000);
+    CHECK(out_info.bits_per_sample == 24);
+    CHECK(out_info.frames == extract_frames);
+
+    auto output_data_bytes = read_raw_bytes(output_path,
+                                            static_cast<size_t>(out_info.data_offset),
+                                            static_cast<size_t>(extract_bytes));
+    REQUIRE(source_data_bytes.size() == output_data_bytes.size());
+    REQUIRE(source_data_bytes == output_data_bytes);
+
+    // Suppress unused-function warning under the `[!shouldfail]` path
+    // where a REQUIRE upstream may early-exit before slurp_full_file
+    // is reached.
+    (void)slurp_full_file;
+}
+
 TEST_CASE("Output WAV header has correct metadata", "[lossless]") {
     fs::path test_dir = fs::temp_directory_path() / "mwaac_test_header";
     fs::create_directories(test_dir);
