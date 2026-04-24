@@ -180,6 +180,8 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] For RF64 *input*, output is RF64 regardless of size (preserves
         format identity).
   - [ ] Round-trip SHA-256 on sample region matches source.
+  - [ ] Remove the `[!shouldfail]` tag on the RF64 round-trip test in
+        `tests/test_lossless.cpp` in the same PR.
 
 ### C-4 — Rate-conversion truncation breaks "sample-accurate" claim
 
@@ -306,6 +308,8 @@ migration to `std::expected`-style storage happens in M-14.
 - **Exit criteria.**
   - [ ] Both previously-failing integration tests
         (`Lossless end-to-end: verify exported file formats`) now pass.
+  - [ ] Remove the `[!shouldfail]` tags on the four EXTENSIBLE tests added
+        by FIXTURE-WAVEEXT in the same PR.
 
 ### M-4 — RF64 data placeholder confuses chunk walker
 
@@ -314,12 +318,22 @@ migration to `std::expected`-style storage happens in M-14.
 - **Invariant established.** "For RF64 files where ds64 appears after data,
   parse_wav_header still recovers the correct data_size."
 - **Depends on.** FIXTURE-RF64.
-- **Files touched.** `src/core/audio_file.cpp`.
+- **Files touched.** `src/core/audio_file.cpp`, `tests/test_lossless.cpp`.
 - **Tests added.**
   - Shared with FIXTURE-RF64's `ds64 after data` case.
 - **Exit criteria.**
   - [ ] Two-pass scan, or use ds64's RIFF-size when present to cap the
         walker, or break out of the loop after recognising RF64 + data.
+  - [ ] The helper `rf64_read_full_with_tail` in `tests/test_lossless.cpp`
+        (introduced by FIXTURE-RF64 as a documented stub returning head
+        only) is revised to feed the parser the exact shape the M-4 fix
+        expects — head-plus-tail slice, full file, or two-pass scan as
+        appropriate. Otherwise the `ds64-after-data` test will silently
+        pass by not-actually-exercising the fix. *Raised by invariant-agent
+        during Tier 1 fixture audit.*
+  - [ ] Remove the `[!shouldfail]` tag on the `ds64-after-data` test in
+        the same PR — the absence of that tag after M-4 lands is the
+        positive check that M-4 closed its invariant.
 
 ### M-5 — AIFF SSND offset field assumed zero
 
