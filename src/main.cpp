@@ -106,22 +106,14 @@ int main(int argc, char* argv[]) {
         // Print results
         std::cout << "=== REFERENCE Mode Analysis ===\n";
         std::cout << "Found " << analysis.split_points.size() << " track(s)\n\n";
-        
+
         // Get native sample rate
         auto audio_file = mwaac::AudioFile::open(vinyl_path);
         int native_sr = audio_file ? audio_file.value().info().sample_rate : 44100;
-        
-        // Fix end samples (last track goes to end of file)
-        int64_t total_frames = audio_file ? audio_file.value().info().frames : 0;
-        for (size_t i = 0; i < analysis.split_points.size(); ++i) {
-            auto& sp = analysis.split_points[i];
-            if (i + 1 < analysis.split_points.size()) {
-                sp.end_sample = analysis.split_points[i + 1].start_sample - 1;
-            } else {
-                sp.end_sample = total_frames - 1;
-            }
-        }
-        
+
+        // Reference mode fills in end_sample (including dead-space trimming)
+        // before returning; no post-processing needed here.
+
         // Print track info
         for (size_t i = 0; i < analysis.split_points.size(); ++i) {
             auto& sp = analysis.split_points[i];

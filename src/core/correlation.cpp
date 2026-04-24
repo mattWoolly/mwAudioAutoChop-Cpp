@@ -135,79 +135,104 @@ CorrelationResult cross_correlate_fast(
     std::span<const float> target,
     int downsample_factor)
 {
-    if (reference.empty() || target.empty()) {
+    if (reference.empty() || target.empty() || reference.size() > target.size()) {
         return {0, 0.0};
     }
-    
-    // Stage 1: Coarse search with downsampled audio
+
+    // Stage 1: Coarse search on downsampled signals.
+    // Restricted to valid lags [0, tgt_ds.size - ref_ds.size] — the reference
+    // must fit fully inside the target slice. Callers (reference mode) already
+    // position the target slice around the expected position, so searching
+    // negative lags (reference hanging off the front) just invites spurious
+    // matches against low-frequency content.
     auto ref_ds = downsample(reference, downsample_factor);
     auto tgt_ds = downsample(target, downsample_factor);
-    
-    auto coarse_result = cross_correlate(ref_ds, tgt_ds);
-    
-    // Convert coarse lag back to full resolution
-    int64_t coarse_lag = coarse_result.lag * downsample_factor;
-    
-    // Stage 2: Refine around coarse position with full resolution
-    // Use a narrow window around the coarse result
-    int64_t refine_radius = downsample_factor * 2;  // Search +/- 2 coarse samples
-    int64_t refine_start = coarse_lag - refine_radius;
-    int64_t refine_end = coarse_lag + refine_radius;
-    
-    // Only search valid lags (where reference overlaps target)
-    int64_t min_valid_lag = 0;
-    int64_t max_valid_lag = static_cast<int64_t>(target.size()) - 1;
-    
-    refine_start = std::max(refine_start, min_valid_lag);
-    refine_end = std::min(refine_end, max_valid_lag);
-    
-    // Normalize reference once
-    float ref_mean = std::accumulate(reference.begin(), reference.end(), 0.0f) / reference.size();
-    std::vector<float> ref_norm(reference.size());
-    std::transform(reference.begin(), reference.end(), ref_norm.begin(),
-                  [ref_mean](float s) { return s - ref_mean; });
-    
-    float ref_energy = 0.0f;
-    for (auto v : ref_norm) ref_energy += v * v;
-    
-    double best_corr = -std::numeric_limits<double>::infinity();
-    int64_t best_lag = coarse_lag;
-    
-    // Fine search
-    for (int64_t lag = refine_start; lag <= refine_end; ++lag) {
-        double sum = 0.0;
-        float tgt_energy = 0.0f;
-        
-        int64_t tgt_start = lag;
-        int64_t overlap_len = std::min(
-            static_cast<int64_t>(ref_norm.size()),
-            static_cast<int64_t>(target.size()) - tgt_start
-        );
-        
-        if (overlap_len <= 0) continue;
-        
-        // Compute mean for this target segment
-        float tgt_mean = 0.0f;
-        for (int64_t i = 0; i < overlap_len; ++i) {
-            tgt_mean += target[tgt_start + i];
+
+    if (ref_ds.empty() || tgt_ds.empty() || ref_ds.size() > tgt_ds.size()) {
+        return {0, 0.0};
+    }
+
+    double ref_ds_mean = std::accumulate(ref_ds.begin(), ref_ds.end(), 0.0) / ref_ds.size();
+    std::vector<float> ref_ds_norm(ref_ds.size());
+    std::transform(ref_ds.begin(), ref_ds.end(), ref_ds_norm.begin(),
+                   [ref_ds_mean](float s) { return s - static_cast<float>(ref_ds_mean); });
+
+    double ref_ds_energy = 0.0;
+    for (float v : ref_ds_norm) ref_ds_energy += static_cast<double>(v) * v;
+
+    int64_t ds_max_lag = static_cast<int64_t>(tgt_ds.size()) - static_cast<int64_t>(ref_ds_norm.size());
+
+    double best_coarse_corr = 0.0;
+    int64_t best_coarse_lag = 0;
+
+    for (int64_t lag = 0; lag <= ds_max_lag; ++lag) {
+        double tgt_mean = 0.0;
+        for (size_t i = 0; i < ref_ds_norm.size(); ++i) {
+            tgt_mean += tgt_ds[lag + i];
         }
-        tgt_mean /= overlap_len;
-        
-        for (int64_t i = 0; i < overlap_len; ++i) {
-            float t = target[tgt_start + i] - tgt_mean;
-            sum += ref_norm[i] * t;
+        tgt_mean /= ref_ds_norm.size();
+
+        double sum = 0.0;
+        double tgt_energy = 0.0;
+        for (size_t i = 0; i < ref_ds_norm.size(); ++i) {
+            double t = static_cast<double>(tgt_ds[lag + i]) - tgt_mean;
+            sum += static_cast<double>(ref_ds_norm[i]) * t;
             tgt_energy += t * t;
         }
-        
-        float norm = std::sqrt(ref_energy * tgt_energy);
-        double corr = (norm > 1e-10f) ? (sum / norm) : 0.0;
-        
+
+        double norm = std::sqrt(ref_ds_energy * tgt_energy);
+        double corr = (norm > 1e-10) ? (sum / norm) : 0.0;
+
+        if (corr > best_coarse_corr) {
+            best_coarse_corr = corr;
+            best_coarse_lag = lag;
+        }
+    }
+
+    int64_t coarse_lag = best_coarse_lag * downsample_factor;
+
+    // Stage 2: Refine around coarse position at full resolution.
+    int64_t max_valid_lag = static_cast<int64_t>(target.size()) - static_cast<int64_t>(reference.size());
+    int64_t refine_radius = downsample_factor * 2;
+    int64_t refine_start = std::max(int64_t{0}, coarse_lag - refine_radius);
+    int64_t refine_end = std::min(max_valid_lag, coarse_lag + refine_radius);
+
+    double ref_mean = std::accumulate(reference.begin(), reference.end(), 0.0) / reference.size();
+    std::vector<float> ref_norm(reference.size());
+    std::transform(reference.begin(), reference.end(), ref_norm.begin(),
+                   [ref_mean](float s) { return s - static_cast<float>(ref_mean); });
+
+    double ref_energy = 0.0;
+    for (float v : ref_norm) ref_energy += static_cast<double>(v) * v;
+
+    // Fall back to coarse result if refine can't improve on it.
+    double best_corr = best_coarse_corr;
+    int64_t best_lag = std::clamp(coarse_lag, int64_t{0}, std::max(int64_t{0}, max_valid_lag));
+
+    for (int64_t lag = refine_start; lag <= refine_end; ++lag) {
+        double tgt_mean = 0.0;
+        for (size_t i = 0; i < ref_norm.size(); ++i) {
+            tgt_mean += target[lag + i];
+        }
+        tgt_mean /= ref_norm.size();
+
+        double sum = 0.0;
+        double tgt_energy = 0.0;
+        for (size_t i = 0; i < ref_norm.size(); ++i) {
+            double t = static_cast<double>(target[lag + i]) - tgt_mean;
+            sum += static_cast<double>(ref_norm[i]) * t;
+            tgt_energy += t * t;
+        }
+
+        double norm = std::sqrt(ref_energy * tgt_energy);
+        double corr = (norm > 1e-10) ? (sum / norm) : 0.0;
+
         if (corr > best_corr) {
             best_corr = corr;
             best_lag = lag;
         }
     }
-    
+
     return {best_lag, best_corr};
 }
 
