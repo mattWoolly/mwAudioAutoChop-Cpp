@@ -280,6 +280,85 @@ int64_t measure_fade_in_samples(
     return fade_end_frame * frame_size;
 }
 
+// Compute the RMS envelope of a signal at fixed-duration frames. Returns
+// one RMS value per `frame_ms` of audio. Used for envelope cross-correlation,
+// which aligns tracks based on their amplitude profile over time — much
+// more robust to content ambiguity than waveform correlation for signals
+// with distinctive shape (fade-ins, breakdowns, sparse rhythmic content).
+std::vector<float> compute_rms_envelope(
+    std::span<const float> samples,
+    int sample_rate,
+    double frame_ms = 50.0)
+{
+    int64_t frame_size = std::max<int64_t>(1,
+        static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
+    int64_t n_frames = static_cast<int64_t>(samples.size()) / frame_size;
+    std::vector<float> env(static_cast<size_t>(n_frames));
+    for (int64_t f = 0; f < n_frames; ++f) {
+        double ss = 0.0;
+        int64_t base = f * frame_size;
+        for (int64_t i = 0; i < frame_size; ++i) {
+            double s = samples[base + i];
+            ss += s * s;
+        }
+        env[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(ss / frame_size));
+    }
+    return env;
+}
+
+// Envelope cross-correlation: align the reference's RMS envelope with the
+// vinyl's RMS envelope in a window around the expected start. Because the
+// envelope captures the track's amplitude *shape* over time — fade-ins,
+// breakdowns, peaks, outros — correlating envelopes is insensitive to the
+// musical ambiguity (rhythmic repetition, bar offsets) that fools waveform
+// correlation on electronic music, and it locks on the global shape
+// including the fade-in region.
+//
+// Returns the refined absolute vinyl track start, or -1 if the window
+// couldn't be built. Also writes the envelope peak confidence to
+// *out_conf when provided.
+int64_t envelope_refine_start(
+    std::span<const float> vinyl_samples,
+    std::span<const float> ref_samples,
+    int sample_rate,
+    int64_t expected_track_start,
+    double search_radius_s = 12.0,
+    double frame_ms = 50.0,
+    double* out_conf = nullptr)
+{
+    if (out_conf) *out_conf = 0.0;
+    if (ref_samples.empty() || vinyl_samples.empty()) return -1;
+
+    int64_t frame_size = std::max<int64_t>(1,
+        static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
+
+    // Build the vinyl window
+    int64_t radius = static_cast<int64_t>(search_radius_s * sample_rate);
+    int64_t window_start = std::max<int64_t>(0, expected_track_start - radius);
+    int64_t window_end = std::min(
+        static_cast<int64_t>(vinyl_samples.size()),
+        expected_track_start + radius + static_cast<int64_t>(ref_samples.size()));
+    if (window_end - window_start < static_cast<int64_t>(ref_samples.size())) {
+        return -1;
+    }
+
+    std::vector<float> ref_env = compute_rms_envelope(ref_samples, sample_rate, frame_ms);
+    std::span<const float> window_span(
+        vinyl_samples.data() + window_start,
+        static_cast<size_t>(window_end - window_start));
+    std::vector<float> vinyl_env = compute_rms_envelope(window_span, sample_rate, frame_ms);
+
+    if (ref_env.size() < 2 || vinyl_env.size() < ref_env.size() + 1) return -1;
+
+    CorrelationResult r = cross_correlate_fft(ref_env, vinyl_env);
+    if (out_conf) *out_conf = r.peak_value;
+
+    // Envelope-frame lag -> sample position. The envelope starts at sample 0
+    // of the window, so frame `r.lag` is at sample `r.lag * frame_size`
+    // from window_start.
+    return window_start + r.lag * frame_size;
+}
+
 // Count the number of leading samples that are essentially digital silence.
 // Digital silence is distinguished from quiet-but-audible content (like a
 // fade-in) by the absolute sample magnitude: digital zero reads as 0 or
@@ -861,23 +940,51 @@ std::vector<std::pair<int64_t, double>> align_per_track(
             }
         }
 
-        // Fade-in compensation: correlation finds its peak where content is
-        // distinctive, which for a gradual fade-in is *past* the fade (the
-        // quiet ramp contributes little). The chosen position ends up inside
-        // the fade rather than at its start, truncating the intro. Detect a
-        // meaningful gradual fade-in in the reference and shift back by its
-        // duration so the output captures the whole fade-in.
-        int64_t fade_in_samples = measure_fade_in_samples(
-            track.audio.samples, track.audio.sample_rate);
-        if (fade_in_samples > 0) {
-            chosen_pos -= fade_in_samples;
-            if (g_verbose) {
-                double fade_s = static_cast<double>(fade_in_samples)
-                                / track.audio.sample_rate;
+        // Envelope-based fine alignment: cross-correlate the RMS envelope
+        // of the reference against the vinyl's envelope in a wide window
+        // around the current chosen position. The envelope captures the
+        // track's amplitude shape (fade-ins, dynamics, breakdowns), which
+        // is distinctive even when raw-waveform correlation is ambiguous
+        // (repetitive rhythmic content, gradual fade-ins). Applied after
+        // the waveform-based multi-snippet refine; accepted only when the
+        // envelope shows a clear peak AND the shift from the waveform
+        // result is modest, so it corrects fade-in truncation without
+        // introducing new drift on well-anchored tracks.
+        if (track.duration_samples >= static_cast<int64_t>(10 * track.audio.sample_rate)) {
+            double env_conf = 0.0;
+            int64_t env_start = envelope_refine_start(
+                vinyl.samples, track.audio.samples, vinyl.sample_rate,
+                chosen_pos,
+                /*search_radius_s=*/5.0,
+                /*frame_ms=*/50.0,
+                &env_conf);
+
+            if (env_start >= 0 && std::isfinite(env_conf) && env_conf >= 0.60) {
+                int64_t shift = env_start - chosen_pos;
+                double shift_s = static_cast<double>(shift) / vinyl.sample_rate;
+                // Only apply modest corrections; large envelope shifts are
+                // usually spurious (envelope repeats at long intervals too).
+                if (std::abs(shift_s) <= 4.0) {
+                    chosen_pos = env_start;
+                    if (g_verbose) {
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision(3);
+                        oss << "    Envelope refine: " << shift_s
+                            << "s shift, conf " << env_conf;
+                        verbose(oss.str());
+                    }
+                } else if (g_verbose) {
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(3);
+                    oss << "    Envelope refine: would shift " << shift_s
+                        << "s (conf " << env_conf << ") — too large, ignored";
+                    verbose(oss.str());
+                }
+            } else if (g_verbose) {
                 std::ostringstream oss;
                 oss << std::fixed << std::setprecision(3);
-                oss << "    Fade-in detected (" << fade_s << "s) — shifted"
-                    << " track start back to include the full fade";
+                oss << "    Envelope refine: low conf " << env_conf
+                    << " — keeping waveform result";
                 verbose(oss.str());
             }
         }
