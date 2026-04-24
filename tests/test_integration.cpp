@@ -329,23 +329,17 @@ TEST_CASE("Reference mode pipeline: basic detection", "[integration][reference]"
         create_test_wav(ref3, 1, sample_rate, 32, sample_rate * 2, samples);
     }
     
-    // Run reference mode analysis
+    // Run reference mode analysis. The fixture here is tones-in-noise
+    // which reference mode cannot reliably align against (no distinctive
+    // amplitude envelope; rhythmic tones produce ambiguous correlation
+    // peaks). The test is SKIP'd until a realistic fixture lands — see
+    // FIXTURE-REF in BACKLOG.md. When it does, this becomes an assertion
+    // that analysis succeeds and produces ≥1 split point.
     auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    
-    // Reference mode may fail with low correlation - this is expected for synthetic data
-    // But we verify the API works by checking error is the expected type
-    if (!result.has_value()) {
-        WARN("Reference mode analysis returned error - expected for synthetic test data");
-        CHECK(true);  // Accept this as valid behavior
-    } else {
-        const auto& analysis = result.value();
-        
-        // Verify mode is set
-        CHECK(analysis.mode == "reference");
-        
-        INFO("Number of split points detected: " << analysis.split_points.size());
-        CHECK(analysis.split_points.size() >= 1);
-    }
+    (void)result;
+    SKIP("TODO(test-fixtures): FIXTURE-REF — tones-in-noise fixture is "
+         "insufficient for reference mode. Needs a synthetic rip with "
+         "distinctive per-track envelope shape.");
 }
 
 TEST_CASE("Reference mode pipeline: track positions within tolerance", "[integration][reference]") {
@@ -392,20 +386,12 @@ TEST_CASE("Reference mode pipeline: track positions within tolerance", "[integra
         create_test_wav(ref2, 1, sample_rate, 32, sample_rate, samples);
     }
     
-    // Run analysis
+    // Same FIXTURE-REF limitation as the basic-detection case above.
     auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    
-    // May fail with correlation - handle gracefully
-    if (!result.has_value()) {
-        WARN("Reference mode returned error - may fail with synthetic data");
-        CHECK(true);
-    } else {
-        const auto& analysis = result.value();
-        REQUIRE(analysis.split_points.size() >= 1);
-        const auto& first_track = analysis.split_points[0];
-        CHECK(first_track.start_sample >= -100);
-        CHECK(first_track.start_sample <= 100);
-    }
+    (void)result;
+    SKIP("TODO(test-fixtures): FIXTURE-REF — same tones-in-noise limitation. "
+         "Once a fixture with ground-truth boundaries lands, this will "
+         "assert start_sample is within ±N samples of truth.");
 }
 
 TEST_CASE("Reference mode pipeline: lossless export verification", "[integration][reference][lossless]") {
@@ -442,41 +428,15 @@ TEST_CASE("Reference mode pipeline: lossless export verification", "[integration
         create_test_wav(ref, 1, sample_rate, 32, sample_rate * 2, samples);
     }
     
-    // Run reference analysis
+    // Same FIXTURE-REF limitation. The lossless-byte-compare assertions
+    // below are the right idea; they just need a fixture that doesn't
+    // ambiguously correlate.
     auto result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    
-    // Check if analysis succeeded
-    if (!result.has_value()) {
-        WARN("Reference mode failed - expected for synthetic data");
-        CHECK(true);
-    } else {
-        const auto& analysis = result.value();
-        
-        // Get split points - may be empty if correlation failed
-        if (analysis.split_points.empty()) {
-            WARN("No split points - correlation may have failed");
-            CHECK(true);
-        } else {
-            const auto& track = analysis.split_points[0];
-            fs::path output_path = test_dir / "export01.wav";
-            TempFile output_cleanup(output_path);
-            
-            auto export_result = mwaac::write_track(
-                vinyl_file.value(),
-                output_path,
-                track.start_sample,
-                track.end_sample >= 0 ? track.end_sample : (sample_rate * 2 - 1)
-            );
-            REQUIRE(export_result.has_value());
-            
-            // Verify the export matches source bytes
-            auto source_bytes = read_raw_bytes(vinyl_path, 44, sample_rate * 2 * 4);
-            auto export_bytes = read_raw_bytes(output_path, 44, sample_rate * 2 * 4);
-            
-            REQUIRE(source_bytes.size() == export_bytes.size());
-            REQUIRE(source_bytes == export_bytes);
-        }
-    }
+    (void)result;
+    (void)vinyl_file;
+    SKIP("TODO(test-fixtures): FIXTURE-REF — needs a fixture whose reference "
+         "mode run produces a single known-position split, so the lossless "
+         "byte-compare can run. Existing tones-in-noise synth does not.");
 }
 
 // =============================================================================
@@ -507,15 +467,16 @@ TEST_CASE("Blind mode pipeline: gap detection", "[integration][blind]") {
     
     auto result = mwaac::analyze_blind_mode(vinyl_path, config);
     
-    // Should detect at least one gap - but if noise floor is too high, may fail
-    if (!result.has_value()) {
-        WARN("Blind mode returned error - possibly noise floor issue");
-        CHECK(true);  // Accept this as edge case behavior
-    } else {
-        const auto& analysis = result.value();
-        CHECK(analysis.mode == "blind");
-        INFO("Blind mode detected: " << analysis.split_points.size() << " split points");
-    }
+    // Blind mode on generated tones-with-quiet-noise-floor should succeed;
+    // this fixture is borderline on noise-floor estimation. Promote to a
+    // hard REQUIRE so regressions in noise-floor estimation or gap detection
+    // become visible. If fixture noise is genuinely too high, the fix is
+    // to regenerate with a lower noise floor — not to silently accept the
+    // error path.
+    REQUIRE(result.has_value());
+    const auto& analysis = result.value();
+    CHECK(analysis.mode == "blind");
+    CHECK(analysis.split_points.size() >= 2);  // ≥1 gap => ≥2 tracks
 }
 
 TEST_CASE("Blind mode pipeline: clear silence detection", "[integration][blind]") {
@@ -711,39 +672,30 @@ TEST_CASE("Lossless end-to-end: verify exported file formats", "[integration][e2
     std::vector<float> samples(48000, 0.5f);  // 1 second
     REQUIRE(create_test_wav(source_path, 2, sample_rate, 24, 48000, samples));
     
-    // Open source
+    // Open source. A fresh valid file that we just wrote should always
+    // open successfully. If it doesn't, that's a real failure — do not
+    // paper over it.
     auto source_file = mwaac::AudioFile::open(source_path);
-    if (!source_file.has_value()) {
-        WARN("Could not open source file");
-        CHECK(true);
-        return;
-    }
-    
-    // Export full file
+    REQUIRE(source_file.has_value());
+
+    // Export full file.
     fs::path output_path = test_dir / "output.wav";
     TempFile output_cleanup(output_path);
-    
-    // Use valid range
+
     auto export_result = mwaac::write_track(
         source_file.value(),
         output_path,
         0,
         47999
     );
-    
-    if (!export_result.has_value()) {
-        WARN("Export failed: " << static_cast<int>(export_result.error()));
-        CHECK(true);
-    } else {
-        // Open exported file and verify format
-        auto output_file = mwaac::AudioFile::open(output_path);
-        if (output_file.has_value()) {
-            const auto& info = output_file.value().info();
-            CHECK(info.sample_rate == sample_rate);
-            CHECK(info.channels == 2);
-        }
-        CHECK(true);
-    }
+    REQUIRE(export_result.has_value());
+
+    // Open exported file and verify format round-trips.
+    auto output_file = mwaac::AudioFile::open(output_path);
+    REQUIRE(output_file.has_value());
+    const auto& info = output_file.value().info();
+    CHECK(info.sample_rate == sample_rate);
+    CHECK(info.channels == 2);
 }
 
 // =============================================================================
@@ -795,30 +747,22 @@ TEST_CASE("Combined workflow: reference then blind analysis", "[integration][com
         create_test_wav(ref, 1, sample_rate, 32, sample_rate, samples);
     }
     
-    // Run reference mode
-    auto ref_result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
-    
-    // Run blind mode
+    // Reference mode on tones-in-noise has the FIXTURE-REF limitation
+    // (see earlier cases in this file). Blind mode, however, should work
+    // reliably on a tone + 3 s quiet + tone fixture — that's its whole
+    // reason for existing. Assert blind works; skip the reference leg
+    // pending FIXTURE-REF.
     mwaac::BlindModeConfig blind_config;
     blind_config.min_gap_seconds = 2.0f;
     blind_config.max_gap_seconds = 5.0f;
     blind_config.analysis_sr = sample_rate;
-    
+
     auto blind_result = mwaac::analyze_blind_mode(vinyl_path, blind_config);
-    
-    // At least verify APIs are callable
-    if (blind_result.has_value()) {
-        INFO("Blind mode worked");
-    } else {
-        INFO("Blind mode returned error");
-    }
-    
-    // Either reference or blind may work - verify at least one
-    if (ref_result.has_value() || blind_result.has_value()) {
-        CHECK(true);
-    } else {
-        WARN("Both modes failed");
-        CHECK(true);  // Accept for test data limitations
-    }
+    REQUIRE(blind_result.has_value());
+    CHECK(blind_result.value().split_points.size() >= 2);
+
+    auto ref_result = mwaac::analyze_reference_mode(vinyl_path, ref_dir, sample_rate);
+    (void)ref_result;
+    // Intentionally not asserting on ref_result — see FIXTURE-REF.
 }
 
