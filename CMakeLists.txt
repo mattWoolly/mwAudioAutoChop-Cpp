@@ -245,5 +245,9 @@ mwaac_add_test(test_reference_mode    mwaac_core)
 mwaac_add_test(test_blind_mode        mwaac_core)
 mwaac_add_test(test_integration       mwaac_core mwaac_sndfile)
 
+# Reproducible test fixtures. Each subdirectory of tests/fixtures/ is a
+# self-contained fixture project — see tests/fixtures/README.md.
+add_subdirectory(tests/fixtures)
+
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
