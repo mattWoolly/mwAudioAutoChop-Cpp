@@ -1,0 +1,47 @@
+# clang-tidy configuration for mwAudioAutoChop-C++.
+#
+# Check groups requested by the Knuth-level review. We enable the full
+# groups and selectively silence a handful of checks that are known to
+# fight with this codebase style or Catch2 macros. Every silenced check
+# is listed here with a one-line reason so the list is auditable.
+
+Checks: >
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-avoid-do-while
+
+# Rationale for each silenced check:
+#   bugprone-easily-swappable-parameters — noisy on audio APIs that
+#     legitimately take (sample_rate, frame_length, hop_length) as int.
+#   readability-magic-numbers / cppcoreguidelines-avoid-magic-numbers —
+#     audio constants (0.316 = -10 dB) are clearer inline; Mi-5 tracks
+#     moving the truly magic ones to named constants, but the *-magic-
+#     numbers checks cry over every literal.
+#   readability-identifier-length — common mathematical symbols (i, f, t)
+#     are appropriate for loop indices and frame counters.
+#   modernize-use-trailing-return-type — style, not correctness.
+#   cppcoreguidelines-pro-bounds-* — std::span / std::vector access
+#     already bounds-checked; raw pointer arithmetic is limited to the
+#     binary-header parser where it's intentional.
+#   cppcoreguidelines-avoid-do-while — Catch2's REQUIRE_* macros expand
+#     to do-while; we can't avoid that.
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '^src/.*\.(hpp|h)$'
+FormatStyle: none
+
+CheckOptions:
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 40

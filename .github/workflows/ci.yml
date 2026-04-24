@@ -7,49 +7,91 @@ on:
     branches: [main]
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libsndfile1-dev libfftw3-dev
-    
-    - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-    
-    - name: Build
-      run: cmake --build build --parallel
-    
-    - name: Run tests
-      run: ctest --test-dir build --output-on-failure
+  # Primary shipping builds. Matrix across OS x build-type so we catch
+  # platform-specific ifdef drift AND optimizer-dependent bugs (Debug exposes
+  # asserts and zero-initialization that Release hides).
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        build-type: [Release, Debug]
+    runs-on: ${{ matrix.os }}
+    name: build / ${{ matrix.os }} / ${{ matrix.build-type }}
 
-  build-macos:
-    runs-on: macos-latest
-    
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: brew install libsndfile fftw pkg-config
-    
-    - name: Configure CMake
-      run: |
-        HOMEBREW_PREFIX=$(brew --prefix)
-        cmake -B build -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_PREFIX_PATH="$HOMEBREW_PREFIX" \
-          -DSNDFILE_LIBRARY="$HOMEBREW_PREFIX/lib/libsndfile.dylib" \
-          -DSNDFILE_INCLUDE_DIR="$HOMEBREW_PREFIX/include"
-    
-    - name: Build
-      run: |
-        export LIBRARY_PATH="$(brew --prefix)/lib:$LIBRARY_PATH"
-        cmake --build build --parallel
-    
-    - name: Run tests
-      run: |
-        export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
-        ctest --test-dir build --output-on-failure
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsndfile1-dev pkg-config
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsndfile pkg-config
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build-type }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # Sanitizer build: ASan + UBSan, Debug, Linux only (sanitizer runtimes are
+  # most stable there). This job catches UB that release builds silently
+  # optimize past — e.g., reinterpret_cast into wrong-type storage, stack
+  # buffer overflows, division by zero on ill-conditioned inputs.
+  sanitizers:
+    runs-on: ubuntu-latest
+    name: sanitizers (asan+ubsan)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsndfile1-dev pkg-config
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DMWAAC_SANITIZE=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:abort_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build --output-on-failure
+
+  # clang-tidy pass. Configured via .clang-tidy at the repo root. We use the
+  # check groups the Knuth-level review requested: bugprone-*, cert-*,
+  # clang-analyzer-*, cppcoreguidelines-*, performance-*, readability-*,
+  # modernize-*.
+  clang-tidy:
+    runs-on: ubuntu-latest
+    name: clang-tidy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsndfile1-dev pkg-config clang-tidy
+
+      - name: Configure (export compile_commands.json)
+        run: cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug -DMWAAC_WERROR=OFF
+
+      - name: Build dependencies first
+        # clang-tidy needs the generated/fetched headers to exist; building
+        # once populates them so analysis can resolve #includes.
+        run: cmake --build build --target mwaac_core --parallel
+
+      - name: Run clang-tidy on src/
+        run: |
+          find src -name '*.cpp' -not -path '*/pocketfft*' \
+            -exec clang-tidy -p build --warnings-as-errors='*' {} +
