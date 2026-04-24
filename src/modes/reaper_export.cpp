@@ -232,7 +232,11 @@ bool write_reaper_project(
     os << "  RIPPLE 0\n";
     os << "  GROUPOVERRIDE 0 0 0\n";
     os << "  AUTOXFADE 129\n";
-    os << "  SAMPLERATE " << native_sample_rate << " 0 0\n";
+    // SAMPLERATE: rate, project-rate-force, force-from-media.
+    // Second field = 1 locks the project to the given rate (otherwise
+    // REAPER follows the audio device's rate, which is why renders
+    // default to 44.1 kHz unless the device happens to match).
+    os << "  SAMPLERATE " << native_sample_rate << " 1 0\n";
     os << "  TEMPO 120 4 4\n";
     os << "  PLAYRATE 1 0 0.25 4\n";
     os << "  ZOOM 4 0 0\n";
@@ -243,6 +247,18 @@ bool write_reaper_project(
     os << "  MASTER_NCH 2 2\n";
     os << "  MASTER_VOLUME 1 0 -1 -1 1\n";
     os << "  MASTERTRACKHEIGHT 0 0\n";
+    // Render config: match project rate and write 24-bit PCM WAV.
+    os << "  RENDER_FILE \"\"\n";
+    os << "  RENDER_PATTERN \"$project-$track\"\n";
+    os << "  RENDER_FMT 0 2 0\n";
+    os << "  RENDER_1X 0\n";
+    os << "  RENDER_RANGE 1 0 0 18 1000\n";
+    os << "  RENDER_RESAMPLE 3 0 1\n";
+    os << "  RENDER_ADDTOPROJ 0\n";
+    os << "  RENDER_STEMS 0\n";
+    os << "  RENDER_DITHER 0\n";
+    // Force render sample rate to project rate (0 = use project rate).
+    os << "  RENDER_SRATE " << native_sample_rate << "\n";
 
     // Track 1: References
     write_track_header(os, "  ", "References", 1);
