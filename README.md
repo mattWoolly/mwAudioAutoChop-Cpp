@@ -25,8 +25,11 @@ The chop points are found by correlation + refinement. The audio samples themsel
 ## Quickstart
 
 ```bash
-# Reference mode (most accurate)
-mwAudioAutoChop reference vinyl_rip.wav -r reference_tracks/ -o output/
+# Reference mode (most accurate) + REAPER project for A/B review
+mwAudioAutoChop reference vinyl_rip.wav \
+    -r reference_tracks/ \
+    -o output/ \
+    --reaper project.rpp
 
 # Blind mode (no reference needed)
 mwAudioAutoChop blind vinyl_rip.wav -o output/
@@ -34,6 +37,21 @@ mwAudioAutoChop blind vinyl_rip.wav -o output/
 # Preview without writing
 mwAudioAutoChop reference vinyl_rip.wav -r reference_tracks/ -o output/ --dry-run -v
 ```
+
+## Recommended workflow: automated pass + REAPER review
+
+The alignment gets most tracks sample-accurate, but difficult material (gradual fade-ins, continuous DJ mixes, heavy rhythmic repetition) sometimes lands a second or two off. Rather than tuning algorithms endlessly, run with `--reaper` and review:
+
+1. Generate chops + REAPER project:
+   ```
+   mwAudioAutoChop reference vinyl.wav -r refs/ -o output/ --reaper project.rpp
+   ```
+2. Open `project.rpp` in REAPER. You get two tracks sharing one timeline:
+   - **References** — each reference file laid out in order.
+   - **Vinyl Chops** — slices of the *original* vinyl file (`SOFFS` + `LENGTH`), positioned at the same timeline spots as the refs.
+3. Click up/down between tracks to A/B each moment.
+4. Anything off? Drag the chop item's left or right edge to fix it — the vinyl source is right there, so you can extend a chop as far in either direction as you need. Nothing is destructive.
+5. When satisfied, render from REAPER (`File → Render…`).
 
 ## Why this and not a simpler tool
 
@@ -48,12 +66,13 @@ Off-the-shelf chopping tools assume the vinyl rip and the reference line up clea
 
 ## The pipeline (reference mode)
 
-Each track runs through four stages:
+Each track runs through five stages:
 
-1. **Flip-gap skip.** If the expected start sits inside a long silence (≥ 3 s sustained below -45 dB), jump to where music actually resumes. Short silences — fade-ins, inter-track pauses — are left intact.
+1. **Flip-gap skip.** If the expected start sits inside a long silence (≥ 3 s sustained below -45 dB with 1 s sustained music on the other side), jump to where music actually resumes. Short silences — fade-ins, inter-track pauses — are left intact.
 2. **Coarse correlation.** Full-length reference vs. a vinyl window, 100× downsampled. Restricted to valid lags so spurious negative-lag matches can't occur.
-3. **Multi-snippet fine refinement.** Three 5-second snippets from the reference (post-music-onset, 40 % through, 80 % through) correlate at full resolution against a narrow vinyl window. The post-onset snippet is the primary estimator; the other two validate and recover when the first is weak. Confidence-weighted decision with explicit logging of disagreement.
-4. **End trimming.** Track N ends at `start + ref_duration + tail`, unless an inter-track flip silence is detected — in which case we trim precisely to the silence boundary. The last track is capped before the runout groove.
+3. **FFT-backed multi-snippet fine refinement.** Three 5-second snippets from the reference (post-music-onset, 40 % through, 80 % through) cross-correlate at full resolution against a ±10 s vinyl window. The post-onset snippet is the primary estimator; the other two validate and recover when the first is weak. Confidence-weighted decision with explicit logging of disagreement.
+4. **Envelope cross-correlation.** The reference's RMS envelope cross-correlates against the vinyl's envelope in a wider window. Envelope shape (fade-ins, breakdowns, peaks) is insensitive to the content ambiguity that fools raw-waveform correlation, so this picks up the last bit of drift — especially on gradual fade-ins.
+5. **End trimming.** Track N ends at `start + ref_duration + tail`, unless an inter-track flip silence is detected — in which case we trim precisely to the silence boundary. The last track is capped before the runout groove.
 
 Plus one more small but important thing: if the reference starts with **digital silence** (exact zeros), the output begins on the first real sample instead of copying vinyl noise into that region.
 
@@ -107,6 +126,7 @@ mwAudioAutoChop reference vinyl_rip.wav -r reference_tracks/ -o output/ [options
 |---|---|
 | `-r, --reference` | Directory containing reference tracks. Files are natural-sorted (so `Track 2.wav` < `Track 10.wav`). |
 | `-o, --output` | Output directory for chopped tracks. |
+| `--reaper <path>` | Also write a REAPER project for A/B comparison and non-destructive fine-tuning (see workflow above). |
 | `-v, --verbose` | Show per-track alignment details, snippet votes, flip-gap skips, end-trim decisions. |
 | `--dry-run` | Analyse and print what it *would* do, without writing files. |
 
