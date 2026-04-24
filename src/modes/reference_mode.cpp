@@ -392,13 +392,14 @@ struct SnippetVote {
     int64_t snippet_offset_in_ref{0};  // for logging/debug
 };
 
-// Correlate a 5-second (or given length) slice of reference, starting at
-// `snippet_offset_in_ref`, against a narrow window of the vinyl at full
-// resolution. Returns the track-start implied by the peak, together with
-// the correlation confidence. The track start is derived by subtracting
-// `snippet_offset_in_ref` from the vinyl position where the snippet was
-// located — this works regardless of whether the snippet came from the
-// intro, the middle, or the tail of the track.
+// Correlate a short reference snippet starting at `snippet_offset_in_ref`
+// against a vinyl window via FFT-based normalized cross-correlation. With
+// FFT, the search window can be wide (tens of seconds) without a runtime
+// penalty — crucial for tracks where coarse correlation misses the true
+// peak by several seconds (fade-ins, repetitive rhythmic content).
+//
+// Returns the implied track start (vinyl sample where ref[0] would be)
+// along with the peak correlation value.
 SnippetVote correlate_snippet(
     std::span<const float> vinyl_processed,
     std::span<const float> ref_processed,
@@ -417,7 +418,7 @@ SnippetVote correlate_snippet(
         static_cast<int64_t>(ref_processed.size()) - snippet_offset_in_ref);
     if (snippet_len < sample_rate / 2) return vote;  // need ≥0.5 s
 
-    // Where we expect the snippet to land in the vinyl:
+    // Build a wide vinyl window centered on where we expect the snippet.
     int64_t expected_snippet_pos = expected_track_start + snippet_offset_in_ref;
     int64_t search_radius = static_cast<int64_t>(search_radius_s * sample_rate);
     int64_t window_start = std::max<int64_t>(0, expected_snippet_pos - search_radius);
@@ -426,64 +427,19 @@ SnippetVote correlate_snippet(
         expected_snippet_pos + search_radius + snippet_len);
     if (window_end - window_start < snippet_len + 1) return vote;
 
-    // Zero-mean the snippet
-    double ref_mean = 0.0;
-    for (int64_t i = 0; i < snippet_len; ++i) {
-        ref_mean += ref_processed[snippet_offset_in_ref + i];
-    }
-    ref_mean /= snippet_len;
+    // Slice views for the FFT routine.
+    std::span<const float> ref_span(
+        ref_processed.data() + snippet_offset_in_ref,
+        static_cast<size_t>(snippet_len));
+    std::span<const float> tgt_span(
+        vinyl_processed.data() + window_start,
+        static_cast<size_t>(window_end - window_start));
 
-    std::vector<double> ref_norm(snippet_len);
-    double ref_energy = 0.0;
-    for (int64_t i = 0; i < snippet_len; ++i) {
-        ref_norm[i] = ref_processed[snippet_offset_in_ref + i] - ref_mean;
-        ref_energy += ref_norm[i] * ref_norm[i];
-    }
-    if (ref_energy < 1e-10) return vote;
+    CorrelationResult r = cross_correlate_fft(ref_span, tgt_span);
+    int64_t snippet_vinyl_pos = window_start + r.lag;
 
-    // Prefix sums for O(1) per-lag target mean/energy
-    int64_t window_size = window_end - window_start;
-    std::vector<double> prefix_sum(window_size + 1, 0.0);
-    std::vector<double> prefix_sum_sq(window_size + 1, 0.0);
-    for (int64_t i = 0; i < window_size; ++i) {
-        double s = vinyl_processed[window_start + i];
-        prefix_sum[i + 1]    = prefix_sum[i]    + s;
-        prefix_sum_sq[i + 1] = prefix_sum_sq[i] + s * s;
-    }
-
-    int64_t max_lag = window_size - snippet_len;
-    double best_corr = -std::numeric_limits<double>::infinity();
-    int64_t best_lag = expected_snippet_pos - window_start;  // default
-
-    for (int64_t lag = 0; lag <= max_lag; ++lag) {
-        double tgt_sum    = prefix_sum[lag + snippet_len]    - prefix_sum[lag];
-        double tgt_sum_sq = prefix_sum_sq[lag + snippet_len] - prefix_sum_sq[lag];
-        double tgt_mean   = tgt_sum / snippet_len;
-        double tgt_energy = tgt_sum_sq - (tgt_sum * tgt_sum) / snippet_len;
-        if (tgt_energy < 1e-10) continue;
-
-        double sum = 0.0;
-        const float* tgt_ptr = vinyl_processed.data() + window_start + lag;
-        for (int64_t i = 0; i < snippet_len; ++i) {
-            double t = tgt_ptr[i] - tgt_mean;
-            sum += ref_norm[i] * t;
-        }
-
-        double norm = std::sqrt(ref_energy * tgt_energy);
-        double corr = sum / norm;
-        if (corr > best_corr) {
-            best_corr = corr;
-            best_lag = lag;
-        }
-    }
-
-    if (!std::isfinite(best_corr)) best_corr = 0.0;
-
-    // Vinyl position where the snippet landed:
-    int64_t snippet_vinyl_pos = window_start + best_lag;
-    // Imply the track start (where ref[0] would be):
     vote.implied_track_start = snippet_vinyl_pos - snippet_offset_in_ref;
-    vote.snippet_conf = best_corr;
+    vote.snippet_conf = r.peak_value;
     return vote;
 }
 
@@ -525,11 +481,13 @@ MultiRefineResult multi_snippet_refine(
     int64_t ref_size = static_cast<int64_t>(ref_processed.size());
     int64_t snippet_samples = static_cast<int64_t>(snippet_seconds * sample_rate);
 
+    // With FFT-backed correlation, wide radii are free — let the refine
+    // reach the true peak even when coarse was off by many seconds.
     struct SnippetSpec { int64_t offset; double radius; };
     std::vector<SnippetSpec> specs = {
-        { onset,                                1.5 },
-        { std::max<int64_t>(onset, (ref_size * 2) / 5), 2.5 },
-        { std::max<int64_t>(onset, (ref_size * 4) / 5), 2.5 },
+        { onset,                                        10.0 },
+        { std::max<int64_t>(onset, (ref_size * 2) / 5), 10.0 },
+        { std::max<int64_t>(onset, (ref_size * 4) / 5), 10.0 },
     };
     for (auto& s : specs) {
         if (s.offset + snippet_samples > ref_size) {

@@ -1,5 +1,7 @@
 #include "correlation.hpp"
+#include "pocketfft_hdronly.h"
 #include <algorithm>
+#include <complex>
 #include <numeric>
 #include <cmath>
 
@@ -230,6 +232,109 @@ CorrelationResult cross_correlate_fast(
         if (corr > best_corr) {
             best_corr = corr;
             best_lag = lag;
+        }
+    }
+
+    return {best_lag, best_corr};
+}
+
+CorrelationResult cross_correlate_fft(
+    std::span<const float> reference,
+    std::span<const float> target)
+{
+    const size_t N = reference.size();
+    const size_t M = target.size();
+    if (N == 0 || M == 0 || N > M) return {0, 0.0};
+
+    // Zero-mean the reference. After this, raw_corr[lag] = sum_i ref_c[i] *
+    // target[lag+i] is already the centered cross product on the ref side.
+    // (The constant tgt_slice_mean * sum(ref_c) = 0 drops out.) We still
+    // need to center the target per-lag for the normalization denominator.
+    double ref_mean = 0.0;
+    for (float v : reference) ref_mean += v;
+    ref_mean /= static_cast<double>(N);
+
+    std::vector<double> ref_c(N);
+    double ref_energy = 0.0;
+    for (size_t i = 0; i < N; ++i) {
+        double v = static_cast<double>(reference[i]) - ref_mean;
+        ref_c[i] = v;
+        ref_energy += v * v;
+    }
+    if (ref_energy < 1e-15) return {0, 0.0};
+
+    std::vector<double> tgt_d(M);
+    for (size_t i = 0; i < M; ++i) tgt_d[i] = target[i];
+
+    // FFT length: at least N+M-1 so linear (non-circular) correlation fits.
+    // pocketfft handles arbitrary sizes efficiently, but prefers smooth
+    // numbers. good_size rounds up to the next efficient FFT length.
+    const size_t L_min = N + M - 1;
+    const size_t L = pocketfft::detail::util::good_size_real(L_min);
+
+    // Zero-pad both signals to length L.
+    std::vector<double> ref_padded(L, 0.0);
+    std::vector<double> tgt_padded(L, 0.0);
+    std::copy(ref_c.begin(), ref_c.end(), ref_padded.begin());
+    std::copy(tgt_d.begin(), tgt_d.end(), tgt_padded.begin());
+
+    // Real-to-complex forward FFT. Output length is L/2 + 1.
+    const size_t K = L / 2 + 1;
+    std::vector<std::complex<double>> Ref_f(K), Tgt_f(K);
+    pocketfft::shape_t shape = {L};
+    pocketfft::stride_t stride_real = {sizeof(double)};
+    pocketfft::stride_t stride_cplx = {sizeof(std::complex<double>)};
+    pocketfft::shape_t axes = {0};
+
+    pocketfft::r2c(shape, stride_real, stride_cplx, axes,
+                   pocketfft::FORWARD,
+                   ref_padded.data(), Ref_f.data(), 1.0);
+    pocketfft::r2c(shape, stride_real, stride_cplx, axes,
+                   pocketfft::FORWARD,
+                   tgt_padded.data(), Tgt_f.data(), 1.0);
+
+    // Cross-correlation in frequency domain: R_xy = IFFT(conj(X) * Y)
+    // This yields R[k] = sum_i x[i] * y[i + k].
+    std::vector<std::complex<double>> Prod(K);
+    for (size_t i = 0; i < K; ++i) Prod[i] = std::conj(Ref_f[i]) * Tgt_f[i];
+
+    // Inverse FFT back to time domain.
+    std::vector<double> corr(L);
+    pocketfft::c2r(shape, stride_cplx, stride_real, axes,
+                   pocketfft::BACKWARD,
+                   Prod.data(), corr.data(), 1.0 / static_cast<double>(L));
+
+    // Precompute target prefix sums for per-lag slice mean/energy.
+    std::vector<double> psum(M + 1, 0.0), psum_sq(M + 1, 0.0);
+    for (size_t i = 0; i < M; ++i) {
+        double v = tgt_d[i];
+        psum[i + 1]    = psum[i]    + v;
+        psum_sq[i + 1] = psum_sq[i] + v * v;
+    }
+
+    // Walk valid lags [0, M - N] and find the normalized peak.
+    const size_t max_lag = M - N;
+    double best_corr = 0.0;
+    int64_t best_lag = 0;
+
+    for (size_t lag = 0; lag <= max_lag; ++lag) {
+        double tgt_sum    = psum[lag + N]    - psum[lag];
+        double tgt_sum_sq = psum_sq[lag + N] - psum_sq[lag];
+        // Centered tgt energy = sum (tgt_i - mean)^2 = sum_sq - N*mean^2.
+        double tgt_energy = tgt_sum_sq - (tgt_sum * tgt_sum) / static_cast<double>(N);
+        if (tgt_energy < 1e-15) continue;
+
+        // raw_corr is the centered ref X uncentered target cross product.
+        // Since ref_c is zero-mean, the tgt_mean term drops out:
+        //   sum ref_c[i] * (tgt[lag+i] - tgt_mean)
+        //     = sum ref_c[i] * tgt[lag+i] - tgt_mean * sum ref_c[i]
+        //     = corr[lag] - 0.
+        double centered = corr[lag];
+        double denom = std::sqrt(ref_energy * tgt_energy);
+        double ncc = centered / denom;
+        if (ncc > best_corr) {
+            best_corr = ncc;
+            best_lag = static_cast<int64_t>(lag);
         }
     }
 
