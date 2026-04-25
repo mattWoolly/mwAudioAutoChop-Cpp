@@ -2,12 +2,15 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/audio_file.hpp"
 #include <array>
+#include <atomic>
 #include <fstream>
 #include <vector>
 #include <cstdint>
 #include <filesystem>
 #include <random>
 #include <cstring>
+#include <string>
+#include <thread>
 #include <sndfile.h>
 
 namespace fs = std::filesystem;
@@ -1163,4 +1166,149 @@ TEST_CASE("write_track: failure leaves no file at output path (target is a direc
     // for the parent can complete.
     std::error_code ec;
     fs::remove_all(output_path, ec);
+}
+
+// -----------------------------------------------------------------------------
+// M-16 audit-1 regression: a previous make_temp_sibling_path implementation
+// built the temp filename via snprintf into a fixed 64-byte buffer. For
+// target filenames around 30+ characters the random-suffix bytes were
+// silently truncated, so concurrent write_track calls on the same long
+// filename would generate identical temp paths, race on the same temp file,
+// and leave a header-less / short file at the target. The audit reproduced
+// 40/6400 corruption hits at 32 threads x 200 iterations with a 54-char
+// target name. We use a smaller (CI-friendly) thread x iteration grid and
+// rely on the assertion that NO success-returning call ever leaves a
+// sub-header-sized file at the target.
+// -----------------------------------------------------------------------------
+TEST_CASE("write_track: long-filename concurrent writes do not collide",
+          "[lossless][atomic]") {
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_atomic_long_concurrent";
+    {
+        std::error_code ec;
+        fs::remove_all(test_dir, ec);
+    }
+    fs::create_directories(test_dir);
+
+    fs::path source_path = test_dir / "src.wav";
+    TempFile source_cleanup(source_path);
+    TempFile dir_cleanup(test_dir);
+
+    constexpr int64_t num_frames = 1024;
+    REQUIRE(create_test_wav(source_path, 1, 44100, 16, num_frames));
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    // Long target filename — 54 chars, comfortably past the old 64-byte
+    // buffer's truncation threshold (which clipped the random suffix
+    // entirely once the prefix consumed ~30+ bytes).
+    const std::string longname = "long_track_filename_used_to_provoke_temp_collision.wav";
+    REQUIRE(longname.size() >= 50);
+    fs::path target = test_dir / longname;
+
+    constexpr int kThreads = 8;
+    constexpr int kIterations = 500;
+    std::atomic<int> ok{0};
+    std::atomic<int> err{0};
+    std::atomic<int> short_file{0};
+
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        workers.emplace_back([&, t]{
+            // Each thread shares the same opened source (read-only after open).
+            for (int i = 0; i < kIterations; ++i) {
+                auto r = mwaac::write_track(open_result.value(), target,
+                                            0, num_frames - 1);
+                if (!r.has_value()) {
+                    err.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                ok.fetch_add(1, std::memory_order_relaxed);
+                // Whenever write_track returns success, the target must be
+                // at least the WAV header size (44 bytes). A buggy temp-path
+                // implementation can leave an empty / short file because two
+                // threads renamed colliding temp paths over each other while
+                // a third was mid-write.
+                std::error_code ec;
+                auto sz = fs::file_size(target, ec);
+                if (ec || sz < 44) {
+                    short_file.fetch_add(1, std::memory_order_relaxed);
+                }
+                (void)t;
+                (void)i;
+            }
+        });
+    }
+    for (auto& w : workers) w.join();
+
+    INFO("ok=" << ok.load() << " err=" << err.load()
+              << " short=" << short_file.load());
+
+    // The hard invariant: no success-returning call left a sub-header-size
+    // file at the target. Any nonzero short_file count means write_track's
+    // atomicity broke under concurrency.
+    REQUIRE(short_file.load() == 0);
+
+    // Final state: target is a regular file with at least a WAV header.
+    REQUIRE(fs::exists(target));
+    REQUIRE(fs::is_regular_file(target));
+    REQUIRE(fs::file_size(target) >= 44);
+
+    // No temp-sibling artifacts remain in the parent dir.
+    REQUIRE(count_mwaac_temp_siblings(test_dir) == 0);
+
+    // Tear down the long-named target so TempFile dir_cleanup can complete.
+    std::error_code rm_ec;
+    fs::remove(target, rm_ec);
+}
+
+// -----------------------------------------------------------------------------
+// M-16 audit-1 added: write_track must refuse target filenames whose
+// corresponding temp-sibling name would exceed NAME_MAX (255 bytes on
+// POSIX). Constructing the temp name and silently truncating it (or letting
+// the OS surface ENAMETOOLONG mid-write) is exactly the failure mode that
+// motivated the regression test above.
+// -----------------------------------------------------------------------------
+TEST_CASE("write_track: target filename longer than NAME_MAX returns WriteError",
+          "[lossless][atomic]") {
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_atomic_namemax";
+    {
+        std::error_code ec;
+        fs::remove_all(test_dir, ec);
+    }
+    fs::create_directories(test_dir);
+
+    fs::path source_path = test_dir / "src.wav";
+    TempFile source_cleanup(source_path);
+    TempFile dir_cleanup(test_dir);
+
+    constexpr int64_t num_frames = 256;
+    REQUIRE(create_test_wav(source_path, 1, 44100, 16, num_frames));
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    // 256-char filename. Even before the temp-sibling prefix/suffix is
+    // appended, this exceeds NAME_MAX (255) on POSIX, so the temp-path
+    // construction must reject it.
+    std::string overlong(256, 'a');
+    fs::path target = test_dir / overlong;
+
+    auto write_result = mwaac::write_track(open_result.value(), target,
+                                           0, num_frames - 1);
+    REQUIRE_FALSE(write_result.has_value());
+    REQUIRE(write_result.error() == mwaac::AudioError::WriteError);
+
+    // Target must not exist. Use the std::error_code overload — the
+    // throwing fs::exists raises filesystem_error on ENAMETOOLONG on some
+    // platforms (e.g. macOS HFS+/APFS), which would otherwise mask the
+    // real assertion behind an unrelated stat() failure.
+    {
+        std::error_code ec;
+        REQUIRE_FALSE(fs::exists(target, ec));
+    }
+
+    // No temp-sibling artifacts remain.
+    REQUIRE(count_mwaac_temp_siblings(test_dir) == 0);
 }

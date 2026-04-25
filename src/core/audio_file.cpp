@@ -5,10 +5,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <ios>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -425,7 +428,18 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
 // the temp file hidden on POSIX, and the .mwaac.tmp.<pid>.<rand> suffix makes
 // it unmistakable as a transient artifact while staying unique enough that
 // concurrent write_track calls in the same directory will not collide.
-static std::filesystem::path make_temp_sibling_path(const std::filesystem::path& target) {
+//
+// Audit-1 caught a previous implementation that built the name via snprintf
+// into a fixed 64-byte buffer; for filenames around 30+ chars that silently
+// truncated the random suffix, causing sibling collisions and corrupt target
+// files under concurrency. The current implementation builds the name in a
+// std::ostringstream so length is unbounded by design.
+//
+// Returns std::nullopt if the resulting temp filename would exceed the
+// filesystem's NAME_MAX (255 on POSIX), which would cause `open` / `rename`
+// to fail with ENAMETOOLONG anyway and is treated as a WriteError.
+static std::optional<std::filesystem::path>
+make_temp_sibling_path(const std::filesystem::path& target) {
 #ifdef _WIN32
     auto pid = static_cast<unsigned long>(_getpid());
 #else
@@ -438,16 +452,28 @@ static std::filesystem::path make_temp_sibling_path(const std::filesystem::path&
     uint64_t r = rng();
 
     std::string filename = target.filename().string();
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), ".%s.mwaac.tmp.%lu.%016llx",
-                  filename.c_str(), pid,
-                  static_cast<unsigned long long>(r));
+
+    // Build the temp filename in a string — no fixed buffer, no truncation.
+    std::ostringstream oss;
+    oss << '.' << filename
+        << ".mwaac.tmp." << pid
+        << '.' << std::hex << std::setw(16) << std::setfill('0') << r;
+    std::string temp_name = oss.str();
+
+    // POSIX caps a single path component at NAME_MAX. <climits> does not
+    // expose this portably, so hard-code 255 with a comment. (pathconf can
+    // refine this per-mount, but 255 is the universal floor on every
+    // mainstream filesystem we ship on.)
+    constexpr std::size_t NAME_MAX_BYTES = 255;
+    if (temp_name.size() > NAME_MAX_BYTES) {
+        return std::nullopt;
+    }
 
     std::filesystem::path parent = target.parent_path();
     if (parent.empty()) {
         parent = std::filesystem::path(".");
     }
-    return parent / buf;
+    return parent / temp_name;
 }
 
 // ============================================================================
@@ -919,7 +945,14 @@ write_track(
     // file. If anything goes wrong before rename, we remove the temp
     // sibling (best-effort) and leave `output_path` untouched.
     // ------------------------------------------------------------------
-    const std::filesystem::path temp_path = make_temp_sibling_path(output_path);
+    auto temp_path_opt = make_temp_sibling_path(output_path);
+    if (!temp_path_opt.has_value()) {
+        // Target filename is so long that any sibling temp name would
+        // exceed NAME_MAX. Refuse the write rather than rely on the
+        // OS to surface ENAMETOOLONG mid-stream.
+        return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+    }
+    const std::filesystem::path temp_path = std::move(*temp_path_opt);
 
     auto cleanup_temp = [&]() noexcept {
         std::error_code ec;
