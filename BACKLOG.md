@@ -159,6 +159,14 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Every `audio_file.value()` call in `main.cpp` is guarded by
         `if (!audio_file) { ... return 1; }` on first use.
   - [ ] UBSan passes on full test suite.
+- **Audit mandate (orchestrator-recorded).** The C-2 audit pass must
+  explicitly evaluate the `Expected` API shape choice — assert + `value_or`
+  on top of the current placement-new-in-aligned-storage layout, vs.
+  full migration to a `std::variant<T, E>`-backed implementation — and
+  record that decision in `docs/deviations.md` under a C-2 entry (or a
+  dedicated `docs/decisions/expected-api.md`). The decision propagates
+  into M-14 (contract unification) and M-11 (LoadResult removal).
+  We decide `Expected`'s shape *once*, at C-2; M-14 then carries it out.
 
 ### C-3 — RF64 output silently truncated above 4 GiB
 
