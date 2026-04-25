@@ -176,8 +176,16 @@ parse_wav_header(const std::vector<uint8_t>& data);
 [[nodiscard]] Expected<AudioInfo, AudioError>
 parse_aiff_header(const std::vector<uint8_t>& data);
 
-// Export a track (raw byte copy with new header)
-// Returns path to written file, or error
+// Export a track (raw byte copy with new header).
+//
+// Atomicity: the target path is updated atomically via a temp-sibling
+// write followed by std::filesystem::rename. On any failure, no file is
+// created at output_path. See the implementation in audio_file.cpp for
+// full preconditions, postconditions, and the cross-filesystem caveat
+// (atomicity assumes parent directory and temp sibling are on the same
+// filesystem; fsync is intentionally not called — see docstring).
+//
+// Returns path to written file on success, or AudioError on failure.
 [[nodiscard]] Expected<std::filesystem::path, AudioError>
 write_track(
     const AudioFile& source,
