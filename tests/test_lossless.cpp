@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "core/audio_file.hpp"
+#include <array>
 #include <fstream>
 #include <vector>
 #include <cstdint>
@@ -134,38 +135,61 @@ TEST_CASE("WAV header has correct parameters", "[lossless]") {
     REQUIRE(header[35] == std::byte{0x00});
 }
 
-// Previously disabled with the [.] tag and the comment
-// "temporarily disabled - investigate stack smash issue". Disabling the
-// test masked a real live defect: encode_float80 writes 11 bytes into a
-// 10-byte std::byte buffer (see C-1 in REMEDIATION_REPORT/BACKLOG).
-// Re-enabled so the stack smash surfaces under ASan. Do not re-tag [.]
-// without fixing the underlying encode_float80 overrun.
+// AIFF header byte-layout reference (after C-1 fix; encode_float80 emits
+// exactly 10 bytes per the IEEE 754 80-bit extended big-endian wire format
+// described in Apple SANE / AIFF 1.3 spec). numSampleFrames is a 4-byte
+// big-endian u32 per AIFF 1.3 COMM chunk definition:
+//
+//   [ 0.. 3] "FORM"
+//   [ 4.. 7] form_size (big-endian u32)
+//   [ 8..11] "AIFF"
+//   [12..15] "COMM"
+//   [16..19] comm chunk size (= 18, big-endian u32)
+//   [20..21] channels (big-endian u16)
+//   [22..25] numSampleFrames (big-endian u32)
+//   [26..27] bits_per_sample (big-endian u16)
+//   [28..37] sample_rate as 80-bit float (10 bytes)
+//   [38..41] "SSND"
+//   [42..45] ssnd_size
+//   [46..49] offset (= 0)
+//   [50..53] block_size (= 0)
+//
+// Previously this test was disabled with `[.]` and the comment
+// "temporarily disabled - investigate stack smash issue". The crash was
+// real: encode_float80 wrote 11 bytes into a 10-byte std::byte buffer
+// (see C-1 in REMEDIATION_REPORT/BACKLOG). The original test assertions
+// did not match the spec layout either — they straddled the buggy code's
+// "frames-as-float80" mistake. Once encode_float80 emits exactly 10 bytes
+// and numSampleFrames is restored to its spec-mandated u32, the SSND
+// chunk lands at byte 38 — which is where the original test was *trying*
+// to look. That intent is preserved here.
 TEST_CASE("AIFF header has correct structure", "[lossless]") {
     // Use very small values for testing
     int64_t num_frames = 100;
     int64_t data_size = num_frames * 2 * 3;  // 100 frames * 2 channels * 3 bytes per sample
-    
+
     auto header = mwaac::build_aiff_header(2, 44100, 24, num_frames, data_size);
-    
+
     // Check FORM chunk
     REQUIRE(header[0] == std::byte{'F'});
     REQUIRE(header[1] == std::byte{'O'});
     REQUIRE(header[2] == std::byte{'R'});
     REQUIRE(header[3] == std::byte{'M'});
-    
+
     // Check AIFF
     REQUIRE(header[8] == std::byte{'A'});
     REQUIRE(header[9] == std::byte{'I'});
     REQUIRE(header[10] == std::byte{'F'});
     REQUIRE(header[11] == std::byte{'F'});
-    
+
     // Check COMM chunk
     REQUIRE(header[12] == std::byte{'C'});
     REQUIRE(header[13] == std::byte{'O'});
     REQUIRE(header[14] == std::byte{'M'});
     REQUIRE(header[15] == std::byte{'M'});
-    
-    // Check SSND chunk
+
+    // Check SSND chunk: starts at byte 38 (= 12 [COMM] + 8 [chunk hdr]
+    // + 18 [comm_size payload]).
     REQUIRE(header[38] == std::byte{'S'});
     REQUIRE(header[39] == std::byte{'S'});
     REQUIRE(header[40] == std::byte{'N'});
@@ -177,17 +201,16 @@ TEST_CASE("AIFF header has correct structure", "[lossless]") {
 TEST_CASE("AIFF header has correct parameters", "[lossless]") {
     int64_t num_frames = 48000;
     int64_t data_size = num_frames * 2 * 3;
-    
+
     auto header = mwaac::build_aiff_header(2, 48000, 24, num_frames, data_size);
-    
-    // COMM chunk starts at byte 12
-    // Channels at byte 22 (big-endian): 2 = 0x0002
-    REQUIRE(header[22] == std::byte{0x00});
-    REQUIRE(header[23] == std::byte{0x02});
-    
-    // Bits per sample at byte 32-33 (big-endian): 24 = 0x0018
-    REQUIRE(header[32] == std::byte{0x00});
-    REQUIRE(header[33] == std::byte{0x18});
+
+    // Channels at bytes 20-21 (big-endian): 2 = 0x0002
+    REQUIRE(header[20] == std::byte{0x00});
+    REQUIRE(header[21] == std::byte{0x02});
+
+    // Bits per sample at bytes 26-27 (big-endian): 24 = 0x0018
+    REQUIRE(header[26] == std::byte{0x00});
+    REQUIRE(header[27] == std::byte{0x18});
 }
 
 // =============================================================================
@@ -867,3 +890,128 @@ TEST_CASE("RF64 round-trip: sample region byte-identical",
 }
 
 #endif  // MWAAC_RF64_FIXTURE_DIR
+
+// =============================================================================
+// encode_float80 wire-format tests (C-1)
+// =============================================================================
+//
+// `encode_float80` is a static helper inside audio_file.cpp; we observe it
+// indirectly through the 10-byte sample-rate slot of `build_aiff_header`,
+// which lives at bytes 28..37 (see the AIFF byte-layout reference above).
+// The expected byte patterns are the canonical IEEE 754 80-bit
+// extended-precision big-endian encodings, taken from Apple SANE / the
+// AIFF 1.3 spec.
+//
+// Layout reminder (10 bytes total):
+//   byte 0: sign(1) || top 7 bits of 15-bit biased exponent
+//   byte 1: low 8 bits of biased exponent
+//   bytes 2..9: 64-bit big-endian mantissa, with explicit leading 1 bit
+//   bias = 16383
+
+namespace {
+
+// Pull bytes 28..37 (the sample_rate float80 slot) out of an AIFF header
+// built with the given sample rate. Frame count / bits / channels are
+// arbitrary because we are only inspecting the float80 region.
+std::array<uint8_t, 10> sample_rate_float80_bytes(int sample_rate) {
+    auto header = mwaac::build_aiff_header(/*channels*/ 1,
+                                            sample_rate,
+                                            /*bits_per_sample*/ 16,
+                                            /*num_frames*/ 4,
+                                            /*data_size*/ 4 * 1 * 2);
+    REQUIRE(header.size() >= 38);
+    std::array<uint8_t, 10> out{};
+    for (size_t i = 0; i < 10; ++i) {
+        out[i] = static_cast<uint8_t>(header[28 + i]);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("encode_float80: wire-format value 1.0", "[lossless][float80]") {
+    // 1.0 in IEEE 754 80-bit extended:
+    //   sign=0, biased_exp=16383=0x3FFF, mantissa=0x8000_0000_0000_0000
+    //   Wire bytes: 3F FF 80 00 00 00 00 00 00 00
+    // Source: Apple SANE / AIFF 1.3 spec, COMM sampleRate examples.
+    //
+    // We use sample_rate=1 to drive encode_float80 with the value 1.0;
+    // the 10 encoded bytes live at offsets 28..37 of the AIFF header.
+    auto bytes = sample_rate_float80_bytes(1);
+    const std::array<uint8_t, 10> expected = {
+        0x3F, 0xFF, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    for (size_t i = 0; i < 10; ++i) {
+        INFO("byte " << i);
+        REQUIRE(bytes[i] == expected[i]);
+    }
+}
+
+TEST_CASE("encode_float80: wire-format value 44100.0", "[lossless][float80]") {
+    // 44100.0 in IEEE 754 80-bit extended:
+    //   44100 = 0xAC44 = 1010 1100 0100 0100 (16 bits, MSB at bit 15)
+    //   exp=15, biased=16398=0x400E
+    //   mantissa with explicit leading 1 (left-justified into 64 bits)
+    //     = 0xAC44_0000_0000_0000
+    //   sign=0
+    //   Wire bytes: 40 0E AC 44 00 00 00 00 00 00
+    // Source: Apple SANE / cross-checked against libsndfile output.
+    auto bytes = sample_rate_float80_bytes(44100);
+    const std::array<uint8_t, 10> expected = {
+        0x40, 0x0E, 0xAC, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    for (size_t i = 0; i < 10; ++i) {
+        INFO("byte " << i);
+        REQUIRE(bytes[i] == expected[i]);
+    }
+}
+
+TEST_CASE("AIFF sample-rate round-trip via libsndfile", "[lossless][float80]") {
+    // End-to-end check: build an AIFF file with build_aiff_header at each
+    // standard rate, write a tiny synthetic body, and have libsndfile
+    // (an independent IEEE-754 80-bit decoder) read it back. Asserts the
+    // sample rate it recovers matches what we encoded.
+    //
+    // This proves encode_float80 produces bytes that match the AIFF spec
+    // as understood by a third-party implementation, not just the bit
+    // pattern we computed by hand.
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_aiff_sr_roundtrip";
+    fs::create_directories(test_dir);
+    TempFile dir_cleanup(test_dir);
+
+    constexpr int channels = 1;
+    constexpr int bits_per_sample = 16;
+    constexpr int64_t num_frames = 4;
+    constexpr int64_t data_size = num_frames * channels * (bits_per_sample / 8);
+
+    for (int rate : {44100, 48000, 88200, 96000, 176400, 192000}) {
+        INFO("sample_rate = " << rate);
+
+        fs::path path = test_dir / ("sr_" + std::to_string(rate) + ".aiff");
+        TempFile cleanup(path);
+
+        auto header = mwaac::build_aiff_header(channels, rate, bits_per_sample,
+                                               num_frames, data_size);
+
+        // Write header + a tiny zeroed body of `data_size` bytes so SSND
+        // is well-formed.
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        REQUIRE(out.good());
+        out.write(reinterpret_cast<const char*>(header.data()),
+                  static_cast<std::streamsize>(header.size()));
+        std::vector<char> body(static_cast<size_t>(data_size), '\0');
+        out.write(body.data(), static_cast<std::streamsize>(body.size()));
+        out.close();
+        REQUIRE(fs::file_size(path) == header.size() + body.size());
+
+        SF_INFO info{};
+        SNDFILE* sf = sf_open(path.string().c_str(), SFM_READ, &info);
+        REQUIRE(sf != nullptr);
+        const int sf_rate = info.samplerate;
+        const int sf_channels = info.channels;
+        sf_close(sf);
+
+        REQUIRE(sf_rate == rate);
+        REQUIRE(sf_channels == channels);
+    }
+}
