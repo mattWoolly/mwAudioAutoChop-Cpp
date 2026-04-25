@@ -575,9 +575,44 @@ migration to `std::expected`-style storage happens in M-14.
 ### Mi-13 — verbose.hpp g_timer_start is unused — delete.
 ### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&.
 ### Mi-15 — explicit ctors audit on result wrappers — resolved by M-14.
-### Mi-16 — encode_float80 NaN fallback to zero — reject with assert.
+### Mi-16 — encode_float80 NaN/over-/under-flow handling
+
+- Replace the silent `biased_exp` clamp on subnormal/overflow inputs with
+  `assert(std::isfinite(value) && value >= 0)` at function entry.
+- Either (a) make NaN handling explicit (e.g., dedicated branch that
+  encodes a quiet-NaN bit pattern), or (b) update the docstring/comment
+  block to say "NaN: undefined output, asserted-against in Debug" — the
+  current header comment claims "NaN: encodes as +0" but in Release the
+  NaN actually flows through `frexp`, which is unspecified. Fix the
+  doc/code mismatch one way or the other. *Audit-2 finding under C-1.*
+- Add a unit test that `encode_float80(1e-5000)` and `encode_float80(1e+5000)`
+  either reject in Debug or emit a documented bit pattern.
+- *Note.* AIFF sample rates 44.1 k–192 k all fit comfortably; this is a
+  hardening item, not a correctness bug for the project's actual use case.
 ### Mi-17 — std::stoll in natural_less can throw — bound digit count.
-### Mi-18 — -Wconversion findings — systematic cleanup (one PR per TU).
+### Mi-18 — -Wconversion / -Wdouble-promotion / -Wsign-conversion cleanup
+
+Systematic cleanup of the 89 warning-as-error findings the Phase 0.2
+harness surfaced. One PR per TU. **Recommended starting TU:**
+`src/core/audio_buffer.cpp` — its `-Wdouble-promotion` finding at line 68
+is the *first* error a clean Release+`MWAAC_WERROR=ON` build hits, so
+fixing it is a precondition for anyone trying to validate that the
+quality gate works at all. Audit-2 of C-1 raised this explicitly as a
+"PROJECT_SPEC.md says `-Werror` should pass; right now it can't" item.
+
+Per-TU sub-tasks (rough; finalise after the audit_buffer.cpp pass
+calibrates effort):
+
+- `src/core/audio_buffer.cpp` (~7 findings — start here).
+- `src/core/correlation.cpp` (~12).
+- `src/core/analysis.cpp` (~9).
+- `src/core/music_detection.cpp` (~5).
+- `src/core/audio_file.cpp` (~3 remaining after C-1).
+- `src/modes/reference_mode.cpp` (large; may split further).
+- `src/modes/blind_mode.cpp`.
+- `src/modes/reaper_export.cpp`.
+- `src/tui/app.cpp`, `src/tui/waveform.cpp`.
+- `src/main.cpp`.
 
 Each of these is a ≤ 30-line diff; one item, one PR, one audit.
 
