@@ -245,7 +245,7 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Assert or error-return on size mismatch.
   - [ ] bits_per_sample comes from a single authoritative source.
 
-### M-15 — CLI continues after failed AudioFile::open with total_frames=0
+### M-15 — CLI continues after failed AudioFile::open with total_frames=0 — **SUBSUMED BY C-2**
 
 - **Defect.** `main.cpp:253–260` uses `audio_file ? ... : 0` pattern then
   unconditionally writes tracks, producing `sp.end_sample = -1`.
@@ -254,10 +254,24 @@ migration to `std::expected`-style storage happens in M-14.
 - **Files touched.** `src/main.cpp`.
 - **Tests added.**
   - Covered by C-2's `main: failed AudioFile::open exits cleanly` test.
+- **Status.** **Subsumed by C-2 (PR #29, commits `717e705` + `c6611c0`).**
+  The C-2 fix-agent rewrote all three CLI branches (reference, blind, tui) to
+  the canonical `if (!opened) return 1; auto& audio_file = opened.value();`
+  pattern, eliminating the conditional-default antipattern that caused
+  `total_frames = 0` and downstream `sp.end_sample = -1`. Both C-2 audit
+  passes verified this; an independent grep on the C-2 branch found 0
+  unguarded `.value()` calls in `main.cpp`. The originally-planned
+  M-15 dispatch was therefore skipped — no separate fix-agent or PR
+  needed. The new precondition guards from C-2 (`audio_file.hpp` accessors)
+  also abort hard if any future caller regresses, providing belt-and-braces
+  protection beyond the textual guards in `main.cpp`.
 - **Exit criteria.**
-  - [ ] Single guard immediately after the `open` call.
-  - [ ] No `audio_file.value()` calls in main.cpp that aren't preceded by a
-        validated guard.
+  - [x] Single guard immediately after the `open` call. *(Verified on C-2
+        branch: each of the three branches in `main.cpp` opens, checks
+        `if (!opened)`, and binds `auto& audio_file = opened.value()`.)*
+  - [x] No `audio_file.value()` calls in main.cpp that aren't preceded by a
+        validated guard. *(Verified by grep on C-2 branch: 0 unguarded
+        `.value()` calls remain.)*
 
 ### M-16 — write_track is not atomic on partial write
 
@@ -731,7 +745,7 @@ Strict precedence:
 1. FIXTURE-REF, FIXTURE-RF64, FIXTURE-WAVEEXT, FIXTURE-MALFORMED
    (test-fixture-agent; these unblock many downstream items).
 2. C-1, M-16 (atomic-write), C-2 (precondition check only), M-15
-   (call-site guards).
+   (call-site guards — subsumed by C-2; no separate dispatch).
 3. M-14 (contract unification, depends on C-2).
 4. C-3 (depends on FIXTURE-RF64), M-2.
 5. M-3 (depends on FIXTURE-WAVEEXT), M-4, M-5, Mi-1.
