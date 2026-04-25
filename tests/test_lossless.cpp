@@ -1015,3 +1015,152 @@ TEST_CASE("AIFF sample-rate round-trip via libsndfile", "[lossless][float80]") {
         REQUIRE(sf_channels == channels);
     }
 }
+
+// =============================================================================
+// M-16: Atomic write — write_track must produce either a complete output
+// file or no file at all at the target path. The implementation writes to a
+// temp-sibling first and commits via std::filesystem::rename. Tests below
+// exercise the success path (no temp leftovers) and two reproducible failure
+// modes (missing parent dir, target path is a directory) to confirm that on
+// failure the target is untouched and no .mwaac.tmp.* siblings linger.
+// =============================================================================
+
+namespace {
+
+// Count temp-sibling artifacts that match the .mwaac.tmp.* naming scheme used
+// by the atomic-write implementation. Uses directory_iterator over the parent
+// directory; tolerates a missing directory by returning 0.
+int count_mwaac_temp_siblings(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return 0;
+    int count = 0;
+    for (auto it = fs::directory_iterator(dir, ec);
+         !ec && it != fs::directory_iterator();
+         it.increment(ec)) {
+        const auto name = it->path().filename().string();
+        if (name.find(".mwaac.tmp.") != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+} // anonymous namespace
+
+TEST_CASE("write_track: success leaves only target file at output path", "[lossless][atomic]") {
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_atomic_success";
+    fs::create_directories(test_dir);
+
+    fs::path source_path = test_dir / "source.wav";
+    fs::path output_path = test_dir / "output.wav";
+
+    TempFile source_cleanup(source_path);
+    TempFile output_cleanup(output_path);
+    TempFile dir_cleanup(test_dir);
+
+    constexpr int64_t num_frames = 256;
+    REQUIRE(create_test_wav(source_path, 2, 44100, 24, num_frames));
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    auto write_result = mwaac::write_track(open_result.value(), output_path,
+                                           0, num_frames - 1);
+    REQUIRE(write_result.has_value());
+
+    // Target exists and is a regular file.
+    REQUIRE(fs::exists(output_path));
+    REQUIRE(fs::is_regular_file(output_path));
+
+    // No temp-sibling artifacts remain.
+    REQUIRE(count_mwaac_temp_siblings(test_dir) == 0);
+}
+
+TEST_CASE("write_track: failure leaves no file at output path (parent dir missing)",
+          "[lossless][atomic]") {
+    // Source must exist on disk; only the output path's parent is bogus.
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_atomic_missing_parent";
+    fs::create_directories(test_dir);
+
+    fs::path source_path = test_dir / "source.wav";
+
+    // Output parent intentionally does not exist.
+    fs::path bogus_parent = test_dir / "does_not_exist_subdir";
+    fs::path output_path = bogus_parent / "output.wav";
+
+    TempFile source_cleanup(source_path);
+    TempFile dir_cleanup(test_dir);
+    // Pre-condition: bogus_parent must not exist.
+    {
+        std::error_code ec;
+        fs::remove_all(bogus_parent, ec);
+    }
+    REQUIRE_FALSE(fs::exists(bogus_parent));
+
+    constexpr int64_t num_frames = 256;
+    REQUIRE(create_test_wav(source_path, 2, 44100, 24, num_frames));
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    auto write_result = mwaac::write_track(open_result.value(), output_path,
+                                           0, num_frames - 1);
+    REQUIRE_FALSE(write_result.has_value());
+    REQUIRE(write_result.error() == mwaac::AudioError::WriteError);
+
+    // Target was not created, and no errant directory was created either.
+    REQUIRE_FALSE(fs::exists(output_path));
+    REQUIRE_FALSE(fs::exists(bogus_parent));
+
+    // No temp-sibling artifacts in the (extant) test_dir.
+    REQUIRE(count_mwaac_temp_siblings(test_dir) == 0);
+}
+
+TEST_CASE("write_track: failure leaves no file at output path (target is a directory)",
+          "[lossless][atomic]") {
+    // Pre-create a directory at output_path so that rename(temp, output_path)
+    // fails. This exercises the rename-failure cleanup path: the temp-sibling
+    // write succeeds, but the commit step fails, and we must remove the temp.
+    fs::path test_dir = fs::temp_directory_path() / "mwaac_test_atomic_target_is_dir";
+    fs::create_directories(test_dir);
+
+    fs::path source_path = test_dir / "source.wav";
+    fs::path output_path = test_dir / "output.wav";  // will be a directory
+
+    TempFile source_cleanup(source_path);
+    TempFile dir_cleanup(test_dir);
+
+    constexpr int64_t num_frames = 256;
+    REQUIRE(create_test_wav(source_path, 2, 44100, 24, num_frames));
+
+    // Pre-create output_path as a directory containing a marker file. We will
+    // assert this directory and its content survive the failed call.
+    fs::create_directories(output_path);
+    fs::path marker = output_path / "marker.txt";
+    {
+        std::ofstream f(marker);
+        f << "preserved";
+    }
+    REQUIRE(fs::is_directory(output_path));
+    REQUIRE(fs::exists(marker));
+
+    auto open_result = mwaac::AudioFile::open(source_path);
+    REQUIRE(open_result.has_value());
+
+    auto write_result = mwaac::write_track(open_result.value(), output_path,
+                                           0, num_frames - 1);
+    REQUIRE_FALSE(write_result.has_value());
+    REQUIRE(write_result.error() == mwaac::AudioError::WriteError);
+
+    // The pre-existing directory at the target path is unchanged.
+    REQUIRE(fs::is_directory(output_path));
+    REQUIRE(fs::exists(marker));
+
+    // No temp-sibling artifacts remain in the parent dir after rename failure.
+    REQUIRE(count_mwaac_temp_siblings(test_dir) == 0);
+
+    // Tear down the directory we placed at output_path so TempFile cleanup
+    // for the parent can complete.
+    std::error_code ec;
+    fs::remove_all(output_path, ec);
+}
