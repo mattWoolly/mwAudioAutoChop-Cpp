@@ -304,8 +304,27 @@ migration to `std::expected`-style storage happens in M-14.
 - **Depends on.** C-2 (the precondition-check version).
 - **Exit criteria.**
   - [ ] Backed by `std::variant<T, E>` internally — no reinterpret_cast.
+        *Alternative acceptable only if explicitly justified:* keep
+        placement-new layout but insert `std::launder` at every accessor
+        to cure the latent `[basic.life]/8` UB. Whichever path M-14
+        chooses, **the latent UB must be cured in this PR — no further
+        deferral.** *Audit-2 of C-2 finding (F-AUDIT2-4): the C-2 fix
+        narrows the behavioural hazard but the standard-conformance
+        hazard persists; M-14 is its terminal scope.*
   - [ ] Implicit conversions from T and E are deliberate and documented.
   - [ ] `LoadResult` removed from the tree.
+  - [ ] `Expected`'s contract docstring states its **thread-safety**
+        semantics explicitly: "single-threaded contract; check + access
+        must occur on the same thread; concurrent mutation invalidates
+        the precondition's TOCTOU window." *Audit-2 of C-2 finding
+        (F-AUDIT2-2).*
+  - [ ] **Move-construction / move-assignment behaviour documented.**
+        Audit-2 of C-2 confirmed: `Expected(Expected&& other)` does
+        not flip `other.has_value_`, so moved-from `Expected` is still
+        considered "valid" and `value()` returns a moved-from `T`. This
+        is consistent with `std::optional` / `std::expected`; the M-14
+        contract docstring should make it explicit so callers don't
+        rely on moved-from `Expected` aborting.
 
 ---
 
@@ -600,6 +619,54 @@ migration to `std::expected`-style storage happens in M-14.
 - *Note.* AIFF sample rates 44.1 k–192 k all fit comfortably; this is a
   hardening item, not a correctness bug for the project's actual use case.
 ### Mi-17 — std::stoll in natural_less can throw — bound digit count.
+### F-AUDIT2-1 — C-2 integration test exercises the actual guard end-to-end
+
+- **Defect.** The C-2 subprocess integration test invokes
+  `mwAudioAutoChop reference /no/such/file ...`, which fails at
+  `analyze_reference_mode` and never reaches the new `AudioFile::open`
+  guard the test claims to exercise. Audit-2 of C-2 constructed a
+  reproducer: a `WAVE_FORMAT_EXTENSIBLE` WAV with a detectable gap
+  loads via libsndfile, passes `analyze_blind_mode`, and only then hits
+  the `AudioFile::open` strict-validator rejection — exercising the
+  new guard end-to-end.
+- **Invariant established.** Same as C-2's: "Every CLI branch that
+  depends on a successful AudioFile::open short-circuits on failure
+  before using the result." This item makes the integration test
+  *prove* the guard runs.
+- **Files touched.** `tests/test_audio_file.cpp` (or a sibling integration
+  file), `tests/fixtures/waveext/` (reuse the FIXTURE-WAVEEXT corpus
+  once that lands).
+- **Depends on.** FIXTURE-WAVEEXT (PR #25).
+- **Exit criteria.**
+  - [ ] New subprocess test variant uses a WAVE_FORMAT_EXTENSIBLE fixture
+        that fails specifically at `AudioFile::open`, not earlier.
+  - [ ] Existing C-2 subprocess test stays as-is (validates the outer
+        clean-exit invariant).
+
+### F-AUDIT2-3 — Move `MWAAC_ASSERT_PRECONDITION` to a shared header
+
+- **Defect.** The macro currently lives in `src/core/audio_file.hpp`.
+  As soon as a second consumer needs it (M-14, M-15, future Tier 2/3
+  fixes), copy-paste becomes likely.
+- **Invariant established.** "Project precondition macros have a single
+  definition site referenceable from any TU."
+- **Files touched.** Move to `src/core/precondition.hpp` (new). Update
+  the `audio_file.hpp` include.
+- **Trigger.** Defer until a second consumer arrives — *not now*. When
+  triggered, this is a ≤ 10-line change.
+
+### F-AUDIT2-DT — Death-test harness extraction
+
+- **Defect.** C-2's death-test scaffolding (fork + waitpid, signal reset,
+  child stdio redirect) lives inline in `tests/test_audio_file.cpp`.
+  Audit-1 of C-2 noted the same pattern will be needed by M-14's
+  death tests; copy-paste becomes likely.
+- **Invariant established.** "Death-test harness is a single,
+  test-only utility; not duplicated per test file."
+- **Files touched.** New `tests/support/death_test.hpp`. Refactor
+  C-2's existing tests to use it.
+- **Trigger.** Defer until M-14 adds the next death-test consumer.
+
 ### Mi-18 — -Wconversion / -Wdouble-promotion / -Wsign-conversion cleanup
 
 Systematic cleanup of the 89 warning-as-error findings the Phase 0.2
