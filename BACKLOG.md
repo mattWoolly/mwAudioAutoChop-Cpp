@@ -272,6 +272,16 @@ migration to `std::expected`-style storage happens in M-14.
 - **Exit criteria.**
   - [ ] Uses temp-sibling + `std::filesystem::rename` idiom.
   - [ ] Temp file is cleaned on any error path.
+  - [ ] Temp-sibling path generation handles filenames up to `NAME_MAX`
+        (255 on POSIX) without losing the random uniqueness component.
+        Truncation results in `WriteError`, never a non-unique temp path.
+        Regression test uses a ≥50-char target filename and ≥8 concurrent
+        threads writing to the same target; assertion: no file at the
+        target with size below the WAV header size at any time after the
+        threads return. *Audit-1 finding (REJECTED) on the first M-16
+        attempt: snprintf into a 64-byte buffer silently truncated the
+        random suffix, producing 40 corrupt target files in 6400 calls
+        under 32-thread stress with a 54-char filename.*
 
 ---
 
