@@ -8,7 +8,19 @@ type: project
 
 **Baseline as of:** Post-Mi-18 merge (`d925176`+). Mi-18 made the build compile cleanly under `-Werror` on Linux GCC and macOS Apple Clang for the first time in this remediation cycle. With the build now green, the test runner reaches its first execution; the failures listed below are the **expected-red set** that the in-flight PRs and backlog items will progressively eliminate.
 
-**Why this doc exists.** Without an authoritative known-failing list, the natural human heuristic during a rebase walk is "CI red ⇒ regression," which would halt every merge unnecessarily. The orchestrator's halt rules need a finer signal: **test red is acceptable iff every failing test name + line is on this list, and no new failures appear.** This file is that authoritative list.
+**Why this doc exists.** Without an authoritative known-failing list, the natural human heuristic during a rebase walk is "CI red ⇒ regression," which would halt every merge unnecessarily. The orchestrator's halt rules need a finer signal: **test red is acceptable iff every failing test is on this list (matched by TEST_CASE name), and no new failures appear.** This file is that authoritative list.
+
+## Identification rule
+
+Failures are identified by **TEST_CASE name** (with file path), NOT by `file:line`. Line numbers are current-location hints that drift as PRs add code above the failure point. Identification schema, in priority order:
+
+1. **TEST_CASE name + file** — canonical. Example: `"Blind mode pipeline: gap detection"` in `tests/test_integration.cpp`.
+2. **TEST_CASE name → SECTION name + file** — when a failure is SECTION-granular within a TEST_CASE. (No current entry uses this; reserved for forward compatibility.)
+3. **file:line** — fallback only when neither (1) nor (2) suffices, with explicit justification. (No current entry should need this.)
+
+This rule was revised after PR #23 surfaced a **false halt**: PR #23 added new test bodies above three failing cases, shifting their line numbers by exactly +37 (`:479 → :516`, `:691 → :728`, `:762 → :799`) while keeping TEST_CASE name and assertion shape identical. The original `same name + same line` rule incorrectly classified that drift as a regression. The TEST_CASE-name rule correctly classifies it as the same documented failure. See `docs/deviations.md` → `KNOWN-FAILING-SCHEMA-V2` for the full rationale.
+
+"Currently at line X" hints below are diagnostic — use them to navigate, but the gate matches on TEST_CASE name.
 
 **How to read this doc.**
 - Each entry is a single failing site: file, line, test case, what it asserts, why it currently fails, and which item in the merge queue (or longer-term backlog) cures it.
@@ -33,33 +45,36 @@ A test that passes on the PR but is on this list is progress — update this fil
 
 ## Active known-failing entries
 
-### `test_lossless` — `AIFF header has correct structure` (`[lossless]`)
+### `test_lossless` — TEST_CASE `"AIFF header has correct structure"` (`[lossless]`)
 
-- **Location.** `tests/test_lossless.cpp:143`.
+- **File.** `tests/test_lossless.cpp` (currently line 143; drifts as the file grows).
 - **Assertion family.** `REQUIRE(header[i] == std::byte{...})` for FORM/AIFF chunk magic bytes, plus body assertions.
 - **Why failing.** The test calls `build_aiff_header(2, 44100, 24, num_frames, data_size)`, which today still routes through pre-C-1 `encode_float80` for the sampleRate field. Pre-C-1 `encode_float80` writes 11 bytes into a 10-byte stack buffer and stack-smashes; sanitizer builds also flag this as ASan stack-buffer-overflow. The test was historically `[!shouldfail]`-tagged with a comment "temporarily disabled — investigate stack smash issue"; F-4 re-enabled it so the smash surfaces.
 - **Cured by.** **PR #27 (C-1)**. C-1's commit rewrites `encode_float80` to the correct 10-byte IEEE 754 layout AND fixes `build_aiff_header`'s `numSampleFrames` field type from float80 to u32 per the AIFF 1.3 spec. Both audit passes verified the 6-rate AIFF round-trip; `test_lossless:143` should pass after #27 merges.
 - **Build job impact.** Linux Release / Linux Debug / Linux sanitizers / macOS Release / macOS Debug — all show this failure when Mi-18-equivalent build flags compile cleanly. ASan additionally trips on the stack overflow under sanitizer build.
 
-### `test_integration` — `Blind mode pipeline: integrated detection`
+### `test_integration` — TEST_CASE `"Blind mode pipeline: gap detection"` (`[integration][blind]`)
 
-- **Location.** `tests/test_integration.cpp:479` — `CHECK(analysis.split_points.size() >= 2)`.
+- **File.** `tests/test_integration.cpp` (currently line 446 for the TEST_CASE; failing assertion currently at line 479 on main / line 516 after PR #23's additions; drifts).
+- **Assertion.** `CHECK(analysis.split_points.size() >= 2)` — "≥1 gap => ≥2 tracks".
 - **Assertion intent.** A clean 2-track synthetic vinyl rip should produce ≥1 gap and therefore ≥2 split points. Comment in source explicitly says: "if fixture noise is genuinely too high, the fix is to regenerate with a lower noise floor — not to silently accept the error path."
 - **Why failing.** Blind-mode pipeline returns only 1 split on the current synthetic 2-track fixture. The defect is documented as **NEW-BLIND-GAP** in BACKLOG.md (Tier 6 — Algorithmic correctness / blind-mode tuning). The score-gap thresholding currently misclassifies the inter-track silence as below-threshold for some fixture configurations.
 - **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Not in the current Tier 1+2 queue. Will remain failing after Tier 1+2 lands.
 
-### `test_integration` — `WAVE_FORMAT_EXTENSIBLE 24-bit 2ch round-trip`
+### `test_integration` — TEST_CASE `"Lossless end-to-end: verify exported file formats"` (`[integration][e2e]`)
 
-- **Location.** `tests/test_integration.cpp:691` — `REQUIRE(export_result.has_value())`.
+- **File.** `tests/test_integration.cpp` (currently line 662 for the TEST_CASE; failing assertion currently at line 691 on main / line 728 after PR #23; drifts).
+- **Assertion.** `REQUIRE(export_result.has_value())` for a `create_test_wav(..., 2, sample_rate, 24, 48000, ...)` source — that's 24-bit 2ch WAVE_FORMAT_EXTENSIBLE.
 - **Assertion intent.** Round-trip a 48 kHz, 2-channel, 24-bit WAVE_FORMAT_EXTENSIBLE file: open → write_track → re-open. The export must succeed.
 - **Why failing.** `write_track` does not currently support WAVE_FORMAT_EXTENSIBLE (`0xFFFE`) output. The defect is documented as **NEW-WAVEEXT-WRITE** in BACKLOG.md, anticipated to be subsumed by **M-3** (Tier 4 — Parser hardening, WAVE_FORMAT_EXTENSIBLE support).
 - **Cured by.** **M-3** (BACKLOG.md, Tier 4). Not in the current Tier 1+2 queue. Will remain failing after Tier 1+2 lands.
 - **Note.** PR #25 (FIXTURE-WAVEEXT) lands the *fixture* but not the *write* path; this test will continue failing in the same way after #25 merges. M-3's PR is the cure.
 
-### `test_integration` — `Blind mode end-to-end with reference cross-check`
+### `test_integration` — TEST_CASE `"Combined workflow: reference then blind analysis"` (`[integration][combined]`)
 
-- **Location.** `tests/test_integration.cpp:762` — `CHECK(blind_result.value().split_points.size() >= 2)`.
-- **Assertion intent.** Same `≥2 split points` invariant as line 479, in a different test case that also calls `analyze_reference_mode` for a side-channel sanity check.
+- **File.** `tests/test_integration.cpp` (currently line 705 for the TEST_CASE; failing assertion currently at line 762 on main / line 799 after PR #23; drifts).
+- **Assertion.** `CHECK(blind_result.value().split_points.size() >= 2)` — same `≥2 split points` invariant as the gap-detection case.
+- **Assertion intent.** Different test case that also calls `analyze_reference_mode` for a side-channel sanity check (which is `(void)`'d pending FIXTURE-REF coverage of that path).
 - **Why failing.** Same defect as line 479 — NEW-BLIND-GAP. The two test cases exercise different fixture variants but both bottom out on the same blind-mode threshold flaw.
 - **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Same as line 479. Will remain failing after Tier 1+2 lands.
 

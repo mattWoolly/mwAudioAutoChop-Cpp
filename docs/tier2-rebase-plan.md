@@ -23,7 +23,7 @@ The user's standing instruction: "make the next dispatch unambiguous instead of 
 A PR's CI is **green for merge purposes** when **all three** hold:
 
 1. Every `build / *` and `sanitizers (asan+ubsan)` job's compile step succeeds. This is the strict build-clean signal Mi-18 was dispatched to produce.
-2. The set of failing tests on the PR is a **strict subset of `docs/known-failing-tests.md`** — same test name, same line, same failure mode. New failures that don't appear on the known-failing list are regressions.
+2. The set of failing tests on the PR is a **strict subset of `docs/known-failing-tests.md`**, **matched by TEST_CASE name** (and SECTION when applicable) — *not* by `file:line`. Line numbers drift as PRs add code above the failure point; the canonical identifier is the TEST_CASE name. See `docs/known-failing-tests.md` → "Identification rule" for the schema. New failures whose TEST_CASE name doesn't appear on the known-failing list are regressions.
 3. **No test passes on main and fails on the PR.** Run main's most recent test pass before merging the PR; diff. If a test that's PASS on main is FAIL on the PR, halt and surface — that's the regression case the gate exists for.
 
 `clang-tidy` red is out of scope for the merge gate per the standing Mi-18 mandate (it tracks style rules separately under N-1..N-12 / Mi-18-FU-*). Do **not** wait for clang-tidy green on this walk.
@@ -33,7 +33,7 @@ When a PR cures a known-failing entry, the merging commit must also move the cor
 ### Halt rules — non-negotiable
 
 1. **Pending CI is not actionable.** Treat pending the same as red. Wait for completion before merging.
-2. **A test failure that is NOT on `docs/known-failing-tests.md` halts the merge.** This is the operative regression check; it replaces the previous "documented pre-existing" gloss, which was ambiguous when main itself couldn't compile. The known-failing doc is now the authoritative pre-existing list.
+2. **A test failure whose TEST_CASE name is NOT on `docs/known-failing-tests.md` halts the merge.** This is the operative regression check; it replaces the previous "documented pre-existing" gloss, which was ambiguous when main itself couldn't compile. The known-failing doc is now the authoritative pre-existing list. **Match by TEST_CASE name, not file:line** — line drift from PRs adding code above the failure point is normal and not a regression.
 3. **Conflicts that aren't mechanical halt.** "Mechanical" means: each side's intent is preserved by textual interleaving (e.g. two casts at different lines in the same function). "Non-mechanical" means: each side's intent is incompatible (e.g. one rewrites a function the other casts inside). Non-mechanical conflicts halt and surface — the fix-agent does not get to pick winners on its own authority.
 4. **Force-push requires `--force-with-lease`, never `--force`.** Rebases rewrite branch history; `--force-with-lease` protects against overwriting concurrent pushes.
 5. **Do not merge anything if main itself goes red between steps.** A red main mid-walk halts the entire walk until main is investigated. "Red main" means main violates the CI green definition above — not just "any job has a red dot."
