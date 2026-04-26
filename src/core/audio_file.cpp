@@ -58,14 +58,16 @@ static uint32_t read_be_u32(const std::vector<uint8_t>& data, size_t offset) {
 
 static uint16_t read_le_u16(const std::vector<uint8_t>& data, size_t offset) {
     if (offset + 2 > data.size()) return 0;
-    return static_cast<uint16_t>(data[offset]) |
-           (static_cast<uint16_t>(data[offset + 1]) << 8);
+    return static_cast<uint16_t>(
+        static_cast<uint16_t>(data[offset]) |
+        (static_cast<uint16_t>(data[offset + 1]) << 8));
 }
 
 static uint16_t read_be_u16(const std::vector<uint8_t>& data, size_t offset) {
     if (offset + 2 > data.size()) return 0;
-    return (static_cast<uint16_t>(data[offset]) << 8) |
-           (static_cast<uint16_t>(data[offset + 1]));
+    return static_cast<uint16_t>(
+        (static_cast<uint16_t>(data[offset]) << 8) |
+        static_cast<uint16_t>(data[offset + 1]));
 }
 
 // AudioFile implementation
@@ -616,7 +618,7 @@ std::vector<std::byte> build_aiff_header(
     header.reserve(54);
     
     int bytes_per_sample = (bits_per_sample + 7) / 8;
-    int bytes_per_frame = channels * bytes_per_sample;
+    [[maybe_unused]] int bytes_per_frame = channels * bytes_per_sample;
     int64_t form_size = data_size + 46;  // COMM(26) + SSND(8) + data + 12 overhead
     int64_t ssnd_size = data_size + 8;  // includes offset and block size
     
