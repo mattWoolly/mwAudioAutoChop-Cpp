@@ -237,7 +237,7 @@ std::vector<EndDecision> compute_track_ends(
     std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
     if (ss_samples.empty()) return 0;
     std::nth_element(ss_samples.begin(),
-                     ss_samples.begin() + ss_samples.size() / 2,
+                     ss_samples.begin() + static_cast<std::ptrdiff_t>(ss_samples.size() / 2),
                      ss_samples.end());
     double steady_rms = ss_samples[ss_samples.size() / 2];
     if (steady_rms < 1e-6) return 0;
