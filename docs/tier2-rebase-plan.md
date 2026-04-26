@@ -14,6 +14,8 @@ type: project
 
 The user's standing instruction: "make the next dispatch unambiguous instead of discovering shape mid-flight" (same pattern as `docs/m14-scope.md`). Each rebase + merge is a serialized step; predicting conflicts and codifying halt rules in advance prevents the fix-agent from improvising on contact.
 
+**Audit-pass discipline.** Pre-staged docs need their own audit pass before being trusted as gates (same pattern as invariant-agent over fixtures). The first walk attempt on PR #23 surfaced a misattribution in `docs/known-failing-tests.md` — the doc claimed PR #23 cures `test_reference_mode`, but PR #23's BACKLOG-stated scope covers only three `[integration][reference]` cases inside `test_integration.cpp`. Standalone-binary vs integration-cases conflations are the failure mode to watch for. Any new entry added to a gate doc must be spot-checked against actual source (TEST_CASE name, body, line, and PR scope per BACKLOG) before the next dispatch reads it as authoritative.
+
 ## Universal rules (apply to every step)
 
 ### CI green definition — the post-rebase gate
@@ -118,9 +120,12 @@ Tier 1 PRs are independent. Merge order can be any of #23 / #24 / #25 / #26 — 
 
 ### PR #23 — FIXTURE-REF
 
-- **Predicted conflicts.** None against post-Mi-18 main. The fixture lives under `tests/fixtures/ref_v1/`. The only mainline-touching change is un-SKIP-ing three test cases in `tests/test_integration.cpp`, and Mi-18 touched test_integration only for cast-cures at `phase` / `vinyl_info` sites which are in different test cases.
-- **Verify.** After merge, the three previously-SKIP'd reference-mode test cases should now run and pass. If they SKIP, the fixture isn't being discovered — halt.
-- **Test-baseline delta:** tests that previously emitted SKIP now PASS. **Negative delta on the failure set is good.**
+- **Scope (per BACKLOG.md FIXTURE-REF exit criteria).** Un-SKIPs three `[integration][reference]` cases inside `tests/test_integration.cpp` (lines 274, 345, 397) so they assert against the new synthetic vinyl-rip fixture. Does **not** modify the standalone `tests/test_reference_mode.cpp` binary, whose two SKIPs are tracked separately under M-REF-ALIGN-UNIT (Tier 5) and Mi-17 (Tier 9).
+- **Predicted conflicts.** Minor in `tests/test_integration.cpp`. Mi-18 touched test_integration only for cast-cures at `phase` / `vinyl_info` sites which are outside the un-SKIP'd reference cases. The PR #23 rebase fix-agent confirmed mechanical resolution by replacing the conflict region (lines 336–576) with the PR side and preserving every Mi-18 cast/`[[maybe_unused]]` outside that region.
+- **Verify.** After merge, running `test_integration "[integration][reference]"` should pass all three cases (~41 assertions total). The standalone `test_reference_mode` binary remains `Failed` — that's expected and now documented in `docs/known-failing-tests.md` as cured by M-REF-ALIGN-UNIT + Mi-17, not by PR #23.
+- **Known-failing doc movement at merge.** **Zero entries move.** PR #23 transitions three SKIPs to PASS, but SKIPs were never in `docs/known-failing-tests.md` (the doc tracks failures, not skips). Record the transition in the doc's "SKIP-to-PASS transitions" informational section instead. Do **not** touch the standalone `test_reference_mode` entry — that one is unchanged.
+- **Test-baseline delta:** tests that previously emitted SKIP now PASS. **Negative delta on the SKIP set is good; the failure set itself is unchanged.**
+- **Halt-rule reminder for this PR.** The PR satisfies the gate when: build green every job, failing tests are exactly `test_lossless` (Subprocess aborted), `test_reference_mode` (standalone), `test_integration:479/691/762`. Any other test failure is a regression. The standalone `test_reference_mode` failure is **expected and documented** — do NOT halt on it.
 
 ### PR #24 — FIXTURE-RF64
 

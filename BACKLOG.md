@@ -485,6 +485,55 @@ migration to `std::expected`-style storage happens in M-14.
 - **Tests added.**
   - `cross_correlate and cross_correlate_fft agree on lag` (already in
     test suite; just re-verify after comment).
+
+### M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture
+
+- **Origin.** Surfaced during the PR #23 (FIXTURE-REF) rebase audit.
+  `tests/test_reference_mode.cpp:14` is a `SKIP()` whose comment says
+  *"TODO(test-fixtures): FIXTURE-REF — synthetic vinyl rip with known
+  track boundaries is not yet in tests/fixtures/. Will assert that
+  align_per_track lands each track within ±N samples of truth."* The
+  fixture now exists (delivered by PR #23), but the test body was never
+  written. PR #23's BACKLOG scope covers only the three
+  `[integration][reference]` cases in `test_integration.cpp`, not this
+  unit-level case.
+- **Defect.** The unit-level invariant — that `align_per_track` lands
+  each track within a named tolerance of ground-truth on the synthetic
+  fixture — has no test asserting it. The integration tests assert
+  end-to-end behavior; this case isolates the alignment algorithm
+  itself, which is a different surface (one passes the integration
+  case but not this one if alignment-precision regresses while gap
+  detection still works).
+- **Invariant established.** "`align_per_track`'s per-track offsets
+  land within ±`kRefFixtureToleranceSamples` of the ground-truth
+  boundary recorded in the fixture's manifest, for every track in
+  `tests/fixtures/ref_v1/refs/`."
+- **Files touched.** `tests/test_reference_mode.cpp` (replace SKIP
+  body), `tests/CMakeLists.txt` (wire `MWAAC_REF_FIXTURE_V1_DIR`
+  through to `test_reference_mode` if not already there).
+- **Tests added.** Replace `tests/test_reference_mode.cpp:14` SKIP
+  with a real assertion calling `align_per_track` directly, comparing
+  against `tests/fixtures/ref_v1/refs/manifest.json`'s ground-truth
+  start samples.
+- **Tier rationale.** Tier 5 (Algorithmic correctness): asserts an
+  algorithmic precision invariant on `align_per_track`, which is a
+  unit-level concern distinct from the pipeline-level integration
+  assertions PR #23 already covers.
+- **Out of overlap.** Distinct from C-4 (analysis-rate ↔ native-rate
+  coordinate-conversion truncation). C-4 is at the conversion layer;
+  this is at the alignment-algorithm layer. They are orthogonal —
+  neither subsumes the other.
+- **Effort.** ≤ 30 lines of test code plus possible CMake plumbing.
+  One PR, one audit, no fixture work needed (already landed).
+- **Exit criteria.**
+  - [ ] `test_reference_mode.cpp:14`'s SKIP replaced with a real
+        assertion against the fixture manifest.
+  - [ ] Tolerance constant is named (`kRefFixtureToleranceSamples`
+        or similar) and matches PR #23's integration-test tolerance
+        (consistency check).
+  - [ ] `test_reference_mode` binary's exit status flips from
+        `Failed` to `Passed` (alongside Mi-17's natural-sort
+        un-SKIP — the binary needs both to fully pass).
 - **Exit criteria.**
   - [ ] Header docstring notes the normalization difference explicitly.
   - [ ] Consider marking `[[deprecated]]` or `/* testing-only */`.
@@ -669,7 +718,52 @@ migration to `std::expected`-style storage happens in M-14.
   either reject in Debug or emit a documented bit pattern.
 - *Note.* AIFF sample rates 44.1 k–192 k all fit comfortably; this is a
   hardening item, not a correctness bug for the project's actual use case.
-### Mi-17 — std::stoll in natural_less can throw — bound digit count.
+### Mi-17 — std::stoll in natural_less can throw — bound digit count + un-SKIP natural-sort unit test
+
+- **Defect.** `natural_less` (in `src/modes/reference_mode.cpp` or its
+  header) parses runs of digits with `std::stoll`, which throws on
+  digit-runs longer than 19 characters (`std::out_of_range`). A
+  pathological filename like `Track 12345678901234567890.wav` triggers
+  the throw deep inside the comparator, propagating out of `std::sort`
+  and aborting the program.
+- **Surfacing item.** PR #23 (FIXTURE-REF) rebase audit. The natural-
+  filename-sort SKIP at `tests/test_reference_mode.cpp:20` was
+  originally tagged for FIXTURE-REF but is really a unit test of
+  `natural_less`'s ordering invariant. Folded into Mi-17 because
+  hardening the comparator and asserting its post-fix behavior are
+  natural pair-work.
+- **Invariant established.** "`natural_less` produces a strict-weak-
+  ordering total order on filenames containing arbitrary-length digit
+  runs, and never throws."
+- **Files touched.** `src/modes/reference_mode.cpp` (or wherever
+  `natural_less` lives), `tests/test_reference_mode.cpp` (un-SKIP
+  natural-sort case), possibly `tests/test_reference_mode.cpp` (new
+  unit test for the bounded-digit case).
+- **Tests added.**
+  - **Un-SKIP** `tests/test_reference_mode.cpp:20` — replace the SKIP
+    with an assertion that `natural_less("Track 2.wav", "Track 10.wav")`
+    is true. This was the test case PR #23's audit surfaced as
+    misattributed.
+  - **New** `natural_less: digit run > 18 characters does not throw`
+    (or returns the lexicographic result, depending on the cure
+    chosen).
+- **Cure options.**
+  - (a) Bound the digit-run length: take only the first 18 characters
+    of any digit run; fall back to lexicographic compare on the rest.
+  - (b) Use `std::from_chars` and check for `errc::result_out_of_range`,
+    falling back to lexicographic.
+  - (c) Manual digit-by-digit compare, never converting to integer.
+  Pick one in the PR; document why.
+- **Tier rationale.** Tier 9 (Cleanup / Nit) — single-function
+  hardening with a single new unit test.
+- **Effort.** ≤ 20 lines of code + 2 unit-test cases. One PR, one
+  audit. No fixture or pipeline interaction.
+- **Exit criteria.**
+  - [ ] `natural_less` does not throw on any input.
+  - [ ] `tests/test_reference_mode.cpp:20`'s SKIP replaced with a
+        real assertion.
+  - [ ] Combined with M-REF-ALIGN-UNIT, `test_reference_mode`'s exit
+        status flips to `Passed`.
 ### F-AUDIT2-1 — C-2 integration test exercises the actual guard end-to-end
 
 - **Defect.** The C-2 subprocess integration test invokes

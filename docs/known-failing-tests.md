@@ -63,12 +63,26 @@ A test that passes on the PR but is on this list is progress — update this fil
 - **Why failing.** Same defect as line 479 — NEW-BLIND-GAP. The two test cases exercise different fixture variants but both bottom out on the same blind-mode threshold flaw.
 - **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Same as line 479. Will remain failing after Tier 1+2 lands.
 
-### `test_reference_mode` — multiple cases failing collectively
+### `test_reference_mode` — standalone binary returns non-zero
 
-- **Location.** `tests/test_reference_mode.cpp` (whole binary returns non-zero).
-- **Assertion intent.** Reference-mode alignment of synthetic vinyl rip against ground-truth track boundaries.
-- **Why failing.** Existing reference fixtures use tones-in-noise, which reference mode cannot reliably align against (no distinctive envelope shape, rhythmic tones produce ambiguous correlation peaks). Tests that depend on this currently `SKIP()` or assert into the no-result path.
-- **Cured by.** **PR #23 (FIXTURE-REF)**. The fixture-agent generates a synthetic vinyl rip with distinctive per-track envelopes; once #23 merges, the previously-SKIP'd cases run with real expectations. The whole-binary failure should drop to PASS or the residual SKIPs documented per case.
+- **Location.** `tests/test_reference_mode.cpp` (whole binary; ctest reports `Failed`).
+- **Why failing.** The binary contains exactly two `TEST_CASE`s, and both are unconditional `SKIP()`s. Catch2 returns a non-zero exit when every case skips and none pass, so ctest tags the binary `Failed` even though no assertion failed. The two cases are:
+  - `test_reference_mode.cpp:14` — `"Reference mode: per-track alignment to synthetic vinyl"` — `SKIP("TODO(test-fixtures): FIXTURE-REF — synthetic vinyl rip with known track boundaries is not yet in tests/fixtures/. Will assert that align_per_track lands each track within ±N samples of truth.")`.
+  - `test_reference_mode.cpp:20` — `"Reference mode: natural filename sort ordering"` — `SKIP("TODO(test-fixtures): FIXTURE-REF — relies on filesystem fixture that doesn't exist yet. Will verify 'Track 2.wav' < 'Track 10.wav' at the public API level.")`.
+- **Cured by.** **Two separate items, neither in PR #23's scope** (per BACKLOG.md FIXTURE-REF exit criteria, which lists three `[integration][reference]` cases inside `test_integration.cpp`, not these two):
+  - **M-REF-ALIGN-UNIT** (BACKLOG.md, Tier 5 — Algorithmic correctness) cures the per-track-alignment SKIP. The fixture this case needs (FIXTURE-REF) is now landed via PR #23, but the test body itself was never written. M-REF-ALIGN-UNIT is the work to author it.
+  - **Mi-17** (BACKLOG.md, Tier 9 — extended) cures the natural-filename-sort SKIP, alongside its original mandate to harden `natural_less` against `std::stoll` overflow.
+- **Why this entry was misattributed previously.** The pre-staged version of this doc claimed PR #23 cures `test_reference_mode`. That was an audit-pass-required failure: PR #23's BACKLOG-stated scope is the three `[integration][reference]` cases in `test_integration.cpp`, which were SKIP'd before #23 and PASS after #23 (41 assertions in 3 test cases). Neither the doc nor the BACKLOG ever had PR #23 covering the standalone binary's two SKIPs. The mistake is recorded in `feedback_pre_staged_docs_need_audit.md` and prompted this audit pass.
+
+## Informational — SKIP-to-PASS transitions (not "Resolved" because they were never failing)
+
+PR #23 advances the following from `SKIP()` to passing assertions; they were never in the Active set above (SKIPs aren't failures), but record the transition here so Phase 4 reconciliation can cite it:
+
+- `tests/test_integration.cpp:274` — `"Reference mode pipeline: basic detection" [integration][reference]` — was `SKIP("TODO(test-fixtures): FIXTURE-REF...")`; now asserts against the synthetic vinyl rip.
+- `tests/test_integration.cpp:345` — `"Reference mode pipeline: track positions within tolerance" [integration][reference]` — same.
+- `tests/test_integration.cpp:397` — `"Reference mode pipeline: lossless export verification" [integration][reference][lossless]` — same.
+
+Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per the rebase fix-agent's verification. Does **not** flip the `test_integration` binary's status — the binary is still `Failed` because of `:479`, `:691`, and `:762` (NEW-BLIND-GAP and NEW-WAVEEXT-WRITE).
 
 ## Resolved entries
 
