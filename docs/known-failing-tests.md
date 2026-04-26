@@ -80,12 +80,12 @@ A test that passes on the PR but is on this list is progress — update this fil
 |---|---|---|---|
 | `build / ubuntu-latest / Release` | green | red on entries above | C-1 fixes test_lossless:143 |
 | `build / ubuntu-latest / Debug` | green | red on entries above | same |
-| `build / macos-latest / Release` | green | red on entries above (no test_lossless on macOS — see note) | same |
-| `build / macos-latest / Debug` | green | red on entries above | same |
+| `build / macos-latest / Release` | green | red on entries above (test_lossless aborts as "Subprocess aborted" — see note) | same |
+| `build / macos-latest / Debug` | green | red on entries above (same Subprocess aborted) | same |
 | `sanitizers (asan+ubsan)` | green | red on entries above + ASan trip on test_lossless:143 | The ASan trip is part of the same stack-smash; cured by C-1 |
 | `clang-tidy` | red on style nits | n/a (job stops at clang-tidy) | Out of Mi-18 scope per mandate; tracked under N-1..N-12 / Mi-18-FU-* |
 
-**Note on test_lossless on macOS.** The audit-agent's pass-2 macOS check reported only `test_reference_mode` and `test_integration` as failing on macOS Debug, not `test_lossless`. This is because `[lossless]` AIFF tests time out under macOS Catch2 differently or the runner picks them up differently — investigate-and-confirm during the C-1 rebase. If `test_lossless:143` does NOT fail on macOS, the C-1 round-trip verification was incomplete on the lenient platform and post-#27 should explicitly re-confirm 6-rate AIFF round-trip on macOS, not just Linux.
+**Note on test_lossless on macOS.** Verified in main's post-Mi-18 CI run (24961544352): macOS Debug and Release both show `test_lossless` failing as **"Subprocess aborted"** rather than as a line-numbered FAILED assertion. The stack smash from `encode_float80` writing 11 bytes into a 10-byte buffer crashes the test runner on macOS before Catch2 can print the `:143: FAILED` marker that Linux shows. The underlying defect is identical; the symptom is just "binary aborts" on macOS vs "binary returns non-zero with line markers" on Linux. C-1 (PR #27) cures both manifestations.
 
 ## Update protocol
 
