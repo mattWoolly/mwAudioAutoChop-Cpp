@@ -82,6 +82,15 @@ trigger the warning. A cleaner answer is a single `tests/test_main.hpp` that
 includes Catch2 with the suppression once, and have all tests use it — but
 that's a refactor, out of scope here.
 
+## Mi-18-FU-6b: unused helpers in reference_mode.cpp
+
+`src/modes/reference_mode.cpp:208 (measure_fade_in_samples)` and
+`src/modes/reference_mode.cpp:433 (estimate_noise_floor_db)` are no-longer-
+called. Mi-18 marks them `[[maybe_unused]]`. They're plausibly worth keeping
+as future hooks for fade-in-aware alignment and adaptive vinyl noise-floor
+detection — but as long as they're untested and unwired, they are dead.
+Either re-introduce a use site or delete in a separate cleanup pass.
+
 ## Mi-18-FU-7: unused test helpers (`read_file_bytes`, etc.)
 
 `tests/test_integration.cpp` contains `read_file_bytes` and a few other
