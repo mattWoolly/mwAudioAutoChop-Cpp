@@ -29,7 +29,12 @@ Format:
 
 ## C-1 inline scope expansion: `build_aiff_header` `numSampleFrames` field type
 
-- **Commit.** `2668b68` on `remediation/c-1-encode-float80` (PR #?? when opened).
+> **Promoted to backlog item `AIFF-INLINE-SCOPE` (Tier 4 — Parser hardening,
+> AIFF write path).** This deviation entry remains for provenance, but the
+> ongoing tracking lives in `BACKLOG.md` so it surfaces in Phase 4
+> reconciliation rather than being buried here.
+
+- **Commit.** `2668b68` on `remediation/c-1-encode-float80` (PR #27).
 - **Reviewer.** orchestrator after two-pass C-1 audit (audit-1 + audit-2 both APPROVED-WITH-FOLLOWUP).
 - **Review said.** C-1's stated scope was `encode_float80`'s buffer overrun. A strict reading would not include changes to `build_aiff_header`.
 - **We did.** The C-1 fix-agent corrected `build_aiff_header`'s `numSampleFrames` field, which had been emitted as a 10-byte float80, to the spec-required 4-byte big-endian unsigned long.

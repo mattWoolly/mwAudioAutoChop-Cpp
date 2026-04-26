@@ -411,6 +411,43 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Decode the IEEE 80-bit extended sample-rate field (inverse of the
         fixed encode_float80).
 
+### AIFF-INLINE-SCOPE — confirm `build_aiff_header` `numSampleFrames` fix has no other-caller fallout — **STATUS: [x] closed (work done; follow-up audit done)**
+
+- **Origin.** Promoted from `docs/deviations.md` ("C-1 inline scope
+  expansion: `build_aiff_header` `numSampleFrames` field type"). The deviation
+  was filed because C-1's stated scope was `encode_float80`'s buffer overrun,
+  but the fix-agent corrected `build_aiff_header`'s `numSampleFrames` field
+  type (10-byte float80 → 4-byte big-endian u32 per AIFF 1.3 spec) inline.
+  Both C-1 audit passes evaluated and accepted the inline scope expansion;
+  audit-2 verified `write_track` (`src/core/audio_file.cpp:816`) is the sole
+  production caller of `build_aiff_header` and that no path was previously
+  emitting an AIFF that downstream tools accepted.
+- **Owner-epic.** **Tier 4 — Parser hardening (AIFF write path).** The AIFF
+  write path is otherwise touched only by M-5 (SSND offset, parser-side) and
+  Mi-1 (sample-rate decode, parser-side), so this item is the only formal
+  emit-side AIFF entry. Treat the AIFF write contract as owned by this item
+  group going forward.
+- **Defect (historical).** `build_aiff_header` declared `comm_size = 18`
+  (which arithmetic balances only when `numSampleFrames` is u32: 2 channels
+  + 4 numSampleFrames + 2 bits + 10 sampleRate = 18), but emitted the
+  `numSampleFrames` field as a 10-byte `encode_float80` value, producing an
+  internally-inconsistent COMM chunk. libsndfile and every standards-conformant
+  AIFF reader rejected the resulting file.
+- **Invariant established.** "Every AIFF file emitted by `write_track` is
+  accepted by libsndfile and parses with the same `numSampleFrames` /
+  `sampleRate` / `numChannels` / `sampleSize` values it was constructed with,
+  for all six PROJECT_SPEC sample rates (44.1, 48, 88.2, 96, 176.4, 192 kHz)."
+- **Files touched.** `src/core/audio_file.cpp` (already corrected at
+  C-1 PR #27).
+- **Tests added.** Six-rate AIFF round-trip test in `tests/test_lossless.cpp`
+  (added by C-1; `tests/test_lossless.cpp:349–360`).
+- **Audit verdict.** Both C-1 audit passes APPROVED-WITH-FOLLOWUP; audit-2
+  also confirmed no other production caller depends on the previous
+  (broken) layout. No further audit work outstanding for this item.
+- **Phase 4 reconciliation note.** Cite this item by name in Phase 4 reports
+  alongside C-1; the AIFF emit-path hardening is not buried in the C-1 PR
+  description or deviations log.
+
 ---
 
 ## Tier 5 — Algorithmic correctness
