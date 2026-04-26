@@ -16,13 +16,26 @@ The user's standing instruction: "make the next dispatch unambiguous instead of 
 
 ## Universal rules (apply to every step)
 
+### CI green definition — the post-rebase gate
+
+A PR's CI is **green for merge purposes** when **all three** hold:
+
+1. Every `build / *` and `sanitizers (asan+ubsan)` job's compile step succeeds. This is the strict build-clean signal Mi-18 was dispatched to produce.
+2. The set of failing tests on the PR is a **strict subset of `docs/known-failing-tests.md`** — same test name, same line, same failure mode. New failures that don't appear on the known-failing list are regressions.
+3. **No test passes on main and fails on the PR.** Run main's most recent test pass before merging the PR; diff. If a test that's PASS on main is FAIL on the PR, halt and surface — that's the regression case the gate exists for.
+
+`clang-tidy` red is out of scope for the merge gate per the standing Mi-18 mandate (it tracks style rules separately under N-1..N-12 / Mi-18-FU-*). Do **not** wait for clang-tidy green on this walk.
+
+When a PR cures a known-failing entry, the merging commit must also move the corresponding entry in `docs/known-failing-tests.md` from Active to Resolved. This keeps the gate-definition file accurate as the queue progresses.
+
 ### Halt rules — non-negotiable
 
 1. **Pending CI is not actionable.** Treat pending the same as red. Wait for completion before merging.
-2. **A red CI signal that isn't a documented pre-existing failure halts the merge.** "Documented pre-existing" means: the same test name fails on the most recent main CI run with the same error message. If a check is red on the PR but green on main, halt — the PR introduced a regression.
+2. **A test failure that is NOT on `docs/known-failing-tests.md` halts the merge.** This is the operative regression check; it replaces the previous "documented pre-existing" gloss, which was ambiguous when main itself couldn't compile. The known-failing doc is now the authoritative pre-existing list.
 3. **Conflicts that aren't mechanical halt.** "Mechanical" means: each side's intent is preserved by textual interleaving (e.g. two casts at different lines in the same function). "Non-mechanical" means: each side's intent is incompatible (e.g. one rewrites a function the other casts inside). Non-mechanical conflicts halt and surface — the fix-agent does not get to pick winners on its own authority.
 4. **Force-push requires `--force-with-lease`, never `--force`.** Rebases rewrite branch history; `--force-with-lease` protects against overwriting concurrent pushes.
-5. **Do not merge anything if main itself goes red between steps.** A red main mid-walk halts the entire walk until main is investigated.
+5. **Do not merge anything if main itself goes red between steps.** A red main mid-walk halts the entire walk until main is investigated. "Red main" means main violates the CI green definition above — not just "any job has a red dot."
+6. **A new test failure on the PR that becomes a known-failing entry after the fact requires explicit user authorization.** If you discover the failure is acceptable (e.g. it's the side-effect of a fixture landing earlier in the walk), update the known-failing doc as a separate orchestrator-paperwork commit on main first, then proceed with the merge. Do not retroactively rationalize regressions into the known-failing list inside the merging PR itself.
 
 ### Per-PR loop
 
@@ -78,18 +91,24 @@ git worktree remove $WORKTREE
 
 ### Local-verification baseline tracking
 
-Before starting the walk, capture main's post-Mi-18 test-failure set as the **baseline**:
+The **authoritative baseline** is `docs/known-failing-tests.md` (Active section). The local `ctest` run at each step compares against this file, not against an empirically-captured snapshot. This pulls the baseline definition into reviewable code rather than letting it live as untracked output in `/tmp`.
 
 ```bash
 git checkout main
 git pull --ff-only origin main
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DMWAAC_WERROR=ON
 cmake --build build
-ctest --test-dir build --output-on-failure 2>&1 | tee /tmp/main-baseline-tests.txt
-grep -E "^(FAIL|Failed)" /tmp/main-baseline-tests.txt > /tmp/main-baseline-failures.txt
+ctest --test-dir build --output-on-failure 2>&1 | tee /tmp/main-tests-current.txt
+
+# Diff actual failures vs the doc's Active section.
+# If anything in /tmp/main-tests-current.txt isn't covered by the doc, halt.
 ```
 
-After each PR merges, regenerate the baseline. The expected delta per PR is documented below — verify the actual delta matches.
+After each PR merges, two things happen in parallel:
+1. The PR's known-failing entries move to Resolved in `docs/known-failing-tests.md` (must be part of the merging commit or a single-line follow-up commit on main, never deferred).
+2. The local baseline is implicitly updated by virtue of the doc change. The next rebase reads the post-merge doc.
+
+The expected per-PR delta is documented under each PR's section below — verify it against the doc movement.
 
 ---
 
