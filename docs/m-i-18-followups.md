@@ -36,14 +36,31 @@ buffers (<< 2^53 samples) this is fine, but the cast is silent. Mi-18 leaves
 it spot-cured. A real fix would compute the output size with integer
 arithmetic where possible.
 
-## Mi-18-FU-4: `score_gap` and friends — sample_rate parameters that look unused
+## Mi-18-FU-4a: `compute_rms_energy(sample_rate)` documented vestigial
 
-A handful of analysis-layer functions take `sample_rate` parameters that
-appear unused in the body. Per the user's mandate, these are flagged as
-potential Mi-7-class smoke (parameters that *should* be used but aren't). The
-Mi-18 cure is `[[maybe_unused]]`; each addition is enumerated in the PR
-description. Each one merits a separate backlog entry to verify whether the
-parameter is genuinely vestigial or whether the kernel ought to consume it.
+`src/core/analysis.cpp:8-12`. Header comment in `analysis.hpp:14-19` says
+"For reference, not used in basic RMS". Mi-18 marks `[[maybe_unused]]`. The
+backlog item is whether to (a) keep the param for future ABI stability and
+suppress the warning permanently, or (b) drop it once consumers are updated
+— either way, a separate signature change.
+
+## Mi-18-FU-4b: `compute_spectral_flatness(sample_rate)` is a TODO stub
+
+`src/core/analysis.cpp:75-85`. Function body is `// TODO: Implement with FFT`
+and returns a vector of `0.5f`. The `sample_rate` param will be needed when
+the FFT is added; until then `[[maybe_unused]]`. **Real backlog item:
+implement spectral flatness.**
+
+## Mi-18-FU-4c: `estimate_noise_floor(window_seconds)` REAL Mi-7 SMOKE
+
+`src/core/music_detection.cpp:11-32`. Header comment at `music_detection.hpp:20`
+says `window_seconds` is the "Window for searching quietest region". The body
+uses fixed 50ms frames and a 10th-percentile RMS over the *entire* signal —
+`window_seconds` is dropped on the floor. This looks like a real defect: the
+caller is supplying a 2.0-second window expecting a sliding-window quietest
+region, but the implementation does a global percentile. Mi-18 silences with
+`[[maybe_unused]]`; **real backlog item to actually consume `window_seconds`
+or remove it from the API.**
 
 ## Mi-18-FU-5: pocketfft size→long-double conversion warning
 
