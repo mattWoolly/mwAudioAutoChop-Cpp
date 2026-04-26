@@ -23,7 +23,7 @@ namespace {
 // =============================================================================
 
 // Read entire file to byte vector
-std::vector<uint8_t> read_file_bytes(const fs::path& path) {
+[[maybe_unused]] std::vector<uint8_t> read_file_bytes(const fs::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return {};
     auto size = file.tellg();
@@ -96,19 +96,19 @@ bool create_pattern_wav(const fs::path& path, int sample_rate,
     std::uniform_real_distribution<float> noise_dist(-0.5f, 0.5f);
     
     double pi = 3.14159265358979323846;
-    double phase = 0.0;
+    [[maybe_unused]] double phase = 0.0;
     int64_t sample_idx = 0;
-    
+
     for (const auto& [duration, pattern] : sections) {
         for (int64_t i = 0; i < duration; ++i) {
             float sample = 0.0f;
-            
+
             switch (pattern) {
                 case 0:  // Silence
                     sample = 0.0f;
                     break;
                 case 1:  // Tone (440 Hz)
-                    sample = static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * sample_idx / sample_rate));
+                    sample = static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(sample_idx) / static_cast<double>(sample_rate)));
                     break;
                 case 2:  // Noise
                     sample = noise_dist(rng);
@@ -138,14 +138,14 @@ bool create_vinyl_with_gaps(const fs::path& path, int sample_rate,
     std::uniform_real_distribution<float> noise_dist(-0.6f, 0.6f);
     
     double pi = 3.14159265358979323846;
-    double phase = 0.0;
+    [[maybe_unused]] double phase = 0.0;
     int64_t global_sample = 0;
-    
+
     for (size_t t = 0; t < track_lengths.size(); ++t) {
         // Generate track (alternating tones for each track - different frequencies)
-        int freq = 330 + t * 110;  // 330, 440, 550 Hz
+        int freq = 330 + static_cast<int>(t) * 110;  // 330, 440, 550 Hz
         for (int64_t i = 0; i < track_lengths[t]; ++i) {
-            float sample = static_cast<float>(0.7 * sin(2.0 * pi * freq * global_sample / sample_rate));
+            float sample = static_cast<float>(0.7 * sin(2.0 * pi * freq * static_cast<double>(global_sample) / static_cast<double>(sample_rate)));
             samples.push_back(sample);
             ++global_sample;
         }
@@ -226,10 +226,10 @@ TEST_CASE("Test file generation: tone WAV", "[integration][generation]") {
     double pi = 3.14159265358979323846;
     
     for (int64_t i = 0; i < num_frames; ++i) {
-        float sample = static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * i / sample_rate));
+        float sample = static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate)));
         samples.push_back(sample);
     }
-    
+
     bool result = create_test_wav(tone_path, 1, sample_rate, 32, num_frames, samples);
     REQUIRE(result);
     
@@ -300,7 +300,7 @@ TEST_CASE("Reference mode pipeline: basic detection", "[integration][reference]"
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref1, 1, sample_rate, 32, sample_rate * 2, samples);
     }
@@ -312,7 +312,7 @@ TEST_CASE("Reference mode pipeline: basic detection", "[integration][reference]"
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref2, 1, sample_rate, 32, sample_rate * 2, samples);
     }
@@ -324,7 +324,7 @@ TEST_CASE("Reference mode pipeline: basic detection", "[integration][reference]"
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate * 2; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 550.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 550.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref3, 1, sample_rate, 32, sample_rate * 2, samples);
     }
@@ -369,7 +369,7 @@ TEST_CASE("Reference mode pipeline: track positions within tolerance", "[integra
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref1, 1, sample_rate, 32, sample_rate, samples);
     }
@@ -381,7 +381,7 @@ TEST_CASE("Reference mode pipeline: track positions within tolerance", "[integra
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref2, 1, sample_rate, 32, sample_rate, samples);
     }
@@ -407,7 +407,7 @@ TEST_CASE("Reference mode pipeline: lossless export verification", "[integration
     std::vector<float> samples;
     double pi = 3.14159265358979323846;
     for (int64_t i = 0; i < sample_rate * 2; ++i) {
-        samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * i / sample_rate)));
+        samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
     }
     
     bool vinyl_created = create_test_wav(vinyl_path, 1, sample_rate, 32, sample_rate * 2, samples);
@@ -641,7 +641,7 @@ TEST_CASE("Lossless end-to-end: full pipeline export", "[integration][e2e][lossl
     }
     
     // Verify exports are byte-identical to source regions
-    const auto& vinyl_info = vinyl_file_result.value().info();
+    [[maybe_unused]] const auto& vinyl_info = vinyl_file_result.value().info();
     // Skip exact byte comparison - may differ due to format conversion
     // Instead verify export files exist and have correct size
     
@@ -730,7 +730,7 @@ TEST_CASE("Combined workflow: reference then blind analysis", "[integration][com
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 330.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref, 1, sample_rate, 32, sample_rate, samples);
     }
@@ -742,7 +742,7 @@ TEST_CASE("Combined workflow: reference then blind analysis", "[integration][com
         std::vector<float> samples;
         double pi = 3.14159265358979323846;
         for (int64_t i = 0; i < sample_rate; ++i) {
-            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * i / sample_rate)));
+            samples.push_back(static_cast<float>(0.7 * sin(2.0 * pi * 440.0 * static_cast<double>(i) / static_cast<double>(sample_rate))));
         }
         create_test_wav(ref, 1, sample_rate, 32, sample_rate, samples);
     }
