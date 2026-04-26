@@ -744,6 +744,43 @@ calibrates effort):
 
 Each of these is a ≤ 30-line diff; one item, one PR, one audit.
 
+### MI18-FOLLOWUP-BLIND-ITER — defensive cast on `blind_mode.cpp:73-74` iterator+size_t arithmetic
+
+- **Origin.** Promoted from the Mi-18 audit pass-2 advisory finding (PR #30).
+  The audit-agent grepped for `.begin() + .size()` / iterator+`size_t`
+  patterns across `src/` while verifying the cured bug at
+  `src/modes/reference_mode.cpp:240`. Found one untouched site with the
+  same shape: `src/modes/blind_mode.cpp:73-74` does
+  `samples.begin() + start_sample` / `samples.begin() + end_sample` where
+  both are `size_t`.
+- **Defect (latent).** The expression is the same shape as the cured
+  `reference_mode.cpp:240` bug. GCC currently does not emit
+  `-Werror=sign-conversion` on it (otherwise CI would have failed today,
+  and Mi-18 would have caught it). Why GCC tolerates this site and not
+  line 240 is unclear — most likely because the bound `samples` here is
+  a `std::vector<float>` and `.begin()`'s `difference_type` matches more
+  cleanly to `size_t` in the local promotion rules, while the cured site
+  used `std::span<const float>::iterator` arithmetic with `.size() / 2`.
+  Either way the latent UB on size_t→ptrdiff_t overflow is identical.
+- **Invariant established.** "Iterator + integral arithmetic in
+  mwaac source uses `static_cast<std::ptrdiff_t>(...)` at the
+  iterator-arithmetic site whenever the integral is `size_t`, regardless
+  of whether the current compiler flags it."
+- **Files touched.** `src/modes/blind_mode.cpp` (lines 73 and 74).
+- **Tests added.** None required (defensive cleanup; no observable
+  behavior change).
+- **Owner-epic / lineage.** **Mi-18 audit follow-up.** Phase 4
+  reconciliation should cite this item back to PR #30's audit-2 verdict
+  alongside the original `reference_mode.cpp:240` cure.
+- **Exit criteria.**
+  - [ ] `samples.begin() + start_sample` → `samples.begin() + static_cast<std::ptrdiff_t>(start_sample)` at `blind_mode.cpp:73`.
+  - [ ] Same cure at line 74 for `end_sample`.
+  - [ ] Build remains green on Linux GCC and macOS Apple Clang.
+  - [ ] Single commit, no scope creep beyond the two casts.
+- **Effort.** ≤ 5 lines of diff, one commit, no audit needed (mechanical
+  defensive cast — the audit framework already covered the broader pattern
+  in Mi-18 pass 2).
+
 ### Nits — N-1 through N-~12
 
 The review's Nit list (dead `static` on constexpr magic bytes, `M_PI` →
