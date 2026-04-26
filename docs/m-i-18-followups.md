@@ -91,12 +91,54 @@ as future hooks for fade-in-aware alignment and adaptive vinyl noise-floor
 detection — but as long as they're untested and unwired, they are dead.
 Either re-introduce a use site or delete in a separate cleanup pass.
 
-## Mi-18-FU-7: unused test helpers (`read_file_bytes`, etc.)
+## Mi-18-FU-7a: `bytes_per_frame` vestigial after C-1 refactor
 
-`tests/test_integration.cpp` contains `read_file_bytes` and a few other
-helpers that are no longer referenced. Mi-18 silences with
-`[[maybe_unused]]`, but a future pass should either re-introduce a use site
-or delete them. Likely the latter.
+`src/core/audio_file.cpp:621`. `bytes_per_frame = channels * bytes_per_sample`
+is computed but never read in the AIFF header builder — C-1's refactor
+removed the consumer (the `SSND.block_size` field is now always written as
+zero per the AIFF spec, and other downstream paths use `bytes_per_sample`
+directly). Mi-18 marks it `[[maybe_unused]]`. **Recommended action: delete.**
+The variable is dead and the comment-vs-code drift is a small
+correctness-confusion hazard.
+
+## Mi-18-FU-7b: `gap_start_sec` built only for verbose log line that is gone
+
+`src/modes/blind_mode.cpp:192`. Inside the `if (g_verbose)` block, the value
+is computed but the four `verbose(...)` calls below it print frame indices,
+duration, and confidence — never `gap_start_sec`. Likely a leftover from an
+earlier verbose format. Mi-18 marks it `[[maybe_unused]]`. **Recommended
+action: either rewire it into the verbose output (a "Gap N starts at Ts"
+line is reasonable) or delete the binding.**
+
+## Mi-18-FU-7c: `create_test_wav` test helper without a call site
+
+`tests/test_audio_file.cpp:10`. The function is a stub that doesn't even
+write a file (the body comment says "actual file creation would use
+libsndfile"). No test in the file calls it. Mi-18 marks it
+`[[maybe_unused]]`. **Recommended action: delete.** If we ever want a real
+WAV-creation helper for this TU, `tests/test_lossless.cpp` already has one
+called `create_test_wav` that actually uses libsndfile — that's the
+template, not this stub.
+
+## Mi-18-FU-7d: `phase` declared but never advanced in two fixture builders
+
+`tests/test_integration.cpp:99` and `tests/test_integration.cpp:141`. Both
+fixture-builder functions (`create_test_audio_with_patterns` and
+`create_vinyl_with_gaps`) declare `double phase = 0.0` and never read or
+update it. The tone generators below them compute phase ad-hoc from
+`sample_idx`/`global_sample` and the tone frequency, so `phase` is
+genuinely vestigial. Mi-18 marks both `[[maybe_unused]]`. **Recommended
+action: delete both bindings.**
+
+## Mi-18-FU-7e: `read_file_bytes` test helper without a call site
+
+`tests/test_lossless.cpp:17`. The helper reads an entire file into a
+byte vector but no test in the file uses it; the file's actual byte-level
+checks go through `read_raw_bytes` (offset+size variant) instead. Mi-18
+marks it `[[maybe_unused]]`. **Recommended action: delete.** Note: a
+similarly-named `read_file_bytes` exists in `tests/test_integration.cpp:26`
+that *is* used — these are two independent helpers with the same name.
+Don't conflate them.
 
 ## Mi-18-FU-8: `vinyl_info` test variable read but unused
 
