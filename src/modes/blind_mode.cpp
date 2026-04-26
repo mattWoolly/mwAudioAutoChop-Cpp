@@ -20,8 +20,8 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
 {
     std::vector<std::pair<size_t, size_t>> gaps;
     
-    size_t min_gap_frames = static_cast<size_t>(min_gap_seconds * sample_rate / hop_length);
-    size_t max_gap_frames = static_cast<size_t>(max_gap_seconds * sample_rate / hop_length);
+    size_t min_gap_frames = static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
+    size_t max_gap_frames = static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
     
     bool in_gap = false;
     size_t gap_start = 0;
@@ -70,15 +70,15 @@ float score_gap(
     end_sample = std::min(end_sample, samples.size());
     
     // Extract gap segment
-    std::vector<float> gap_samples(samples.begin() + start_sample, 
-                                    samples.begin() + end_sample);
-    
+    std::vector<float> gap_samples(samples.begin() + static_cast<std::ptrdiff_t>(start_sample),
+                                    samples.begin() + static_cast<std::ptrdiff_t>(end_sample));
+
     // Compute RMS of gap
     float sum_sq = 0.0f;
     for (float s : gap_samples) {
         sum_sq += s * s;
     }
-    float gap_rms = std::sqrt(sum_sq / gap_samples.size());
+    float gap_rms = std::sqrt(sum_sq / static_cast<float>(gap_samples.size()));
     
     // Energy score: how far below noise floor (higher = better)
     float energy_score = 0.0f;
@@ -113,7 +113,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     }
     
     // Compute RMS energy
-    int frame_length = static_cast<int>(0.05f * config.analysis_sr);  // 50ms
+    int frame_length = static_cast<int>(0.05f * static_cast<float>(config.analysis_sr));  // 50ms
     int hop_length = frame_length / 4;  // 12.5ms
     
     verbose("Computing RMS energy...");
@@ -178,19 +178,19 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     }
     
     for (const auto& gap : gaps) {
-        int64_t track_start = static_cast<int64_t>(gap.second * hop_length);
-        int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * hop_length);
-        
+        int64_t track_start = static_cast<int64_t>(gap.second * static_cast<std::size_t>(hop_length));
+        int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * static_cast<std::size_t>(hop_length));
+
         // Score this gap
-        float confidence = score_gap(audio.samples, 
-                                     gap.first * hop_length,
-                                     gap.second * hop_length,
+        float confidence = score_gap(audio.samples,
+                                     gap.first * static_cast<std::size_t>(hop_length),
+                                     gap.second * static_cast<std::size_t>(hop_length),
                                      config.analysis_sr,
                                      noise_floor);
-        
+
         if (g_verbose) {
-            double gap_start_sec = static_cast<double>(gap.first * hop_length) / config.analysis_sr;
-            double gap_duration_sec = static_cast<double>(gap_duration) / config.analysis_sr;
+            [[maybe_unused]] double gap_start_sec = static_cast<double>(gap.first * static_cast<std::size_t>(hop_length)) / static_cast<double>(config.analysis_sr);
+            double gap_duration_sec = static_cast<double>(gap_duration) / static_cast<double>(config.analysis_sr);
             std::ostringstream conf_oss;
             conf_oss << std::fixed << std::setprecision(3) << confidence;
             std::ostringstream dur_oss;
@@ -204,7 +204,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         if (confidence >= config.confidence_threshold) {
             SplitPoint sp;
             sp.start_sample = track_start;
-            sp.confidence = confidence;
+            sp.confidence = static_cast<double>(confidence);
             sp.source = "blind";
             sp.evidence["gap_start_frame"] = static_cast<double>(gap.first);
             sp.evidence["gap_end_frame"] = static_cast<double>(gap.second);

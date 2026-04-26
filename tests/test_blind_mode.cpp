@@ -8,7 +8,7 @@ TEST_CASE("Gap detection finds gaps in RMS data", "[blind]") {
     
     // Add a gap (quiet region) from frame 300-500
     for (int i = 300; i < 500; ++i) {
-        rms[i] = 0.01f;
+        rms[static_cast<std::size_t>(i)] = 0.01f;
     }
     
     auto gaps = mwaac::detect_gaps(rms, 0.05f, 512, 44100, 0.5f, 10.0f);
@@ -22,7 +22,7 @@ TEST_CASE("Gap scoring based on energy", "[blind]") {
     // Create samples with a quiet region
     std::vector<float> samples(10000, 0.5f);  // Loud
     for (int i = 2000; i < 4000; ++i) {
-        samples[i] = 0.01f;  // Quiet gap
+        samples[static_cast<std::size_t>(i)] = 0.01f;  // Quiet gap
     }
     
     // Score the quiet region

@@ -9,20 +9,20 @@ TEST_CASE("RMS energy of constant signal", "[analysis]") {
     auto rms = mwaac::compute_rms_energy(samples, 44100, 100, 50);
     
     REQUIRE(!rms.empty());
-    REQUIRE_THAT(rms[0], Catch::Matchers::WithinAbs(0.5, 0.01));
+    REQUIRE_THAT(static_cast<double>(rms[0]), Catch::Matchers::WithinAbs(0.5, 0.01));
 }
 
 TEST_CASE("RMS energy of sine wave", "[analysis]") {
     std::vector<float> samples(1000);
     for (size_t i = 0; i < samples.size(); ++i) {
-        samples[i] = std::sin(2.0f * M_PI * 10.0f * i / 1000.0f);
+        samples[i] = std::sin(2.0f * static_cast<float>(M_PI) * 10.0f * static_cast<float>(i) / 1000.0f);
     }
-    
+
     auto rms = mwaac::compute_rms_energy(samples, 44100, 100, 50);
-    
+
     // RMS of sine wave should be amplitude / sqrt(2) ≈ 0.707
     REQUIRE(!rms.empty());
-    REQUIRE_THAT(rms[0], Catch::Matchers::WithinAbs(0.707, 0.05));
+    REQUIRE_THAT(static_cast<double>(rms[0]), Catch::Matchers::WithinAbs(0.707, 0.05));
 }
 
 TEST_CASE("Zero crossing rate for noisy signal", "[analysis]") {
@@ -43,15 +43,15 @@ TEST_CASE("RMS to dB conversion", "[analysis]") {
     REQUIRE(mwaac::rms_to_db(1.0f) == 0.0f);
     
     // RMS of 0.1 should be -20 dB
-    REQUIRE_THAT(mwaac::rms_to_db(0.1f), Catch::Matchers::WithinAbs(-20.0f, 0.01f));
+    REQUIRE_THAT(static_cast<double>(mwaac::rms_to_db(0.1f)), Catch::Matchers::WithinAbs(-20.0, 0.01));
 }
 
 TEST_CASE("dB to RMS conversion", "[analysis]") {
     // 0 dB should be RMS of 1.0
-    REQUIRE_THAT(mwaac::db_to_rms(0.0f), Catch::Matchers::WithinAbs(1.0f, 0.01f));
-    
+    REQUIRE_THAT(static_cast<double>(mwaac::db_to_rms(0.0f)), Catch::Matchers::WithinAbs(1.0, 0.01));
+
     // -20 dB should be RMS of 0.1
-    REQUIRE_THAT(mwaac::db_to_rms(-20.0f), Catch::Matchers::WithinAbs(0.1f, 0.01f));
+    REQUIRE_THAT(static_cast<double>(mwaac::db_to_rms(-20.0f)), Catch::Matchers::WithinAbs(0.1, 0.01));
 }
 
 TEST_CASE("Empty input returns empty", "[analysis]") {

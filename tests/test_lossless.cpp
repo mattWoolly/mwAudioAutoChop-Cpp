@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 namespace {
 
 // Read entire file to byte vector
-std::vector<uint8_t> read_file_bytes(const fs::path& path) {
+[[maybe_unused]] std::vector<uint8_t> read_file_bytes(const fs::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return {};
     auto size = file.tellg();

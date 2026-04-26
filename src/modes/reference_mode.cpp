@@ -99,7 +99,7 @@ std::optional<SilenceRun> find_longest_silence(
         int64_t frame_end = std::min(frame_start + frame_size, search_end);
         double sum_sq = 0.0;
         for (int64_t i = frame_start; i < frame_end; ++i) {
-            double s = audio[i];
+            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
         double rms = std::sqrt(sum_sq / static_cast<double>(frame_end - frame_start));
@@ -205,7 +205,7 @@ std::vector<EndDecision> compute_track_ends(
 // from sample 0 until the signal first reaches steady_state - 6 dB; zero
 // if the signal is already near steady-state (no meaningful fade-in) or if
 // the rise is too abrupt (digital-silence-then-loud, handled elsewhere).
-int64_t measure_fade_in_samples(
+[[maybe_unused]] int64_t measure_fade_in_samples(
     std::span<const float> samples,
     int sample_rate,
     double max_search_seconds = 20.0,
@@ -220,14 +220,14 @@ int64_t measure_fade_in_samples(
     if (n_frames < 20) return 0;
 
     // Compute 100 ms-frame RMS values
-    std::vector<double> rms(n_frames);
+    std::vector<double> rms(static_cast<std::size_t>(n_frames));
     for (int64_t f = 0; f < n_frames; ++f) {
         double ss = 0.0;
         for (int64_t i = 0; i < frame_size; ++i) {
-            double s = samples[f * frame_size + i];
+            double s = static_cast<double>(samples[static_cast<std::size_t>(f * frame_size + i)]);
             ss += s * s;
         }
-        rms[f] = std::sqrt(ss / frame_size);
+        rms[static_cast<std::size_t>(f)] = std::sqrt(ss / static_cast<double>(frame_size));
     }
 
     // Estimate steady-state RMS as the median of frames 8 s to max_search.
@@ -237,7 +237,7 @@ int64_t measure_fade_in_samples(
     std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
     if (ss_samples.empty()) return 0;
     std::nth_element(ss_samples.begin(),
-                     ss_samples.begin() + ss_samples.size() / 2,
+                     ss_samples.begin() + static_cast<std::ptrdiff_t>(ss_samples.size() / 2),
                      ss_samples.end());
     double steady_rms = ss_samples[ss_samples.size() / 2];
     if (steady_rms < 1e-6) return 0;
@@ -250,7 +250,7 @@ int64_t measure_fade_in_samples(
     // the track doesn't have a meaningful fade-in — return 0.
     int64_t fade_end_frame = -1;
     for (int64_t f = 0; f < ss_start; ++f) {
-        if (rms[f] >= target) { fade_end_frame = f; break; }
+        if (rms[static_cast<std::size_t>(f)] >= target) { fade_end_frame = f; break; }
     }
     if (fade_end_frame < 0) return 0;
 
@@ -273,7 +273,7 @@ int64_t measure_fade_in_samples(
     // loud (only separated by silence), so it's not a true fade-in.
     int64_t pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
     if (fade_end_frame - pre_frames >= 0) {
-        double pre_rms = rms[fade_end_frame - pre_frames];
+        double pre_rms = rms[static_cast<std::size_t>(fade_end_frame - pre_frames)];
         if (pre_rms > steady_rms * 0.316) return 0;  // within 10 dB of steady
     }
 
@@ -291,17 +291,17 @@ std::vector<float> compute_rms_envelope(
     double frame_ms = 50.0)
 {
     int64_t frame_size = std::max<int64_t>(1,
-        static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
+        static_cast<int64_t>(static_cast<double>(sample_rate) * frame_ms / 1000.0));
     int64_t n_frames = static_cast<int64_t>(samples.size()) / frame_size;
     std::vector<float> env(static_cast<size_t>(n_frames));
     for (int64_t f = 0; f < n_frames; ++f) {
         double ss = 0.0;
         int64_t base = f * frame_size;
         for (int64_t i = 0; i < frame_size; ++i) {
-            double s = samples[base + i];
+            double s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
             ss += s * s;
         }
-        env[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(ss / frame_size));
+        env[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(ss / static_cast<double>(frame_size)));
     }
     return env;
 }
@@ -371,7 +371,7 @@ int64_t count_leading_digital_silence(
 {
     int64_t n = static_cast<int64_t>(samples.size());
     for (int64_t i = 0; i < n; ++i) {
-        if (std::abs(samples[i]) > linear_threshold) return i;
+        if (static_cast<double>(std::abs(samples[static_cast<std::size_t>(i)])) > linear_threshold) return i;
     }
     return n;
 }
@@ -397,7 +397,7 @@ int64_t find_music_onset(
     int64_t search_start = std::max<int64_t>(0, search_start_sample);
     int64_t search_end = std::min(
         static_cast<int64_t>(audio.size()),
-        search_start + static_cast<int64_t>(max_search_seconds * sample_rate));
+        search_start + static_cast<int64_t>(max_search_seconds * static_cast<double>(sample_rate)));
 
     int64_t consecutive_above = 0;
     int64_t first_above_frame = -1;
@@ -408,10 +408,10 @@ int64_t find_music_onset(
     {
         double sum_sq = 0.0;
         for (int64_t i = frame_start; i < frame_start + frame_size; ++i) {
-            double s = audio[i];
+            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
-        double rms = std::sqrt(sum_sq / frame_size);
+        double rms = std::sqrt(sum_sq / static_cast<double>(frame_size));
 
         if (rms > threshold_linear) {
             if (consecutive_above == 0) first_above_frame = frame_start;
@@ -430,7 +430,7 @@ int64_t find_music_onset(
 // Estimate a signal's noise floor as the p-th percentile of 10ms-frame RMS
 // values over the provided window. Used to set an adaptive onset threshold
 // for vinyl (which has surface noise above absolute silence).
-double estimate_noise_floor_db(
+[[maybe_unused]] double estimate_noise_floor_db(
     std::span<const float> audio,
     int sample_rate,
     int64_t start_sample,
@@ -444,19 +444,19 @@ double estimate_noise_floor_db(
         begin + window_samples);
 
     std::vector<double> frame_rms;
-    frame_rms.reserve((end - begin) / frame_size + 1);
+    frame_rms.reserve(static_cast<std::size_t>((end - begin) / frame_size + 1));
     for (int64_t f = begin; f + frame_size <= end; f += frame_size) {
         double sum_sq = 0.0;
         for (int64_t i = f; i < f + frame_size; ++i) {
-            double s = audio[i];
+            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
-        frame_rms.push_back(std::sqrt(sum_sq / frame_size));
+        frame_rms.push_back(std::sqrt(sum_sq / static_cast<double>(frame_size)));
     }
     if (frame_rms.empty()) return -120.0;
 
-    size_t k = static_cast<size_t>(percentile * (frame_rms.size() - 1));
-    std::nth_element(frame_rms.begin(), frame_rms.begin() + k, frame_rms.end());
+    size_t k = static_cast<size_t>(percentile * static_cast<double>(frame_rms.size() - 1));
+    std::nth_element(frame_rms.begin(), frame_rms.begin() + static_cast<std::ptrdiff_t>(k), frame_rms.end());
     double floor_linear = std::max(frame_rms[k], 1e-9);
     return 20.0 * std::log10(floor_linear);
 }
@@ -674,10 +674,10 @@ int64_t skip_leading_silence(
         int64_t n = std::min(frame_size, end - f);
         if (n <= 0) return 0.0;
         for (int64_t i = 0; i < n; ++i) {
-            double s = vinyl_samples[f + i];
+            double s = static_cast<double>(vinyl_samples[static_cast<std::size_t>(f + i)]);
             ss += s * s;
         }
-        return std::sqrt(ss / n);
+        return std::sqrt(ss / static_cast<double>(n));
     };
 
     // Is the start itself music? Average a few frames for stability.
@@ -689,7 +689,7 @@ int64_t skip_leading_silence(
         ++head_samples;
     }
     double head_avg_rms = head_samples > 0
-        ? std::sqrt(head_ss / head_samples)
+        ? std::sqrt(head_ss / static_cast<double>(head_samples))
         : 0.0;
     if (head_avg_rms >= threshold_linear) {
         return start_sample;  // already in music
@@ -762,7 +762,7 @@ Expected<std::vector<ReferenceTrack>, ReferenceError> load_reference_tracks(
         ReferenceTrack track;
         track.path = path;
         track.audio = std::move(result.value());
-        track.duration_samples = track.audio.samples.size();
+        track.duration_samples = static_cast<int64_t>(track.audio.samples.size());
         tracks.push_back(std::move(track));
     }
     

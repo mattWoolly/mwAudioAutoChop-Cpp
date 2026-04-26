@@ -11,12 +11,12 @@ namespace mwaac {
 float estimate_noise_floor(
     std::span<const float> samples,
     int sample_rate,
-    float window_seconds)
+    [[maybe_unused]] float window_seconds)
 {
     if (samples.empty()) return 0.0f;
-    
+
     // Use 50ms frames with 25% hop
-    int frame_length = static_cast<int>(0.05f * sample_rate);
+    int frame_length = static_cast<int>(0.05f * static_cast<float>(sample_rate));
     int hop_length = frame_length / 4;
     
     auto rms = compute_rms_energy(samples, sample_rate, frame_length, hop_length);
@@ -39,7 +39,7 @@ int64_t detect_music_start(
     if (samples.empty()) return 0;
     
     // Frame parameters: 50ms frame, 12.5ms hop
-    int frame_length = static_cast<int>(0.05f * sample_rate);
+    int frame_length = static_cast<int>(0.05f * static_cast<float>(sample_rate));
     int hop_length = frame_length / 4;
     
     auto rms = compute_rms_energy(samples, sample_rate, frame_length, hop_length);
@@ -59,7 +59,7 @@ int64_t detect_music_start(
     }
     
     // Find first sustained region of min_music_seconds
-    int min_music_frames = static_cast<int>(min_music_seconds * sample_rate / hop_length);
+    int min_music_frames = static_cast<int>(min_music_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
     min_music_frames = std::max(1, min_music_frames);
     
     for (size_t i = 0; i + static_cast<size_t>(min_music_frames) <= is_music.size(); ++i) {

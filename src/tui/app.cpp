@@ -24,7 +24,7 @@ int run_tui(AppState& state) {
         state.selected_marker < static_cast<int>(state.split_points.size())) {
         int width = Terminal::Size().dimx - 2;
         if (state.audio.samples.size() > 0) {
-            cursor_col = static_cast<int>((state.split_points[state.selected_marker].start_sample * width) / state.audio.samples.size());
+            cursor_col = static_cast<int>(static_cast<std::size_t>(state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample * width) / state.audio.samples.size());
         }
     }
     
@@ -33,7 +33,7 @@ int run_tui(AppState& state) {
     auto component = Renderer([&] {
         int width = Terminal::Size().dimx - 2;
         int height = 20;  // Waveform height
-        int64_t total_samples = state.audio.samples.size();
+        int64_t total_samples = static_cast<int64_t>(state.audio.samples.size());
         
         // Downsample audio for display (respect view boundaries)
         int64_t view_start = state.view_start;
@@ -186,19 +186,19 @@ int run_tui(AppState& state) {
         
         // Marker fine adjustment
         if (event == Event::Character('+') || event == Event::Character('=') || event == Event::Character(']')) {
-            if (!state.split_points.empty() && state.selected_marker >= 0 && 
+            if (!state.split_points.empty() && state.selected_marker >= 0 &&
                 state.selected_marker < static_cast<int>(state.split_points.size())) {
-                state.split_points[state.selected_marker].start_sample += 1;
-                state.split_points[state.selected_marker].end_sample += 1;
+                state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample += 1;
+                state.split_points[static_cast<std::size_t>(state.selected_marker)].end_sample += 1;
             }
             return true;
         }
         if (event == Event::Character('-') || event == Event::Character('_') || event == Event::Character('[')) {
-            if (!state.split_points.empty() && state.selected_marker >= 0 && 
+            if (!state.split_points.empty() && state.selected_marker >= 0 &&
                 state.selected_marker < static_cast<int>(state.split_points.size())) {
-                if (state.split_points[state.selected_marker].start_sample > 0) {
-                    state.split_points[state.selected_marker].start_sample -= 1;
-                    state.split_points[state.selected_marker].end_sample -= 1;
+                if (state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample > 0) {
+                    state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample -= 1;
+                    state.split_points[static_cast<std::size_t>(state.selected_marker)].end_sample -= 1;
                 }
             }
             return true;
@@ -215,7 +215,7 @@ int run_tui(AppState& state) {
         }
         if (event == Event::ArrowDown) {
             int64_t current_range = state.view_end - state.view_start;
-            int64_t total_samples = state.audio.samples.size();
+            int64_t total_samples = static_cast<int64_t>(state.audio.samples.size());
             int64_t center = state.view_start + current_range / 2;
             int64_t new_range = std::min<int64_t>(current_range * 2, total_samples);
             state.view_start = std::max<int64_t>(0, center - new_range / 2);
@@ -233,7 +233,7 @@ int run_tui(AppState& state) {
         }
         if (event == Event::End) {
             // Pan to end of file, maintain current zoom level
-            int64_t total = state.audio.samples.size();
+            int64_t total = static_cast<int64_t>(state.audio.samples.size());
             int64_t current_range = state.view_end - state.view_start;
             state.view_end = total;
             state.view_start = std::max<int64_t>(0, total - current_range);

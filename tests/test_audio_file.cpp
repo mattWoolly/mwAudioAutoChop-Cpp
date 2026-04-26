@@ -7,7 +7,7 @@
 namespace {
 
 // Create a temporary test WAV file for testing
-std::filesystem::path create_test_wav() {
+[[maybe_unused]] std::filesystem::path create_test_wav() {
     auto temp_dir = std::filesystem::temp_directory_path();
     auto test_file = temp_dir / "test_audio_file.wav";
     
