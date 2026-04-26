@@ -27,6 +27,21 @@ Format:
 - **Consequence.** If a future change to `parse_wav_header` decides that `chunk_size > remaining-file-bytes` should be treated as `InvalidFormat` outright, this manifest entry flips to `InvalidFormat` and the test still passes. No call-site implications.
 - **Re-evaluate.** When the parser-hardening epic owner picks up M-3 / M-4 / M-5, treat this entry as in-scope for that epic. Error-taxonomy consistency across the parser group matters more than any single call: if M-3/M-4/M-5 settle on a stronger "any chunk_size > remaining-bytes is `InvalidFormat`" convention, fold this case under it; if they don't, formalize the current "walker-survives → propagated through to whatever the body resolves to" rule and reference it from this entry.
 
+## KNOWN-FAILING-COMPLETENESS-V1 — environment-dependent failure clusters
+
+- **Commit.** Will be the orchestrator-paperwork commit landing alongside this entry, ahead of the PR #24 push.
+- **Reviewer.** orchestrator (self-recorded after PR #24 rebase fix-agent halt).
+- **Original doc said.** `docs/known-failing-tests.md` listed only `"AIFF header has correct structure"` as the C-1 stack-smash failure. The implicit assumption was that one TEST_CASE name uniquely identifies the failure pattern.
+- **We did.** Added `"AIFF header has correct parameters"` as a sibling Active entry under the same C-1 cure, structured the cluster as a single section with two named cases, and recorded the environment-dependent visibility (Linux/macOS CI abort the runner at the first case's SIGABRT; macOS-local often runs through to the second case's REQUIRE failure).
+- **Reasoning.** A stack-smash failure can corrupt enough state that subsequent test cases also fail at REQUIRE points downstream of the corruption. Whether the runner aborts immediately or limps through to the next failure depends on the OS's signal handling, libc layout, and Catch2 build configuration — not on the codebase itself. A doc that lists only the first-cited TEST_CASE will false-halt when an environment lets the runner continue. The fix is to enumerate the *failure cluster* and treat any subset of its TEST_CASEs surfacing in CI as the documented failure.
+- **Schema decision.** Cluster entries: a single section enumerates all TEST_CASEs with a shared root cause, flags visibility as environment-dependent, and ties them to a single cure. Gate logic: "any TEST_CASE in the cluster surfacing in CI satisfies the gate; absence of *all* of them means the cure has landed (or something else regressed; check carefully)."
+- **Consequence.** Future C-1-pre-merge runs won't false-halt on environment variance. After C-1 merges, both AIFF TEST_CASEs should pass; the cluster entry moves to Resolved as a single unit.
+- **Meta-note.** This is the **third** time `docs/known-failing-tests.md` has been wrong at PR-merge time, surfaced by halt-and-surface protocol:
+  1. **PR #23** — conflation between standalone `test_reference_mode` binary and `[integration][reference]` cases (filed as M-REF-ALIGN-UNIT + Mi-17 extension).
+  2. **PR #23** — identification schema (file:line vs TEST_CASE name; filed as `KNOWN-FAILING-SCHEMA-V2` above).
+  3. **PR #24** — completeness (failure clusters with environment-dependent visibility; this entry).
+  Each surfaced under "do this while waiting for CI" pressure on a doc that was pre-staged without an audit pass. The user-affirmed lesson — pre-staged orchestrator gate docs need an explicit audit-agent pass before being declared authoritative — applies. The next pre-stage doc (`docs/m14-scope.md` when M-14 dispatches) gets an explicit audit pass before its dispatch reads it as the gate. Memory entry `feedback_pre_staged_docs_need_audit.md` is updated with this third instance and the new audit-completeness check ("are there failure clusters where one TEST_CASE name hides others?").
+
 ## KNOWN-FAILING-SCHEMA-V2 — identify by TEST_CASE name, not file:line
 
 - **Commit.** Will be the gate-correction commit landing alongside this entry.
