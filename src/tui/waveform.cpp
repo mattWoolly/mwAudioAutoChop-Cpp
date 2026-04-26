@@ -13,7 +13,7 @@ std::vector<std::pair<float, float>> downsample_for_display(
         return {};
     }
     
-    std::vector<std::pair<float, float>> peaks(display_width);
+    std::vector<std::pair<float, float>> peaks(static_cast<std::size_t>(display_width));
     
     // Samples per column
     size_t samples_per_col = samples.size() / static_cast<size_t>(display_width);
@@ -30,7 +30,7 @@ std::vector<std::pair<float, float>> downsample_for_display(
             max_val = std::max(max_val, samples[i]);
         }
         
-        peaks[col] = {min_val, max_val};
+        peaks[static_cast<std::size_t>(col)] = {min_val, max_val};
     }
     
     return peaks;
@@ -62,8 +62,8 @@ std::vector<std::string> render_waveform(
         auto [min_val, max_val] = peaks[col];
         
         // Map [-1, 1] to [0, waveform_height]
-        int min_row = static_cast<int>((1.0f - min_val) * half_height);
-        int max_row = static_cast<int>((1.0f - max_val) * half_height);
+        int min_row = static_cast<int>((1.0f - min_val) * static_cast<float>(half_height));
+        int max_row = static_cast<int>((1.0f - max_val) * static_cast<float>(half_height));
         
         min_row = std::clamp(min_row, 0, waveform_height - 1);
         max_row = std::clamp(max_row, 0, waveform_height - 1);
