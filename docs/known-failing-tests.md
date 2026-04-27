@@ -45,27 +45,6 @@ A test that passes on the PR but is on this list is progress — update this fil
 
 ## Active known-failing entries
 
-### `test_lossless` — C-1 AIFF stack-smash cluster (two TEST_CASEs)
-
-This is a **failure cluster**: two TEST_CASEs in `tests/test_lossless.cpp` fail for the same root cause (pre-C-1 `encode_float80` writes 11 bytes into a 10-byte stack buffer). Whether one or both surface as a logged failure depends on the environment — the SIGABRT from the stack smash terminates the runner mid-test on Linux CI and macOS CI, but on macOS-local builds the runner often survives long enough for the second case to also REQUIRE-fail. **Match by TEST_CASE name; either or both showing up in CI is gate-met.**
-
-#### TEST_CASE `"AIFF header has correct structure"` (`[lossless]`)
-
-- **File.** `tests/test_lossless.cpp` (currently line 143 on main; drifts as the file grows).
-- **Assertion family.** `REQUIRE(header[i] == std::byte{...})` for FORM/AIFF chunk magic bytes, plus body assertions.
-- **Why failing.** The test calls `build_aiff_header(2, 44100, 24, num_frames, data_size)`, which today still routes through pre-C-1 `encode_float80` for the sampleRate field. Pre-C-1 `encode_float80` writes 11 bytes into a 10-byte stack buffer and stack-smashes; sanitizer builds also flag this as ASan stack-buffer-overflow. The test was historically `[!shouldfail]`-tagged with a comment "temporarily disabled — investigate stack smash issue"; F-4 re-enabled it so the smash surfaces.
-
-#### TEST_CASE `"AIFF header has correct parameters"` (`[lossless]`)
-
-- **File.** `tests/test_lossless.cpp` (currently line 177 on main; drifts).
-- **Assertion family.** Same AIFF-header parameter assertions on a different invocation of `build_aiff_header`. The same `encode_float80` stack-smash damage propagates.
-- **Why failing.** Identical root cause to the structure case above. **Visibility is environment-dependent**: Linux Release/Debug CI and macOS CI typically abort the runner subprocess at the structure-case SIGABRT before reaching this case (CTest reports "Subprocess aborted" with only the structure-case line cited). macOS-local Release+WERROR builds (without sanitizers) often allow the runner to survive the structure-case SIGABRT (Catch2 catches it differently on Apple's libc) and hit this case's REQUIRE failure too. The cluster is the same defect; the visibility is the runner-environment idiosyncrasy.
-
-#### Common cure
-
-- **Cured by.** **PR #27 (C-1)** for both TEST_CASEs. C-1's commit rewrites `encode_float80` to the correct 10-byte IEEE 754 layout AND fixes `build_aiff_header`'s `numSampleFrames` field type from float80 to u32 per the AIFF 1.3 spec. Both audit passes verified the 6-rate AIFF round-trip; both AIFF cases should pass after #27 merges.
-- **Build job impact.** Linux Release / Linux Debug / Linux sanitizers / macOS Release / macOS Debug — all show "Subprocess aborted" on `test_lossless`. CI logs typically cite only the structure-case line; macOS-local builds may cite both cases. ASan additionally trips on the stack overflow under sanitizer builds. **Gate logic:** the `test_lossless` binary's "Subprocess aborted" status is documented; either or both AIFF TEST_CASEs surfacing in logs satisfies the gate; absence of *any* AIFF TEST_CASE failure (i.e. the binary suddenly passes) is progress and means C-1 has effectively landed.
-
 ### `test_integration` — TEST_CASE `"Blind mode pipeline: gap detection"` (`[integration][blind]`)
 
 - **File.** `tests/test_integration.cpp` (currently line 446 for the TEST_CASE; failing assertion currently at line 479 on main / line 516 after PR #23's additions; drifts).
@@ -114,20 +93,22 @@ Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per t
 
 ## Resolved entries
 
-*(Empty as of post-Mi-18; populate when Tier 1+2 PRs merge.)*
+### `test_lossless` — C-1 AIFF stack-smash cluster (RESOLVED)
+
+- **Cured by.** PR #27 (C-1), merge commit `<sha>` (fill in after merge).
+- **Active entry archived.** Both `"AIFF header has correct structure"` and `"AIFF header has correct parameters"` now pass; `encode_float80` writes 10 bytes correctly per IEEE 754; `build_aiff_header`'s `numSampleFrames` field is u32 per AIFF 1.3 spec; libsndfile reads the output across 6 sample rates (44.1/48/88.2/96/176.4/192 kHz) per the new `"AIFF sample-rate round-trip via libsndfile"` round-trip test.
+- **CI evidence.** Run `24971898962` on `058cd7e` (PR #27 head): every job's `Test` step shows `6/10 Test #6: test_lossless ........ Passed`. Linux Release/Debug, macOS Release/Debug, and sanitizers (asan+ubsan) all confirm `test_lossless` no longer aborts and the AIFF TEST_CASEs pass; ASan does not trip on `encode_float80`.
 
 ## Job-level expectations
 
 | Job | Build | Tests | Comments |
 |---|---|---|---|
-| `build / ubuntu-latest / Release` | green | red on entries above | C-1 fixes test_lossless:143 |
+| `build / ubuntu-latest / Release` | green | red on entries above | test_lossless now Passed (post-#27) |
 | `build / ubuntu-latest / Debug` | green | red on entries above | same |
-| `build / macos-latest / Release` | green | red on entries above (test_lossless aborts as "Subprocess aborted" — see note) | same |
-| `build / macos-latest / Debug` | green | red on entries above (same Subprocess aborted) | same |
-| `sanitizers (asan+ubsan)` | green | red on entries above + ASan trip on test_lossless:143 | The ASan trip is part of the same stack-smash; cured by C-1 |
+| `build / macos-latest / Release` | green | red on entries above | test_lossless now Passed (post-#27) |
+| `build / macos-latest / Debug` | green | red on entries above | same |
+| `sanitizers (asan+ubsan)` | green | red on entries above | ASan no longer trips on encode_float80 (post-#27) |
 | `clang-tidy` | red on style nits | n/a (job stops at clang-tidy) | Out of Mi-18 scope per mandate; tracked under N-1..N-12 / Mi-18-FU-* |
-
-**Note on test_lossless on macOS.** Verified in main's post-Mi-18 CI run (24961544352): macOS Debug and Release both show `test_lossless` failing as **"Subprocess aborted"** rather than as a line-numbered FAILED assertion. The stack smash from `encode_float80` writing 11 bytes into a 10-byte buffer crashes the test runner on macOS before Catch2 can print the `:143: FAILED` marker that Linux shows. The underlying defect is identical; the symptom is just "binary aborts" on macOS vs "binary returns non-zero with line markers" on Linux. C-1 (PR #27) cures both manifestations.
 
 ## Update protocol
 

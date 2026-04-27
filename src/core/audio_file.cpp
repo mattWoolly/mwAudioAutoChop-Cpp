@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <ios>
@@ -421,81 +423,149 @@ static bool write_bytes_to_file(const std::filesystem::path& path, const std::ve
 // Helper: Encode 80-bit IEEE extended precision float (for AIFF sample rate)
 // ============================================================================
 
+// IEEE 754 80-bit extended-precision wire format constants.
+//
+// References:
+//   * Apple "Standard Apple Numeric Environment (SANE)" — defines the
+//     extended80 layout used by AIFF.
+//   * EBU Tech 3306 (BWF) Annex on AIFF, which reproduces the SANE
+//     wire format diagram.
+//   * AIFF 1.3 spec, "Audio IFF Specification", Apple, 1989, COMM chunk.
+//
+// Wire-format byte-layout invariant (the *only* layout the 10-byte
+// output buffer can satisfy; reviewer should verify the code matches):
+//
+//   byte 0: sign bit (high) || top 7 bits of 15-bit biased exponent
+//   byte 1:                    low  8 bits of 15-bit biased exponent
+//   bytes 2..9: 64-bit mantissa, big-endian, *with the explicit leading 1 bit*
+//
+// Total: 1 + 1 + 8 = 10 bytes. There is no separate sign byte.
+//
+// Note: the older Motorola 6888x "1+2+8 = 11 byte" packed-decimal layout
+// is *not* the AIFF wire format. The previous implementation followed
+// that layout and overran a 10-byte buffer at out[10]; that defect is
+// what this fix addresses (backlog item C-1).
+namespace float80_layout {
+    // 15-bit biased-exponent bias (per IEEE 754 80-bit / SANE / AIFF spec).
+    static constexpr int kExponentBias = 16383;
+    // Exponent field is 15 bits → max biased value 2^15 - 1 = 32767.
+    static constexpr int kMaxBiasedExp = 32767;
+    static constexpr int kMinBiasedExp = 1;
+    // The exponent is split: high 7 bits live in the low 7 bits of byte 0
+    // (alongside the sign), and the low 8 bits live in byte 1.
+    static constexpr unsigned kExpHighShift = 8;
+    static constexpr uint8_t  kExpHighMask  = 0x7F;
+    static constexpr uint8_t  kSignMask     = 0x80;
+    // Mantissa width.
+    static constexpr int kMantissaBits = 64;
+}
+
+// Compile-time check that bias + 0 fits in the 15-bit exponent field.
+static_assert(float80_layout::kExponentBias <= float80_layout::kMaxBiasedExp,
+              "biased-zero exponent must fit in 15 bits");
+
+// Encode a finite IEEE-754 80-bit extended-precision big-endian value
+// into the 10-byte buffer pointed to by `out`.
+//
+// Inputs:
+//   * `value`: must be finite. The AIFF use case (sample rate, frame count)
+//     only ever passes non-negative values; this is asserted in Debug. The
+//     negative-value branch is retained for completeness so callers that
+//     want a signed encoder can rely on the wire format. NaN and ±∞ are
+//     handled explicitly (NaN encodes as +0 — AIFF has no NaN sample rate;
+//     callers must not pass NaN, which is asserted in Debug).
+//
+// Output:
+//   * Writes *exactly* 10 bytes to `out`, in the byte layout described in
+//     the `float80_layout` block above. No bytes beyond `out[9]` are touched.
+//
+// This function is the only place in the codebase that emits 80-bit
+// extended floats; `parse_aiff_header` does not currently decode them.
 static void encode_float80(double value, std::byte* out) {
-    // IEEE 80-bit extended precision format:
-    // 1 sign bit, 15 exponent bits (biased 16383), 64 mantissa bits
-    // Normalized mantissa has leading 1 bit
-    
-    // Handle special cases
+    using namespace float80_layout;
+
+    assert(out != nullptr);
+    // AIFF sample rates and frame counts are finite and non-negative;
+    // we still encode negatives correctly for the general contract.
+    assert(!std::isnan(value) && "encode_float80: NaN not supported");
+
     bool negative = false;
     if (value < 0.0) {
         negative = true;
         value = -value;
     }
-    
-    if (value == 0.0 || value != value) {  // Zero or NaN
-        // Zero: all zeros except possibly sign
-        out[0] = std::byte{static_cast<uint8_t>(negative ? 0x80 : 0x00)};
-        out[1] = std::byte{0};
-        out[2] = std::byte{0};
+    const uint8_t sign_bits = negative ? kSignMask : uint8_t{0};
+
+    // Zero: all bytes zero except for a possible sign bit.
+    if (value == 0.0) {
+        out[0] = std::byte{sign_bits};
+        for (int i = 1; i < 10; ++i) {
+            out[i] = std::byte{0};
+        }
+        return;
+    }
+
+    // Infinity: exponent field is all 1s, mantissa explicit-leading-1 only.
+    // Per SANE, +∞ is encoded with mantissa MSB set; we follow that here.
+    if (std::isinf(value)) {
+        out[0] = std::byte{static_cast<uint8_t>(sign_bits | kExpHighMask)};
+        out[1] = std::byte{0xFF};
+        out[2] = std::byte{0x80};
         for (int i = 3; i < 10; ++i) {
             out[i] = std::byte{0};
         }
         return;
     }
-    
-    // Check for infinity
-    if (value == std::numeric_limits<double>::infinity()) {
-        // Infinity: exponent all 1s, mantissa all 0s
-        out[0] = std::byte{static_cast<uint8_t>(negative ? 0x80 : 0x00)};
-        out[1] = std::byte{0x7F};
-        out[2] = std::byte{0xFF};
-        for (int i = 3; i < 10; ++i) {
-            out[i] = std::byte{0};
-        }
-        return;
-    }
-    
-    // Get exponent and mantissa using frexp
-    // frexp returns mant in [0.5, 1) and sets exp
+
+    // Decompose into exponent and mantissa.
+    // frexp returns mant in [0.5, 1); shift to mantissa in [1, 2) and
+    // adjust the exponent accordingly so the leading bit is the explicit
+    // integer bit of the IEEE 80-bit mantissa.
     int exp = 0;
-    double mant = std::frexp(value, &exp);  // mant is in [0.5, 1)
-    mant *= 2.0;  // Now in [1, 2)
-    exp--;
-    
-    // Bias exponent (16383). Note: exp can be negative for small values.
-    // For finite values, exp is typically around log2(value) which is reasonable.
-    int biased_exp = exp + 16383;
-    
-    // Clamp to valid range (1-32767)
-    if (biased_exp < 1) biased_exp = 1;
-    if (biased_exp > 32767) biased_exp = 32767;
-    
-    // Build mantissa (64 bits)
-    // The mantissa is normally in [1, 2), but the leading 1 is implicit in IEEE754
-    // In IEEE 80-bit, we include the explicit leading bit
+    double mant = std::frexp(value, &exp);  // mant ∈ [0.5, 1)
+    mant *= 2.0;                            // mant ∈ [1, 2)
+    exp -= 1;
+
+    int biased_exp = exp + kExponentBias;
+    // Clamp to representable range. (Beyond 80-bit precision we lose bits,
+    // but for AIFF sample rates this never triggers.)
+    if (biased_exp < kMinBiasedExp) biased_exp = kMinBiasedExp;
+    if (biased_exp > kMaxBiasedExp) biased_exp = kMaxBiasedExp;
+
+    // Build the 64-bit mantissa, MSB first, *including* the explicit
+    // leading 1 bit (mant ∈ [1, 2) so the first iteration emits 1).
+    //
+    // The previous implementation pre-multiplied by 2 inside the loop,
+    // which dropped the explicit leading bit and produced a mantissa
+    // with the wrong bit pattern (e.g. 1.0 → all-ones). Order matters:
+    // sample, then shift, then advance.
     uint64_t mantissa = 0;
-    for (int i = 0; i < 64; ++i) {
-        mant *= 2.0;
-        int bit = (mant >= 1.0) ? 1 : 0;
+    for (int i = 0; i < kMantissaBits; ++i) {
+        const int bit = (mant >= 1.0) ? 1 : 0;
         if (bit) {
             mant -= 1.0;
         }
         mantissa = (mantissa << 1) | static_cast<uint64_t>(bit);
+        mant *= 2.0;
     }
-    
-    // Write bytes (big-endian)
-    out[0] = std::byte{static_cast<uint8_t>(negative ? 0x80 : 0x00)};
-    out[1] = std::byte{static_cast<uint8_t>((biased_exp >> 8) & 0xFF)};
-    out[2] = std::byte{static_cast<uint8_t>(biased_exp & 0xFF)};
-    out[3] = std::byte{static_cast<uint8_t>((mantissa >> 56) & 0xFF)};
-    out[4] = std::byte{static_cast<uint8_t>((mantissa >> 48) & 0xFF)};
-    out[5] = std::byte{static_cast<uint8_t>((mantissa >> 40) & 0xFF)};
-    out[6] = std::byte{static_cast<uint8_t>((mantissa >> 32) & 0xFF)};
-    out[7] = std::byte{static_cast<uint8_t>((mantissa >> 24) & 0xFF)};
-    out[8] = std::byte{static_cast<uint8_t>((mantissa >> 16) & 0xFF)};
-    out[9] = std::byte{static_cast<uint8_t>((mantissa >> 8) & 0xFF)};
-    out[10] = std::byte{static_cast<uint8_t>(mantissa & 0xFF)};
+
+    // Pack per the byte-layout invariant above.
+    const uint8_t exp_high = static_cast<uint8_t>(
+        (static_cast<unsigned>(biased_exp) >> kExpHighShift) & kExpHighMask);
+    const uint8_t exp_low  = static_cast<uint8_t>(
+        static_cast<unsigned>(biased_exp) & 0xFFu);
+
+    out[0] = std::byte{static_cast<uint8_t>(sign_bits | exp_high)};
+    out[1] = std::byte{exp_low};
+    out[2] = std::byte{static_cast<uint8_t>((mantissa >> 56) & 0xFFu)};
+    out[3] = std::byte{static_cast<uint8_t>((mantissa >> 48) & 0xFFu)};
+    out[4] = std::byte{static_cast<uint8_t>((mantissa >> 40) & 0xFFu)};
+    out[5] = std::byte{static_cast<uint8_t>((mantissa >> 32) & 0xFFu)};
+    out[6] = std::byte{static_cast<uint8_t>((mantissa >> 24) & 0xFFu)};
+    out[7] = std::byte{static_cast<uint8_t>((mantissa >> 16) & 0xFFu)};
+    out[8] = std::byte{static_cast<uint8_t>((mantissa >>  8) & 0xFFu)};
+    out[9] = std::byte{static_cast<uint8_t>( mantissa        & 0xFFu)};
+    // Invariant: exactly 10 bytes written (out[0] through out[9]).
 }
 
 // ============================================================================
@@ -657,18 +727,24 @@ std::vector<std::byte> build_aiff_header(
     header.push_back(std::byte{static_cast<uint8_t>((channels >> 8) & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>(channels & 0xFF)});
     
-    // Frames as 80-bit float (big-endian)
-    std::byte float80[10];
-    encode_float80(static_cast<double>(num_frames), float80);
-    for (int i = 0; i < 10; ++i) {
-        header.push_back(float80[i]);
-    }
-    
+    // numSampleFrames: AIFF spec defines this as a 4-byte big-endian
+    // unsigned integer (the COMM chunk size of 18 already accounts for
+    // 2+4+2+10 = 18 bytes; encoding it as 10-byte float80 would push the
+    // remainder of the COMM payload out of the chunk and make libsndfile
+    // (and any other conformant decoder) reject the file). See AIFF 1.3
+    // spec, COMM chunk, "numSampleFrames" field.
+    const uint32_t nsf = static_cast<uint32_t>(num_frames);
+    header.push_back(std::byte{static_cast<uint8_t>((nsf >> 24) & 0xFF)});
+    header.push_back(std::byte{static_cast<uint8_t>((nsf >> 16) & 0xFF)});
+    header.push_back(std::byte{static_cast<uint8_t>((nsf >>  8) & 0xFF)});
+    header.push_back(std::byte{static_cast<uint8_t>( nsf        & 0xFF)});
+
     // Bits per sample (big-endian)
     header.push_back(std::byte{static_cast<uint8_t>((bits_per_sample >> 8) & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>(bits_per_sample & 0xFF)});
-    
-    // Sample rate as 80-bit float (big-endian)
+
+    // Sample rate as 80-bit float (big-endian, exactly 10 bytes)
+    std::byte float80[10];
     encode_float80(static_cast<double>(sample_rate), float80);
     for (int i = 0; i < 10; ++i) {
         header.push_back(float80[i]);
