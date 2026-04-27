@@ -41,8 +41,8 @@ enum class AudioError {
 //
 // Used by Expected<T,E>::value() / ::error() to enforce that callers must
 // check has_value() / operator bool() before dereferencing. See
-// docs/decisions/expected-api.md for why this lives on top of the existing
-// placement-new storage rather than migrating to std::variant (M-14).
+// docs/decisions/expected-api.md for the rationale (the macro precedes
+// the M-14 variant rewrite and is preserved on top of it).
 #if defined(NDEBUG)
 #  define MWAAC_ASSERT_PRECONDITION(cond)               \
     do {                                                 \
@@ -61,6 +61,12 @@ enum class AudioError {
 // pointer-to-the-actual-object the standard requires). The variant
 // rewrite eliminates that hazard entirely while preserving the same
 // public API surface, so call sites compile unchanged.
+//
+// Copyability. Copy/move semantics are inherited from the underlying
+// variant: if either T or E is not copy-constructible, the implicitly
+// defaulted copy ctor is deleted and the resulting Expected<T,E> is
+// move-only. For example, `Expected<AudioFile, AudioError>` is move-only
+// because `AudioFile` has `=delete`'d copy semantics.
 //
 // Precondition contract. value() and error() are *unchecked accessors*:
 // they require the caller to have already verified the discriminant via
@@ -87,14 +93,9 @@ template<typename T, typename E>
 class Expected {
 public:
     // Default-constructed Expected holds a default-constructed T (the
-    // value path). This matches the pre-M-14 behaviour where
-    // `Expected()` set `has_value_=false` only by accident: the bool
-    // member was uninitialized in the pre-existing default ctor and
-    // happened to be cleared by the variant default for trivially
-    // initialisable types, but the contract that survives in tests is
-    // "has_value() reflects the constructor used". std::variant's
-    // default-init holds the first alternative (T), which gives us a
-    // well-defined default and aligns with std::expected.
+    // value path), matching std::expected. If T is not
+    // default-constructible, this default ctor is implicitly deleted —
+    // the underlying variant alternative 0 cannot be default-initialised.
     Expected() = default;
 
     // Allow implicit conversion from T
