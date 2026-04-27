@@ -3,10 +3,23 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <ios>
 #include <iostream>
 #include <limits>
+#include <optional>
+#include <random>
+#include <sstream>
+#include <string>
+#include <system_error>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <sndfile.h>
 
@@ -410,13 +423,57 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
 // Helper: Write bytes to file
 // ============================================================================
 
-static bool write_bytes_to_file(const std::filesystem::path& path, const std::vector<std::byte>& data) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        return false;
+// Build a sibling temp path next to `target` so that std::filesystem::rename
+// will be filesystem-local (and therefore POSIX-atomic). The leading dot makes
+// the temp file hidden on POSIX, and the .mwaac.tmp.<pid>.<rand> suffix makes
+// it unmistakable as a transient artifact while staying unique enough that
+// concurrent write_track calls in the same directory will not collide.
+//
+// Audit-1 caught a previous implementation that built the name via snprintf
+// into a fixed 64-byte buffer; for filenames around 30+ chars that silently
+// truncated the random suffix, causing sibling collisions and corrupt target
+// files under concurrency. The current implementation builds the name in a
+// std::ostringstream so length is unbounded by design.
+//
+// Returns std::nullopt if the resulting temp filename would exceed the
+// filesystem's NAME_MAX (255 on POSIX), which would cause `open` / `rename`
+// to fail with ENAMETOOLONG anyway and is treated as a WriteError.
+static std::optional<std::filesystem::path>
+make_temp_sibling_path(const std::filesystem::path& target) {
+#ifdef _WIN32
+    auto pid = static_cast<unsigned long>(_getpid());
+#else
+    auto pid = static_cast<unsigned long>(::getpid());
+#endif
+    static thread_local std::mt19937_64 rng{
+        std::random_device{}() ^
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&pid))
+    };
+    uint64_t r = rng();
+
+    std::string filename = target.filename().string();
+
+    // Build the temp filename in a string — no fixed buffer, no truncation.
+    std::ostringstream oss;
+    oss << '.' << filename
+        << ".mwaac.tmp." << pid
+        << '.' << std::hex << std::setw(16) << std::setfill('0') << r;
+    std::string temp_name = oss.str();
+
+    // POSIX caps a single path component at NAME_MAX. <climits> does not
+    // expose this portably, so hard-code 255 with a comment. (pathconf can
+    // refine this per-mount, but 255 is the universal floor on every
+    // mainstream filesystem we ship on.)
+    constexpr std::size_t NAME_MAX_BYTES = 255;
+    if (temp_name.size() > NAME_MAX_BYTES) {
+        return std::nullopt;
     }
-    file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    return file.good();
+
+    std::filesystem::path parent = target.parent_path();
+    if (parent.empty()) {
+        parent = std::filesystem::path(".");
+    }
+    return parent / temp_name;
 }
 
 // ============================================================================
@@ -779,6 +836,56 @@ std::vector<std::byte> build_aiff_header(
 
 // ============================================================================
 // write_track: Export a track with new header (raw byte copy)
+// ----------------------------------------------------------------------------
+// Preconditions:
+//   - `source` is an open AudioFile whose underlying file is readable.
+//   - The sample range [start_sample, end_sample] is non-empty and within
+//     [0, info.frames).
+//   - `output_path`'s parent directory exists and is writable. The parent
+//     directory must reside on the same filesystem the user expects the
+//     output to land on (atomicity relies on a same-filesystem rename).
+//
+// Postconditions:
+//   - On success: a complete file (valid header + sample bytes) exists at
+//     `output_path`. No `.<name>.mwaac.tmp.*` sibling remains in the parent
+//     directory for this call.
+//   - On failure: `output_path` is unchanged from before the call. In
+//     particular, no partial file is created at `output_path`, and any
+//     temp sibling created during the attempt has been removed (best-effort
+//     cleanup; see Caveats).
+//
+// Atomicity:
+//   The function writes the full output to a temp-sibling path next to
+//   `output_path`, closes the file, then commits via
+//   std::filesystem::rename(temp, target). On a single filesystem this
+//   rename is POSIX-atomic: a concurrent reader either sees the previous
+//   state of `output_path` (or no file) or the fully-written new file —
+//   never a partial write.
+//
+// Caveats:
+//   - Cross-filesystem renames are not atomic. The temp sibling is placed
+//     in the same directory as the target so this is the normal case;
+//     however, mount points, bind mounts, or per-directory overlays could
+//     cause `rename` to fall back to copy+unlink, which is not atomic.
+//     If you need cross-filesystem atomicity, that's a separate concern.
+//   - This function does NOT call fsync(2). std::ofstream::close flushes
+//     the C++ stream buffer to the OS, but the OS may delay flushing to
+//     disk. On a power loss between rename and OS flush, the file at
+//     `output_path` may be zero-length or partially populated. The
+//     "lossless by design" promise covers sample fidelity, not crash
+//     safety; if a future caller needs crash-safe output, add fsync at
+//     that point.
+//
+// Returns:
+//   Expected<std::filesystem::path, AudioError>
+//     - On success: the value is `output_path`.
+//     - On failure:
+//         InvalidRange — sample range out of bounds.
+//         ReadError   — failed to read source samples.
+//         WriteError  — could not open temp sibling, write failed,
+//                       close/flush reported error, or rename to target
+//                       failed (target is a directory, parent missing,
+//                       permission denied, etc.).
 // ============================================================================
 
 Expected<std::filesystem::path, AudioError>
@@ -790,26 +897,26 @@ write_track(
     std::string_view output_format
 ) {
     const AudioInfo& info = source.info();
-    
+
     // Validate sample range
     if (start_sample < 0 || end_sample < start_sample || end_sample >= info.frames) {
         return Expected<std::filesystem::path, AudioError>(AudioError::InvalidRange);
     }
-    
+
     // Calculate the number of frames
     int64_t num_frames = end_sample - start_sample + 1;
     int64_t bytes_to_read = num_frames * info.bytes_per_frame();
-    
+
     // Read raw bytes from source
     int64_t byte_offset = start_sample * info.bytes_per_frame();
     auto raw_result = source.read_raw_samples(byte_offset, bytes_to_read);
     if (!raw_result.has_value()) {
         return Expected<std::filesystem::path, AudioError>(AudioError::ReadError);
     }
-    
+
     // Determine output format
     std::string out_fmt = (output_format.empty()) ? info.format : std::string(output_format);
-    
+
     // Build header based on format
     std::vector<std::byte> header;
     if (out_fmt == "WAV" || out_fmt == "RF64") {
@@ -820,23 +927,77 @@ write_track(
         // Default to WAV
         header = build_wav_header(info.channels, info.sample_rate, info.bits_per_sample, bytes_to_read);
     }
-    
+
     // Combine header and data
     std::vector<std::byte> file_data;
     file_data.reserve(header.size() + raw_result.value().size());
     file_data.insert(file_data.end(), header.begin(), header.end());
-    
+
     // Convert uint8_t vector to std::byte vector
     const auto& raw_bytes = raw_result.value();
     for (uint8_t b : raw_bytes) {
         file_data.push_back(static_cast<std::byte>(b));
     }
-    
-    // Write to file
-    if (!write_bytes_to_file(output_path, file_data)) {
+
+    // ------------------------------------------------------------------
+    // Atomic write: temp sibling -> close -> rename.
+    // The target path is only ever created via rename of a fully-written
+    // file. If anything goes wrong before rename, we remove the temp
+    // sibling (best-effort) and leave `output_path` untouched.
+    // ------------------------------------------------------------------
+    auto temp_path_opt = make_temp_sibling_path(output_path);
+    if (!temp_path_opt.has_value()) {
+        // Target filename is so long that any sibling temp name would
+        // exceed NAME_MAX. Refuse the write rather than rely on the
+        // OS to surface ENAMETOOLONG mid-stream.
         return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
     }
-    
+    const std::filesystem::path temp_path = std::move(*temp_path_opt);
+
+    auto cleanup_temp = [&]() noexcept {
+        std::error_code ec;
+        std::filesystem::remove(temp_path, ec);
+        // best-effort: ignore ec
+    };
+
+    {
+        std::ofstream file(temp_path, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            // Couldn't create the temp file at all (parent missing,
+            // permission denied, etc.). Nothing to clean up beyond a
+            // possible zero-byte file the OS may have left behind.
+            cleanup_temp();
+            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        }
+
+        file.write(reinterpret_cast<const char*>(file_data.data()),
+                   static_cast<std::streamsize>(file_data.size()));
+        if (!file.good()) {
+            cleanup_temp();
+            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        }
+
+        file.flush();
+        if (!file.good()) {
+            cleanup_temp();
+            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        }
+
+        file.close();
+        if (file.fail()) {
+            cleanup_temp();
+            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        }
+    }
+
+    // Commit: same-filesystem rename is POSIX-atomic.
+    std::error_code rename_ec;
+    std::filesystem::rename(temp_path, output_path, rename_ec);
+    if (rename_ec) {
+        cleanup_temp();
+        return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+    }
+
     return Expected<std::filesystem::path, AudioError>(output_path);
 }
 
