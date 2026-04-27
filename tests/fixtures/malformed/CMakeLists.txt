@@ -62,3 +62,18 @@ add_custom_command(
 # `<fixture>_fixture` and it is the single hook point for downstream
 # tests.
 add_custom_target(malformed_fixture ALL DEPENDS ${_stamp})
+
+# Wire into `test_audio_file` from here rather than the root CMakeLists.
+# `tests/fixtures/` is processed after `mwaac_add_test(test_audio_file ...)`
+# above, so `test_audio_file` exists by the time this subdir runs — we can
+# attach directly. The `if(TARGET ...)` guard keeps the project configuring
+# cleanly if the top-level build re-arranges or excludes tests. This is the
+# same pattern FIXTURE-RF64 and FIXTURE-REF use (and FIXTURE-WAVEEXT will
+# adopt), so the root CMakeLists.txt stays free of per-fixture edits.
+if(TARGET test_audio_file)
+    target_compile_definitions(test_audio_file PRIVATE
+        MWAAC_MALFORMED_FIXTURE_DIR="${MWAAC_MALFORMED_FIXTURE_OUTPUT_DIR}"
+        MWAAC_MALFORMED_FIXTURE_MANIFEST="${MWAAC_MALFORMED_FIXTURE_MANIFEST}"
+    )
+    add_dependencies(test_audio_file malformed_fixture)
+endif()
