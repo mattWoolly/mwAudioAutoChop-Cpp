@@ -34,24 +34,36 @@ Currently three distinct `enum class` error taxonomies travel through
 
 | Taxonomy | Defined in | Used by |
 |---|---|---|
-| `AudioError` | `src/core/audio_file.hpp` | `AudioFile::open`, `read_pcm_to_buffer`, `parse_wav_header`, `parse_aiff_header`, `write_track` |
+| `AudioError` | `src/core/audio_file.hpp` | `AudioFile::open`, `read_raw_samples`, `parse_wav_header`, `parse_aiff_header`, `write_track` |
 | `LoadError` | `src/core/audio_buffer.hpp` | `load_audio_mono` |
 | `BlindError` | `src/modes/blind_mode.hpp` | `analyze_blind_mode` |
 | `ReferenceError` | `src/modes/reference_mode.hpp` | `analyze_reference_mode`, `load_reference_tracks` |
 
-M-14 does **not** need to unify these taxonomies — they have legitimately
-different domains. But the M-14 fix-agent must explicitly decide:
-- Is `LoadError` merged into `AudioError` (since `load_audio_mono` is a thin
-  wrapper around `AudioFile::open` + `read_pcm_to_buffer`)?
-- Or does `LoadError` stay as its own type, and `LoadResult` becomes
-  `Expected<AudioBuffer, LoadError>`?
+Actual taxonomy values on current main (verified during the audit-pass discipline that caught two errors in the original draft of this section):
 
-Recommendation: merge `LoadError` into `AudioError` (the four `LoadError`
-values — `FileNotFound`, `InvalidFormat`, `UnsupportedFormat`, `ReadError`
-— are already a strict subset of `AudioError`). Record the decision in
-`docs/decisions/expected-api.md` (the file C-2 created for the API-shape
-decision; this is its natural extension). If the fix-agent chooses the
-non-recommended path, document why.
+```cpp
+enum class LoadError    { FileNotFound, InvalidFormat, ReadError, ResampleError };
+enum class AudioError   { FileNotFound, InvalidFormat, UnsupportedFormat, ReadError, WriteError, InvalidRange };
+```
+
+M-14 does **not** need to unify these taxonomies — they have legitimately
+different domains. But the M-14 fix-agent must explicitly decide how to
+handle `LoadError` when `LoadResult` is removed:
+
+- **Option (a) — merge `LoadError` into `AudioError` and add a new value.** Three of the four `LoadError` values (`FileNotFound`, `InvalidFormat`, `ReadError`) already exist in `AudioError`. The fourth, `ResampleError`, has **no counterpart** in `AudioError`. Pick this option only if you also add `AudioError::ResampleError`. Pro: single error taxonomy. Con: every existing `AudioError` consumer now has a value it doesn't care about.
+- **Option (b) — route `ResampleError` to an existing `AudioError` value.** `InvalidFormat` is the closest semantic neighbor (a sample rate that resampling can't reach is arguably a "format mismatch"), but this is **lossy** — callers that distinguished resample failure from format failure can no longer do so. Document the loss explicitly.
+- **Option (c) — keep `LoadError` as its own type.** `LoadResult` is removed, but `Expected<AudioBuffer, LoadError>` remains (with the unified `Expected` storage now backing it). Pro: no taxonomy churn for callers. Con: leaves the question of what to do if `load_audio_mono` ever needs to surface an `AudioError` value not in `LoadError`.
+
+The original draft of this section recommended (a) on the false premise
+that `LoadError` was already a strict subset of `AudioError`. **It is not.**
+The audit-pass on this doc caught the mistake before M-14 dispatched (see
+"Audit-pass discipline" note in `docs/deviations.md` →
+`KNOWN-FAILING-COMPLETENESS-V1` for the meta-pattern).
+
+Pick one. Record the decision in `docs/decisions/expected-api.md` (the
+file C-2 created for the API-shape decision; this is its natural
+extension). If the fix-agent picks (b), the loss-of-distinction note
+must be in the decision file.
 
 `BlindError` and `ReferenceError` stay as-is.
 
@@ -61,7 +73,7 @@ non-recommended path, document why.
 
 ### `src/core/audio_buffer.hpp`
 
-- **L11.** `enum class LoadError { FileNotFound, InvalidFormat, UnsupportedFormat, ReadError };` — taxonomy to unify or rehome.
+- **L11.** `enum class LoadError { FileNotFound, InvalidFormat, ReadError, ResampleError };` — taxonomy to unify or rehome (see "Error-taxonomy unification" above; note that the original draft of this doc misstated this enum as `{FileNotFound, InvalidFormat, UnsupportedFormat, ReadError}` and that error was caught by the pre-dispatch audit pass).
 - **L20–L36.** `class LoadResult<T>` template — the entire class is removed by M-14. Members:
   - L22: default ctor `LoadResult()` (errors with `ReadError`).
   - L23: `LoadResult(LoadError)`.
@@ -82,7 +94,7 @@ non-recommended path, document why.
   - L79, L91: copy/move assignment.
   - Accessor methods (`value() &`, `value() const&`, `value() &&`, `error() const&`, `error() &&`, `has_value()`, `operator bool`) — these are where C-2's precondition asserts live and where any `std::launder` cure inserts.
 - **L155.** `static Expected<AudioFile, AudioError> AudioFile::open(...)` declaration.
-- **L162.** `Expected<std::vector<uint8_t>, AudioError> read_pcm_to_buffer(...)` member declaration.
+- **L162 (drifts).** `Expected<std::vector<uint8_t>, AudioError> AudioFile::read_raw_samples(int64_t offset, int64_t size) const` member declaration. (Original draft of this doc named the function `read_pcm_to_buffer`; that name does not exist — the audit pass caught it.)
 - **L172, L176.** `Expected<AudioInfo, AudioError> parse_wav_header(...)` / `parse_aiff_header(...)` free-function declarations.
 - **L181.** `Expected<std::filesystem::path, AudioError> write_track(...)` free-function declaration.
 
@@ -98,8 +110,9 @@ non-recommended path, document why.
 - **L116.** `Expected<AudioFile, AudioError> AudioFile::open(...)` body.
 - **L119, L125, L135, L141, L147, L165.** `return Expected<AudioFile, AudioError>(<error>);` returns inside `open`.
 - **L156.** `return Expected<AudioFile, AudioError>(info_result.error());` — error-propagation via `.error()` accessor; sensitive to whichever cure path is chosen.
-- **L207.** `Expected<std::vector<uint8_t>, AudioError> read_pcm_to_buffer(...)` body.
-- **L210, L213, L216, L221, L226, L232.** `return Expected<std::vector<uint8_t>, AudioError>(<error>);` returns inside `read_pcm_to_buffer`.
+- **L225 (drifts).** `Expected<std::vector<uint8_t>, AudioError> AudioFile::read_raw_samples(...)` body.
+- **L227, L230, L233, L238, L243, L249.** `return Expected<std::vector<uint8_t>, AudioError>(<error>);` returns inside `read_raw_samples`. Plus a success return at L252.
+- **L912 (consumer).** `auto raw_result = source.read_raw_samples(byte_offset, bytes_to_read);` inside `write_track`.
 - **L238.** `Expected<AudioInfo, AudioError> parse_wav_header(...)` body.
 - **L241, L285, L326.** `return Expected<AudioInfo, AudioError>(<error>);` returns inside `parse_wav_header`.
   - **L285** is the `fmt_size=0xFFFFFFFF → UnsupportedFormat` deviation case — see `docs/deviations.md` `FIXTURE-MALFORMED`.
@@ -260,5 +273,17 @@ M-14 is Tier 3 and gets the standard one-pass audit. Audit must verify:
 - The cure path chosen actually cures `[basic.life]/8` UB (UBSan-clean sanitizer run with `-fsanitize=address,undefined`).
 - `LoadResult` is gone from the source tree (`grep LoadResult` returns 0 hits in `src/` and `tests/`).
 - The `Expected` contract docstring covers thread-safety and moved-from semantics (audit-2 of C-2 mandates).
-- No regression in the C-2 `Expected: value()-on-error abort` death tests.
-- No regression in M-16's atomic-write tests (`write_track` return-type plumbing must remain wired through to the same call-site behavior).
+- No regression in the C-2 `Expected` death tests (`tests/test_audio_file.cpp` L522–L658, four TEST_CASEs by name):
+  - `"Expected: value() on errored Expected aborts the process"` (L522)
+  - `"Expected: error() on value-bearing Expected aborts the process"` (L552)
+  - `"Expected: documented contract — has_value() gates value()"` (L573)
+  - `"main: failed AudioFile::open exits cleanly (no crash)"` (L608)
+- No regression in M-16's atomic-write tests (`tests/test_lossless.cpp` L1053–L1314, five TEST_CASEs by name):
+  - `"write_track: success leaves only target file at output path"` (L1053)
+  - `"write_track: failure leaves no file at output path (parent dir missing)"` (L1082)
+  - `"write_track: failure leaves no file at output path (target is a directory)"` (L1122)
+  - `"write_track: long-filename concurrent writes do not collide"` (L1183)
+  - `"write_track: target filename longer than NAME_MAX returns WriteError"` (L1273)
+  `write_track`'s return-type plumbing must remain wired through to the same call-site behavior — gate by TEST_CASE-name match (per `docs/known-failing-tests.md` SCHEMA-V2), line numbers will drift as M-14's edits add/remove code in those files.
+
+> **Audit-pass record.** This doc was itself audited per `feedback_pre_staged_docs_need_audit.md` before being treated as a gate input. Findings: the original draft used a fictional `read_pcm_to_buffer` (actual API: `AudioFile::read_raw_samples`) and an incorrect `LoadError` enumeration (actual: `{FileNotFound, InvalidFormat, ReadError, ResampleError}` — `ResampleError` has no `AudioError` counterpart, so the strict-subset merge claim was false). The taxonomy table, merge recommendation, and these test citations were patched as a single atomic correction commit on main before M-14 dispatch.
