@@ -301,8 +301,14 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 3 — Contract unification
 
-### M-14 — Collapse LoadResult and Expected
+### M-14 — Collapse LoadResult and Expected — **RESOLVED in #31 (`f052f89`)**
 
+- **Status.** RESOLVED 2026-04-26. PR #31 cure-path (a): `Expected<T,E>`
+  rewritten as `std::variant<T,E>`; `LoadResult` removed; `AudioError`
+  gained `ResampleError` so the unified taxonomy is a strict superset of
+  the previous load-specific values. Audit (APPROVED) verified all 5
+  exit criteria + sanitizer-clean Expected access paths + C-2/M-16
+  regression-by-name. See merge `f052f89`.
 - **Defect.** Two parallel error-wrappers (`LoadResult<T>`,
   `Expected<T,E>`) with different semantics, including the reinterpret_cast
   UB pattern from C-2.
@@ -317,7 +323,7 @@ migration to `std::expected`-style storage happens in M-14.
     aborts` (new).
 - **Depends on.** C-2 (the precondition-check version).
 - **Exit criteria.**
-  - [ ] Backed by `std::variant<T, E>` internally — no reinterpret_cast.
+  - [x] Backed by `std::variant<T, E>` internally — no reinterpret_cast.
         *Alternative acceptable only if explicitly justified:* keep
         placement-new layout but insert `std::launder` at every accessor
         to cure the latent `[basic.life]/8` UB. Whichever path M-14
@@ -325,14 +331,14 @@ migration to `std::expected`-style storage happens in M-14.
         deferral.** *Audit-2 of C-2 finding (F-AUDIT2-4): the C-2 fix
         narrows the behavioural hazard but the standard-conformance
         hazard persists; M-14 is its terminal scope.*
-  - [ ] Implicit conversions from T and E are deliberate and documented.
-  - [ ] `LoadResult` removed from the tree.
-  - [ ] `Expected`'s contract docstring states its **thread-safety**
+  - [x] Implicit conversions from T and E are deliberate and documented.
+  - [x] `LoadResult` removed from the tree.
+  - [x] `Expected`'s contract docstring states its **thread-safety**
         semantics explicitly: "single-threaded contract; check + access
         must occur on the same thread; concurrent mutation invalidates
         the precondition's TOCTOU window." *Audit-2 of C-2 finding
         (F-AUDIT2-2).*
-  - [ ] **Move-construction / move-assignment behaviour documented.**
+  - [x] **Move-construction / move-assignment behaviour documented.**
         Audit-2 of C-2 confirmed: `Expected(Expected&& other)` does
         not flip `other.has_value_`, so moved-from `Expected` is still
         considered "valid" and `value()` returns a moved-from `T`. This

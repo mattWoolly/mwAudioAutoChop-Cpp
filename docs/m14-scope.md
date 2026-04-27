@@ -6,6 +6,12 @@ type: project
 
 # M-14 — `LoadResult` / `Expected` collapse: scope inventory
 
+> **STATUS: ARCHIVED.** M-14 landed in PR #31, merged as `f052f89` on 2026-04-26.
+> This file is preserved as a historical scope inventory and audit-pass record.
+> Live API is in `src/core/audio_file.hpp` (variant-backed `Expected<T,E>`);
+> `LoadResult` no longer exists in the tree. See `docs/decisions/expected-api.md`
+> for the current contract.
+
 **Generated:** 2026-04-25 from main @ `b365b3c` (orchestrator paperwork commit).
 **Baseline note.** When M-14 dispatches, the working tree will be **post-C-2 merge** (PR #29 merged to main), which removes a handful of `audio_file.value()` consumers from `src/main.cpp` (replaced by the `auto& audio_file = opened.value();` rebind pattern) and adds precondition asserts to `Expected::value/error`. The producer-side declarations and the modes/tests inventory below are unaffected by C-2 and are the load-bearing surface for M-14. The fix-agent should re-grep `src/main.cpp` after rebasing on the post-C-2 main to pick up the canonical-shape consumers introduced by C-2.
 
