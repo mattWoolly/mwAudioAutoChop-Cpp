@@ -1,0 +1,29 @@
+# FIXTURE-MALFORMED manifest.
+#
+# Format (whitespace-separated, one record per line):
+#   <filename>  <expected>  <description...>
+#
+# <expected> is one of:
+#   InvalidFormat              - parser must return AudioError::InvalidFormat
+#   UnsupportedFormat          - parser must return AudioError::UnsupportedFormat
+#   InvalidFormat-pending-M-2  - InvalidFormat once M-2 lands; until then
+#                                the test marks the section [!shouldfail]
+#   InvalidFormat-pending-M-5  - same, gated on M-5
+#
+# Comments start with '#'. Empty lines are skipped.
+#
+tiny_8.wav                       InvalidFormat               File of 8 bytes; below 12-byte preamble.
+tiny_43.wav                      InvalidFormat               File of 43 bytes; one short of 44-byte minimum.
+riff_no_chunks.wav               InvalidFormat               Valid RIFF/WAVE; no fmt or data chunk anywhere.
+fmt_size_max.wav                 UnsupportedFormat           fmt chunk_size = 0xFFFFFFFF; parser still reads zero-padded body, audio_format = 0 hits the unsupported branch.
+fmt_size_overflows_file.wav      UnsupportedFormat           fmt chunk_size much larger than file; same path as fmt_size_max.
+data_before_fmt.wav              InvalidFormat               data chunk before fmt; fmt itself malformed.
+data_size_overflows_file.wav     InvalidFormat-pending-M-2   data chunk_size larger than file.
+rf64_no_ds64.wav                 InvalidFormat               RF64 magic with no ds64 chunk anywhere.
+rf64_ds64_truncated.wav          InvalidFormat               RF64 magic; ds64 chunk_size below 24-byte minimum.
+aiff_no_comm_no_ssnd.aiff        InvalidFormat               FORM/AIFF envelope; no COMM and no SSND.
+aiff_ssnd_size_lt_8.aiff         InvalidFormat               SSND chunk_size = 4 (would underflow chunk_size - 8).
+aiff_ssnd_offset_nonzero.aiff    InvalidFormat-pending-M-5   AIFF with non-zero SSND offset field.
+aiff_comm_size_lt_18.aiff        InvalidFormat               COMM chunk_size below 18-byte minimum.
+wav_fmt_audio_format_zero.wav    UnsupportedFormat           fmt chunk audio_format = 0 (invalid).
+wav_fmt_adpcm.wav                UnsupportedFormat           fmt chunk audio_format = 0x0002 (Microsoft ADPCM).

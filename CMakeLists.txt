@@ -246,7 +246,10 @@ mwaac_add_test(test_blind_mode        mwaac_core)
 mwaac_add_test(test_integration       mwaac_core mwaac_sndfile)
 
 # Reproducible test fixtures. Each subdirectory of tests/fixtures/ is a
-# self-contained fixture project — see tests/fixtures/README.md.
+# self-contained fixture project — see tests/fixtures/README.md. Wiring
+# between a fixture and the test target that consumes it is expressed
+# inside the fixture's own CMakeLists.txt, not here, so the root stays
+# free of per-fixture edits.
 add_subdirectory(tests/fixtures)
 
 # Installation rules
