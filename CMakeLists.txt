@@ -236,6 +236,13 @@ endfunction()
 
 mwaac_add_test(test_basic)
 mwaac_add_test(test_audio_file        mwaac_core)
+# C-2: test_audio_file's "main: failed AudioFile::open exits cleanly"
+# integration test invokes the built mwAudioAutoChop binary as a
+# subprocess. Pass its absolute path through a compile definition so the
+# test doesn't rely on PATH or the test runner's working directory.
+target_compile_definitions(test_audio_file PRIVATE
+    MWAAC_TEST_BINARY_PATH="$<TARGET_FILE:${PROJECT_NAME}>")
+add_dependencies(test_audio_file ${PROJECT_NAME})
 mwaac_add_test(test_audio_buffer      mwaac_core)
 mwaac_add_test(test_correlation       mwaac_core)
 mwaac_add_test(test_music_detection   mwaac_core)

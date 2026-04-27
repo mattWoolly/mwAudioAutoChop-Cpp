@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 #include <iomanip>
@@ -12,6 +13,27 @@
 #include "tui/app.hpp"
 
 namespace fs = std::filesystem;
+
+namespace {
+
+// Short human-readable string for an AudioError. Only used in CLI failure
+// paths, where we want a one-line description for stderr instead of an
+// integer enum. Kept in main.cpp because the AudioError taxonomy is owned
+// by audio_file.hpp and we don't want to spread formatting helpers across
+// the core library.
+std::string_view audio_error_to_string(mwaac::AudioError e) noexcept {
+    switch (e) {
+        case mwaac::AudioError::FileNotFound:      return "file not found";
+        case mwaac::AudioError::InvalidFormat:     return "invalid format";
+        case mwaac::AudioError::UnsupportedFormat: return "unsupported format";
+        case mwaac::AudioError::ReadError:         return "read error";
+        case mwaac::AudioError::WriteError:        return "write error";
+        case mwaac::AudioError::InvalidRange:      return "invalid sample range";
+    }
+    return "unknown error";
+}
+
+} // namespace
 
 void print_help() {
     std::cout << "mwAudioAutoChop v0.1.0\n\n"
@@ -108,14 +130,26 @@ int main(int argc, char* argv[]) {
         }
         
         auto& analysis = result.value();
-        
+
         // Print results
         std::cout << "=== REFERENCE Mode Analysis ===\n";
         std::cout << "Found " << analysis.split_points.size() << " track(s)\n\n";
 
-        // Get native sample rate
-        auto audio_file = mwaac::AudioFile::open(vinyl_path);
-        int native_sr = audio_file ? audio_file.value().info().sample_rate : 44100;
+        // Open the source vinyl once, up-front, and bail on failure. Every
+        // downstream use (native_sr, write_track, REAPER export) reads from
+        // this single reference, eliminating the previous pattern of
+        // re-calling .value() on an Expected that may not hold a value.
+        // (C-2: previously the result of .open() was used via the
+        // `audio_file ? audio_file.value()...` ternary, but later
+        // `audio_file.value()` calls were unguarded.)
+        auto opened = mwaac::AudioFile::open(vinyl_path);
+        if (!opened) {
+            std::cerr << "Error: failed to open " << vinyl_path << ": "
+                      << audio_error_to_string(opened.error()) << "\n";
+            return 1;
+        }
+        mwaac::AudioFile& audio_file = opened.value();
+        int native_sr = audio_file.info().sample_rate;
 
         // Reference mode fills in end_sample (including dead-space trimming)
         // before returning; no post-processing needed here.
@@ -157,7 +191,7 @@ int main(int argc, char* argv[]) {
             std::string filename = "track_" + std::to_string(i + 1) + ".wav";
             fs::path output_path = output_dir / filename;
             
-            auto write_result = mwaac::write_track(audio_file.value(), output_path, 
+            auto write_result = mwaac::write_track(audio_file, output_path,
                                                     sp.start_sample, sp.end_sample);
             if (write_result) {
                 std::cout << "  " << filename << "\n";
@@ -165,7 +199,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "  Failed to write " << filename << "\n";
             }
         }
-        
+
         std::cout << "\nDone! Wrote " << analysis.split_points.size() << " track(s)\n";
 
         // Optionally write a REAPER project so the user can A/B-compare the
@@ -240,17 +274,28 @@ int main(int argc, char* argv[]) {
         }
         
         auto& analysis = result.value();
-        
+
         // Print results
         std::cout << "=== BLIND Mode Analysis ===\n";
         std::cout << "Found " << analysis.split_points.size() << " track(s)\n\n";
-        
-        // Get native sample rate
-        auto audio_file = mwaac::AudioFile::open(vinyl_path);
-        int native_sr = audio_file ? audio_file.value().info().sample_rate : 44100;
-        
+
+        // Open the source vinyl once and bail on failure. See the matching
+        // comment in the `reference` branch for context. Previously this
+        // path used `audio_file ? audio_file.value()... : 0` and then
+        // unconditionally proceeded to write tracks — when open() failed,
+        // total_frames defaulted to 0, sp.end_sample became -1, and write
+        // calls hit unguarded `.value()` on an errored Expected (C-2 UB).
+        auto opened = mwaac::AudioFile::open(vinyl_path);
+        if (!opened) {
+            std::cerr << "Error: failed to open " << vinyl_path << ": "
+                      << audio_error_to_string(opened.error()) << "\n";
+            return 1;
+        }
+        mwaac::AudioFile& audio_file = opened.value();
+        int native_sr = audio_file.info().sample_rate;
+
         // Fix end samples (last track goes to end of file)
-        int64_t total_frames = audio_file ? audio_file.value().info().frames : 0;
+        int64_t total_frames = audio_file.info().frames;
         for (size_t i = 0; i < analysis.split_points.size(); ++i) {
             auto& sp = analysis.split_points[i];
             if (i + 1 < analysis.split_points.size()) {
@@ -297,7 +342,7 @@ int main(int argc, char* argv[]) {
             std::string filename = "track_" + std::to_string(i + 1) + ".wav";
             fs::path output_path = output_dir / filename;
             
-            auto write_result = mwaac::write_track(audio_file.value(), output_path, 
+            auto write_result = mwaac::write_track(audio_file, output_path,
                                             sp.start_sample, sp.end_sample);
             if (write_result) {
                 std::cout << "  " << filename << "\n";
@@ -305,11 +350,11 @@ int main(int argc, char* argv[]) {
                 std::cerr << "  Failed to write " << filename << "\n";
             }
         }
-        
+
         std::cout << "\nDone! Wrote " << analysis.split_points.size() << " track(s)\n";
         return 0;
     }
-    
+
     if (command == "tui") {
         if (argc < 3) {
             std::cerr << "Error: vinyl path required\n";

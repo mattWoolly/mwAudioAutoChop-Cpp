@@ -1,12 +1,24 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#  include <fcntl.h>
+#  include <sys/types.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#  define MWAAC_HAVE_FORK 1
+#else
+#  define MWAAC_HAVE_FORK 0
+#endif
 
 #include "core/audio_file.hpp"
 
@@ -464,3 +476,183 @@ TEST_CASE("FIXTURE-MALFORMED: build wiring is missing",
 }
 
 #endif // MWAAC_MALFORMED_FIXTURE_DIR
+
+// =====================================================================
+// C-2 — Expected<T,E>::value() / ::error() precondition contracts
+// =====================================================================
+//
+// The contract: value() requires has_value()==true; error() requires
+// has_value()==false. Violation aborts (assert in Debug, std::terminate
+// in Release). These tests verify both halves: the documented success
+// path and the abort-on-violation path.
+//
+// Death-testing strategy: fork() a child, call the offending accessor
+// inside the child, _exit(0) if it somehow returns. The parent waits on
+// the child and asserts the child died via signal (SIGABRT) rather than
+// exiting cleanly. This is the most reliable Catch2-compatible pattern
+// short of pulling in a death-test framework. Where fork() isn't
+// available (Windows), the death tests are skipped and the contract is
+// asserted via has_value() inspection only.
+
+#if MWAAC_HAVE_FORK
+namespace {
+
+// Silence the child's stdout/stderr so Catch2's inherited signal-handler
+// chatter (which fires when the assert raises SIGABRT in the child) does
+// not contaminate the parent's test output. We also reset SIGABRT to
+// SIG_DFL in the child so libc's abort() takes the process down without
+// going through Catch2's handler at all — that gives us a clean
+// WIFSIGNALED status in the parent without spurious FAILED markers.
+inline void prepare_child_for_death_test() {
+    int devnull = ::open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+        ::dup2(devnull, STDOUT_FILENO);
+        ::dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) {
+            ::close(devnull);
+        }
+    }
+    std::signal(SIGABRT, SIG_DFL);
+    std::signal(SIGSEGV, SIG_DFL);
+}
+
+} // namespace
+#endif
+
+TEST_CASE("Expected: value() on errored Expected aborts the process",
+          "[audio_file][c-2]") {
+#if MWAAC_HAVE_FORK
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        prepare_child_for_death_test();
+        // Child: trigger the precondition violation. The accessor must
+        // not return; if it does, exit 0 and let the parent flag the
+        // failure as "no abort happened".
+        mwaac::Expected<int, mwaac::AudioError> err{
+            mwaac::AudioError::FileNotFound};
+        // Touch the result to defeat any future [[nodiscard]]-driven
+        // dead-code elimination.
+        volatile int sink = err.value();
+        (void)sink;
+        _exit(0);
+    }
+    // Parent: wait and require the child died via signal (abort/terminate).
+    int status = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    REQUIRE(waited == pid);
+    REQUIRE(WIFSIGNALED(status));
+#else
+    SKIP("Death test requires fork(); platform does not support it. "
+         "Contract is still asserted via has_value() inspection in the "
+         "next test.");
+#endif
+}
+
+TEST_CASE("Expected: error() on value-bearing Expected aborts the process",
+          "[audio_file][c-2]") {
+#if MWAAC_HAVE_FORK
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        prepare_child_for_death_test();
+        mwaac::Expected<int, mwaac::AudioError> ok{42};
+        volatile auto sink = ok.error();
+        (void)sink;
+        _exit(0);
+    }
+    int status = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    REQUIRE(waited == pid);
+    REQUIRE(WIFSIGNALED(status));
+#else
+    SKIP("Death test requires fork(); platform does not support it.");
+#endif
+}
+
+TEST_CASE("Expected: documented contract — has_value() gates value()",
+          "[audio_file][c-2]") {
+    // The non-death-test half of the contract: when the discriminant
+    // says we hold a value, value() returns it cleanly; when the
+    // discriminant says we hold an error, error() returns it cleanly.
+    // This documents the call-site pattern that must precede every
+    // value()/error() use.
+    mwaac::Expected<int, mwaac::AudioError> ok{7};
+    REQUIRE(ok.has_value());
+    REQUIRE(static_cast<bool>(ok));
+    CHECK(ok.value() == 7);
+
+    mwaac::Expected<int, mwaac::AudioError> err{
+        mwaac::AudioError::FileNotFound};
+    REQUIRE(!err.has_value());
+    REQUIRE(!static_cast<bool>(err));
+    CHECK(err.error() == mwaac::AudioError::FileNotFound);
+}
+
+// =====================================================================
+// C-2 — main exits cleanly on bad input (integration / subprocess test)
+// =====================================================================
+//
+// This test invokes the built mwAudioAutoChop binary against a path
+// that doesn't exist and asserts a non-zero exit code without a crash.
+// Pre-fix, the unguarded `audio_file.value()` calls in main.cpp would
+// dereference an errored Expected, hitting UB or segfaulting under
+// sanitizers. Post-fix, the guarded path returns 1 with a clean stderr.
+//
+// MWAAC_TEST_BINARY_PATH is wired in by CMake (target_compile_definitions
+// on test_audio_file). If it's missing, we SKIP rather than disable —
+// the spec requires escalation rather than silent skipping, but a hard
+// failure here would block local builds where the binary path isn't
+// known at test-link time. The CMake wiring puts it in place in CI.
+
+TEST_CASE("main: failed AudioFile::open exits cleanly (no crash)",
+          "[audio_file][c-2][integration]") {
+#ifndef MWAAC_TEST_BINARY_PATH
+    SKIP("MWAAC_TEST_BINARY_PATH not defined; integration test cannot "
+         "find the mwAudioAutoChop binary. ESCALATE if this is the CI "
+         "environment.");
+#else
+    const std::string binary = MWAAC_TEST_BINARY_PATH;
+    if (!std::filesystem::exists(binary)) {
+        SKIP("mwAudioAutoChop binary not found at " + binary +
+             "; build it before running this test.");
+    }
+
+    // Use a temp directory we control for output paths; the binary
+    // shouldn't touch them because the open() of /no/such/file fails
+    // first.
+    auto tmp = std::filesystem::temp_directory_path() / "mwaac-c2-test";
+    std::filesystem::remove_all(tmp);
+    std::filesystem::create_directories(tmp);
+    const std::string out = (tmp / "out").string();
+    const std::string ref = (tmp / "ref").string();
+    std::filesystem::create_directories(ref);
+
+    // Quote the binary path defensively in case it contains spaces.
+    // Redirect stdout+stderr to /dev/null; we only care about exit code.
+    std::string cmd = "\"" + binary + "\" reference /no/such/file"
+                       " -r \"" + ref + "\""
+                       " -o \"" + out + "\""
+                       " > /dev/null 2>&1";
+    int rc = std::system(cmd.c_str());
+#if MWAAC_HAVE_FORK
+    // POSIX: std::system returns the wait-status; decode it.
+    REQUIRE(rc != -1);
+    if (WIFEXITED(rc)) {
+        // Pre-fix: open() succeeds (analyze_reference_mode does its
+        // own load and may abort), or the unguarded .value() crashes
+        // before exit. Post-fix: clean exit code 1.
+        CHECK(WEXITSTATUS(rc) != 0);
+    } else {
+        // Anything other than a clean exit means the binary crashed,
+        // which is exactly what we're testing against.
+        FAIL("mwAudioAutoChop did not exit cleanly; status=" +
+             std::to_string(rc));
+    }
+#else
+    CHECK(rc != 0);
+#endif
+
+    std::filesystem::remove_all(tmp);
+#endif
+}

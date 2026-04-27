@@ -1,5 +1,8 @@
 #pragma once
+#include <cassert>
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -20,7 +23,40 @@ enum class AudioError {
     InvalidRange,
 };
 
-// Simple expected type for C++20 compatibility (std::expected is C++23)
+// Precondition contract macro.
+//
+// In Debug builds (NDEBUG not defined), expand to assert(cond) so the failure
+// is reported with the standard libc++ assertion message and a SIGABRT.
+// In Release builds, fall back to std::terminate() so a precondition violation
+// is *still* a defined, noisy abort instead of silent UB. The branch is marked
+// [[unlikely]] to keep the success path on the hot trace.
+//
+// Used by Expected<T,E>::value() / ::error() to enforce that callers must
+// check has_value() / operator bool() before dereferencing. See
+// docs/decisions/expected-api.md for why this lives on top of the existing
+// placement-new storage rather than migrating to std::variant (M-14).
+#if defined(NDEBUG)
+#  define MWAAC_ASSERT_PRECONDITION(cond)               \
+    do {                                                 \
+        if (!(cond)) [[unlikely]] { std::terminate(); }  \
+    } while (0)
+#else
+#  define MWAAC_ASSERT_PRECONDITION(cond) assert((cond))
+#endif
+
+// Simple expected type for C++20 compatibility (std::expected is C++23).
+//
+// Precondition contract: value() and error() are *unchecked accessors* in
+// the sense that they do not return an error code; they require the caller
+// to have already verified the discriminant via has_value() (or
+// operator bool()). Calling value() on an errored Expected, or error() on
+// a value-bearing Expected, is a contract violation and aborts the
+// process — assert() in Debug, std::terminate() in Release. Violations
+// are never silently undefined behaviour.
+//
+// The full migration to a std::variant<T,E>-backed implementation is
+// tracked under M-14; see docs/decisions/expected-api.md for the C-2
+// API-shape decision.
 template<typename T, typename E>
 class Expected {
 public:
@@ -104,22 +140,27 @@ public:
     [[nodiscard]] explicit operator bool() const noexcept { return has_value_; }
     
     [[nodiscard]] const T& value() const& noexcept {
+        MWAAC_ASSERT_PRECONDITION(has_value_);
         return *reinterpret_cast<const T*>(&storage_);
     }
-    
+
     [[nodiscard]] T& value() & noexcept {
+        MWAAC_ASSERT_PRECONDITION(has_value_);
         return *reinterpret_cast<T*>(&storage_);
     }
-    
+
     [[nodiscard]] T&& value() && noexcept {
+        MWAAC_ASSERT_PRECONDITION(has_value_);
         return std::move(*reinterpret_cast<T*>(&storage_));
     }
-    
+
     [[nodiscard]] const E& error() const& noexcept {
+        MWAAC_ASSERT_PRECONDITION(!has_value_);
         return *reinterpret_cast<const E*>(&storage_);
     }
-    
+
     [[nodiscard]] E&& error() && noexcept {
+        MWAAC_ASSERT_PRECONDITION(!has_value_);
         return std::move(*reinterpret_cast<E*>(&storage_));
     }
 
