@@ -755,13 +755,13 @@ Expected<std::vector<ReferenceTrack>, ReferenceError> load_reference_tracks(
     std::vector<ReferenceTrack> tracks;
     for (const auto& path : audio_files) {
         auto result = load_audio_mono(path, sample_rate);
-        if (!result.ok()) {
+        if (!result.has_value()) {
             continue;  // Skip failed loads
         }
-        
+
         ReferenceTrack track;
         track.path = path;
-        track.audio = std::move(result.value());
+        track.audio = std::move(result).value();
         track.duration_samples = static_cast<int64_t>(track.audio.samples.size());
         tracks.push_back(std::move(track));
     }
@@ -1010,11 +1010,11 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
     // Load vinyl
     verbose("Loading vinyl...");
     auto vinyl_result = load_audio_mono(vinyl_path, analysis_sr);
-    if (!vinyl_result.ok()) {
+    if (!vinyl_result.has_value()) {
         verbose("ERROR: Failed to load vinyl");
         return ReferenceError::VinylLoadFailed;
     }
-    auto vinyl = std::move(vinyl_result.value());
+    auto vinyl = std::move(vinyl_result).value();
     
     if (g_verbose) {
         verbose("  Vinyl loaded: " + std::to_string(vinyl.samples.size()) + 

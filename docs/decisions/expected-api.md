@@ -1,8 +1,10 @@
 # Decision — `Expected<T,E>` API shape
 
 - **Decided in.** C-2 (the `Expected::value()` precondition fix).
-- **Status.** Provisional. The C-2 audit pass has authority to override.
-- **Carried out by.** M-14 (contract unification with `LoadResult`).
+- **Status.** Carried out in M-14. The placement-new layout has been replaced
+  by `std::variant<T, E>`; the public API surface is unchanged.
+- **Carried out by.** M-14 (contract unification with the load-specific
+  result wrapper, plus storage rewrite).
 
 ## Decision
 
@@ -52,3 +54,24 @@ variant migration is required at C-2 (e.g. because UBSan flags the
 `[basic.life]` concern is judged unacceptable to carry until M-14), this
 document is rewritten and M-14 is folded into C-2. Default position
 otherwise: the precondition-check version lands at C-2; M-14 follows.
+
+## M-14 update — variant migration completed
+
+M-14 carried out path #2 above. The `Expected<T,E>` storage now uses
+`std::variant<T, E>` directly (alternative 0 = T, alternative 1 = E).
+The accessors keep the same names and reference categories; the
+precondition-check macro from C-2 is preserved on `value()` / `error()`,
+so the four C-2 death tests (`tests/test_audio_file.cpp`
+TEST_CASEs `"Expected: value() on errored Expected aborts the
+process"`, `"Expected: error() on value-bearing Expected aborts the
+process"`, `"Expected: documented contract — has_value() gates
+value()"`, and `"main: failed AudioFile::open exits cleanly (no
+crash)"`) all pass unchanged.
+
+Merge of the load-specific error enum into `AudioError` was done via
+option (a) in `docs/m14-scope.md`: `AudioError::ResampleError` was
+added so the unified taxonomy is a strict superset of the previous
+load-specific values. No information is lost.
+
+Thread-safety and moved-from semantics are now documented in the
+`Expected<T,E>` class comment in `src/core/audio_file.hpp`.

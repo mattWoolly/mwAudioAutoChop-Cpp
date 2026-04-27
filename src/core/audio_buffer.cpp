@@ -4,23 +4,23 @@
 
 namespace mwaac {
 
-LoadResult<AudioBuffer> load_audio_mono(
+Expected<AudioBuffer, AudioError> load_audio_mono(
     const std::filesystem::path& path,
-    int target_sample_rate) 
+    int target_sample_rate)
 {
     SF_INFO info{};
     SNDFILE* file = sf_open(path.c_str(), SFM_READ, &info);
     if (!file) {
-        return LoadError::FileNotFound;
+        return AudioError::FileNotFound;
     }
-    
+
     // Read all samples as float
     std::vector<float> raw_samples(static_cast<std::size_t>(info.frames * info.channels));
     sf_count_t read = sf_readf_float(file, raw_samples.data(), info.frames);
     sf_close(file);
 
     if (read != info.frames) {
-        return LoadError::ReadError;
+        return AudioError::ReadError;
     }
 
     // Convert to mono if needed
