@@ -249,5 +249,19 @@ mwaac_add_test(test_integration       mwaac_core mwaac_sndfile)
 # self-contained fixture project — see tests/fixtures/README.md.
 add_subdirectory(tests/fixtures)
 
+# FIXTURE-MALFORMED wiring. The fixture's CMakeLists.txt populates the
+# two cache variables below; here we forward them to test_audio_file as
+# compile-time string defines and add the build dependency. Done at the
+# root because mwaac_add_test() above is the canonical place targets
+# get configured. Guarded with `if(TARGET ...)` so the project still
+# configures cleanly if the fixture directory is ever pruned.
+if(TARGET malformed_fixture)
+    target_compile_definitions(test_audio_file PRIVATE
+        MWAAC_MALFORMED_FIXTURE_DIR="${MWAAC_MALFORMED_FIXTURE_OUTPUT_DIR}"
+        MWAAC_MALFORMED_FIXTURE_MANIFEST="${MWAAC_MALFORMED_FIXTURE_MANIFEST}"
+    )
+    add_dependencies(test_audio_file malformed_fixture)
+endif()
+
 # Installation rules
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

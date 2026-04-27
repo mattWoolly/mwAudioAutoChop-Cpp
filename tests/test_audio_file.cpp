@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
-#include <filesystem>
-#include <cstdio>
-#include <fstream>
-#include <vector>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "core/audio_file.hpp"
 
@@ -191,3 +194,273 @@ TEST_CASE("parse_wav_header: extensible with unknown SubFormat returns Unsupport
     auto pcm_result = mwaac::parse_wav_header(pcm_bytes);
     CHECK(pcm_result.has_value());
 }
+
+// ============================================================================
+// FIXTURE-MALFORMED — parametric malformed-header parser tests.
+//
+// Walks the manifest checked in at tests/fixtures/malformed/manifest.txt
+// (path injected by the build via MWAAC_MALFORMED_FIXTURE_MANIFEST). Each
+// non-comment line names a blob in MWAAC_MALFORMED_FIXTURE_DIR, an
+// expected outcome, and a one-line description. The test runs the
+// matching parser (parse_wav_header for *.wav, parse_aiff_header for
+// *.aiff) and asserts the outcome.
+//
+// Invariants:
+//   INV-PARSER-BOUNDED — every blob parses in <1 wall-clock second
+//                        across the whole corpus on any reasonable
+//                        machine. Generous because Catch2 + sanitizers
+//                        add overhead; the actual parse time is sub-ms
+//                        per blob.
+//   INV-PARSER-REJECT  — every blob returns either InvalidFormat or
+//                        UnsupportedFormat; cases gated on a backlog
+//                        item are tagged [!shouldfail] until the fix
+//                        lands.
+//
+// See tests/fixtures/malformed/README.md for the byte-level recipe per
+// blob, and BACKLOG.md (FIXTURE-MALFORMED, M-2, M-3, M-4, M-5) for the
+// remediation items this fixture serves.
+// ============================================================================
+
+#if defined(MWAAC_MALFORMED_FIXTURE_DIR) && defined(MWAAC_MALFORMED_FIXTURE_MANIFEST)
+
+namespace {
+
+// One row of manifest.txt after parsing.
+struct MalformedEntry {
+    std::string filename;
+    std::string expected;       // "InvalidFormat", "UnsupportedFormat",
+                                // or "InvalidFormat-pending-M-N".
+    std::string description;
+    bool        is_aiff;        // chosen by suffix
+    bool        shouldfail;     // expected has the "-pending-" suffix
+};
+
+// Trim ASCII whitespace from both ends of `s`.
+std::string trim(const std::string& s) {
+    auto first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    auto last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
+}
+
+// Read manifest.txt into a vector of MalformedEntry. Skips comment
+// (`#`) and blank lines. Does NOT validate that the named file exists
+// — that is checked by the test below per-entry.
+std::vector<MalformedEntry> load_manifest(const std::filesystem::path& path) {
+    std::vector<MalformedEntry> entries;
+    std::ifstream f(path);
+    if (!f) {
+        return entries;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        // Strip comments after a '#' that isn't inside the description.
+        // Simpler rule: a line starting with '#' (after trim) is a comment.
+        std::string t = trim(line);
+        if (t.empty() || t[0] == '#') continue;
+
+        std::istringstream iss(t);
+        MalformedEntry e;
+        if (!(iss >> e.filename >> e.expected)) continue;
+
+        std::string rest;
+        std::getline(iss, rest);
+        e.description = trim(rest);
+
+        // Determine parser by suffix.
+        const auto dot = e.filename.find_last_of('.');
+        const std::string ext = (dot == std::string::npos)
+                                    ? std::string{}
+                                    : e.filename.substr(dot);
+        e.is_aiff = (ext == ".aiff" || ext == ".aifc" || ext == ".aif");
+
+        // shouldfail iff expected carries the "-pending-" suffix.
+        e.shouldfail =
+            (e.expected.find("-pending-") != std::string::npos);
+
+        entries.push_back(std::move(e));
+    }
+    return entries;
+}
+
+// Read the entire contents of `path` into a byte vector. Returns empty
+// vector on any error; the caller treats empty-with-existing-file as
+// the "0-byte file" case (which the parser should still handle).
+std::vector<uint8_t> read_malformed_file_bytes(const std::filesystem::path& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return {};
+    const std::streamsize sz = f.tellg();
+    if (sz < 0) return {};
+    f.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buf(static_cast<std::size_t>(sz));
+    if (sz > 0) {
+        f.read(reinterpret_cast<char*>(buf.data()), sz);
+    }
+    return buf;
+}
+
+// Map the manifest's "expected" string back to the canonical
+// AudioError it predicts. The "-pending-M-N" suffix is stripped first;
+// the underlying expectation always parses to InvalidFormat or
+// UnsupportedFormat.
+mwaac::AudioError expected_to_audio_error(const std::string& expected) {
+    std::string base = expected;
+    const auto pos = base.find("-pending-");
+    if (pos != std::string::npos) {
+        base = base.substr(0, pos);
+    }
+    if (base == "InvalidFormat") return mwaac::AudioError::InvalidFormat;
+    if (base == "UnsupportedFormat") return mwaac::AudioError::UnsupportedFormat;
+    // Unrecognized — caller will FAIL on the manifest entry.
+    return mwaac::AudioError::InvalidFormat;
+}
+
+} // namespace
+
+TEST_CASE("FIXTURE-MALFORMED: manifest is non-empty and reachable",
+          "[audio_file][malformed]") {
+    const std::filesystem::path manifest_path{MWAAC_MALFORMED_FIXTURE_MANIFEST};
+    const std::filesystem::path fixture_dir{MWAAC_MALFORMED_FIXTURE_DIR};
+
+    INFO("manifest path: " << manifest_path);
+    INFO("fixture dir:   " << fixture_dir);
+
+    REQUIRE(std::filesystem::exists(manifest_path));
+    REQUIRE(std::filesystem::is_directory(fixture_dir));
+
+    const auto entries = load_manifest(manifest_path);
+    // The hand-drafted spec lists 14 malformations; the generator
+    // implements 15 (the fmt-size case is split into the 0xFFFFFFFF
+    // sentinel and a more pedestrian overflow). Assert at least 14
+    // so a future contributor pruning entries cannot silently shrink
+    // the corpus below the spec.
+    CHECK(entries.size() >= 14);
+}
+
+TEST_CASE("FIXTURE-MALFORMED: header parsers reject every malformation",
+          "[audio_file][malformed]") {
+    const std::filesystem::path manifest_path{MWAAC_MALFORMED_FIXTURE_MANIFEST};
+    const std::filesystem::path fixture_dir{MWAAC_MALFORMED_FIXTURE_DIR};
+
+    const auto entries = load_manifest(manifest_path);
+    REQUIRE(!entries.empty());
+
+    // INV-PARSER-BOUNDED: bound the entire parametric run by 1 second
+    // wall-clock. If any parser regresses into an O(N²) walk or an
+    // infinite loop, this trips well before the per-process test
+    // timeout. The actual parse cost is microseconds per blob.
+    using Clock = std::chrono::steady_clock;
+    const auto t_start = Clock::now();
+
+    int processed = 0;
+    int skipped_pending = 0;
+
+    for (const auto& e : entries) {
+        if (e.shouldfail) {
+            // Handled by the [!shouldfail]-tagged TEST_CASE below so
+            // Catch2's expected-failure reporting kicks in. We still
+            // run the parser here in non-asserting fashion to confirm
+            // INV-PARSER-BOUNDED holds (no crash, no hang) on these
+            // inputs even today.
+            const auto bytes = read_malformed_file_bytes(fixture_dir / e.filename);
+            (void)(e.is_aiff ? mwaac::parse_aiff_header(bytes)
+                             : mwaac::parse_wav_header(bytes));
+            ++skipped_pending;
+            continue;
+        }
+
+        const std::filesystem::path blob = fixture_dir / e.filename;
+
+        DYNAMIC_SECTION(e.filename << " — " << e.description) {
+            INFO("expected: " << e.expected);
+            INFO("blob:     " << blob);
+
+            REQUIRE(std::filesystem::exists(blob));
+
+            const auto bytes = read_malformed_file_bytes(blob);
+            const auto expected_err = expected_to_audio_error(e.expected);
+
+            const auto result = e.is_aiff
+                                    ? mwaac::parse_aiff_header(bytes)
+                                    : mwaac::parse_wav_header(bytes);
+
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error() == expected_err);
+        }
+        ++processed;
+    }
+
+    const auto elapsed = Clock::now() - t_start;
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+    INFO("malformed corpus parse time: " << elapsed_ms << " ms (processed="
+                                          << processed << ", pending="
+                                          << skipped_pending << ")");
+    CHECK(elapsed < std::chrono::seconds(1));
+    CHECK(processed > 0);
+}
+
+// `[!shouldfail]` cases: parser does NOT yet honour the contract for
+// these blobs. The tag tells Catch2 to report assertion failures as
+// expected. When the gating backlog item (M-2 / M-5) lands, this
+// TEST_CASE will *unexpectedly pass* — that's the prompt to update the
+// manifest (drop the "-pending-M-N" suffix) and remove the entries
+// from the pending bucket here.
+TEST_CASE("FIXTURE-MALFORMED: parsers reject pending-fix malformations",
+          "[audio_file][malformed][!shouldfail]") {
+    const std::filesystem::path manifest_path{MWAAC_MALFORMED_FIXTURE_MANIFEST};
+    const std::filesystem::path fixture_dir{MWAAC_MALFORMED_FIXTURE_DIR};
+
+    const auto entries = load_manifest(manifest_path);
+    REQUIRE(!entries.empty());
+
+    int pending_count = 0;
+    for (const auto& e : entries) {
+        if (!e.shouldfail) continue;
+        ++pending_count;
+
+        const std::filesystem::path blob = fixture_dir / e.filename;
+
+        DYNAMIC_SECTION(e.filename << " — gated on " << e.expected) {
+            INFO("description: " << e.description);
+            INFO("blob:        " << blob);
+
+            REQUIRE(std::filesystem::exists(blob));
+
+            const auto bytes = read_malformed_file_bytes(blob);
+            const auto expected_err = expected_to_audio_error(e.expected);
+
+            const auto result = e.is_aiff
+                                    ? mwaac::parse_aiff_header(bytes)
+                                    : mwaac::parse_wav_header(bytes);
+
+            // Post-fix expectation: parser MUST reject this blob.
+            // Today the assertion fails; [!shouldfail] turns that into
+            // an expected-failure in Catch2's reporter. When the fix
+            // lands the assertion will pass and Catch2 will surface
+            // the now-unexpected pass.
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error() == expected_err);
+        }
+    }
+
+    // If pending_count drops to zero, the manifest no longer has any
+    // pending-fix entries; this TEST_CASE then becomes vacuous and
+    // should be deleted in the same PR that empties the bucket.
+    CHECK(pending_count > 0);
+}
+
+#else  // MWAAC_MALFORMED_FIXTURE_DIR not defined
+
+// If the fixture wiring failed, surface a clear failure rather than
+// silently skipping. This keeps "I forgot to wire the fixture" from
+// passing CI green.
+TEST_CASE("FIXTURE-MALFORMED: build wiring is missing",
+          "[audio_file][malformed]") {
+    FAIL("FIXTURE-MALFORMED CMake wiring not present: "
+         "MWAAC_MALFORMED_FIXTURE_DIR / MWAAC_MALFORMED_FIXTURE_MANIFEST "
+         "must be defined by the build (see CMakeLists.txt and "
+         "tests/fixtures/malformed/CMakeLists.txt).");
+}
+
+#endif // MWAAC_MALFORMED_FIXTURE_DIR
