@@ -289,7 +289,7 @@ TEST_CASE("Test file generation: tone WAV", "[integration][generation]") {
     
     // Verify file can be loaded
     auto load_result = mwaac::load_audio_mono(tone_path, 0);
-    REQUIRE(load_result.ok());
+    REQUIRE(load_result.has_value());
     
     const auto& buffer = load_result.value();
     REQUIRE(buffer.sample_rate == sample_rate);
@@ -314,7 +314,7 @@ TEST_CASE("Test file generation: vinyl with gaps", "[integration][generation]") 
     
     // Verify file was created
     auto load_result = mwaac::load_audio_mono(vinyl_path, 0);
-    REQUIRE(load_result.ok());
+    REQUIRE(load_result.has_value());
     
     // Total expected length: 3*2 + 2*2 = 10 seconds at 22050 Hz
     int64_t expected_length = 22050 * 10;

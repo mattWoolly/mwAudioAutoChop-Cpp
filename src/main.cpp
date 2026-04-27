@@ -29,6 +29,7 @@ std::string_view audio_error_to_string(mwaac::AudioError e) noexcept {
         case mwaac::AudioError::ReadError:         return "read error";
         case mwaac::AudioError::WriteError:        return "write error";
         case mwaac::AudioError::InvalidRange:      return "invalid sample range";
+        case mwaac::AudioError::ResampleError:     return "resample error";
     }
     return "unknown error";
 }
@@ -384,9 +385,9 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: Failed to load audio: " << static_cast<int>(load_result.error()) << "\n";
             return 1;
         }
-        
+
         mwaac::tui::AppState state;
-        state.audio = std::move(load_result.value());
+        state.audio = std::move(load_result).value();
         state.vinyl_path = vinyl_path;
         state.output_dir = output_dir;
         

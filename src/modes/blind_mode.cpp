@@ -101,11 +101,11 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     // Load audio
     verbose("Loading audio...");
     auto load_result = load_audio_mono(vinyl_path, config.analysis_sr);
-    if (!load_result.ok()) {
+    if (!load_result.has_value()) {
         verbose("ERROR: Failed to load audio");
         return BlindError::LoadFailed;
     }
-    auto audio = std::move(load_result.value());
+    auto audio = std::move(load_result).value();
     
     if (g_verbose) {
         verbose("  Loaded: " + std::to_string(audio.samples.size()) + 

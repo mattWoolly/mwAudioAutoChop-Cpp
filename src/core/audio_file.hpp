@@ -7,13 +7,20 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "audio_info.hpp"
 
 namespace mwaac {
 
-// Audio-related error types
+// Audio-related error types.
+//
+// `ResampleError` was added in M-14 when the previously separate
+// load-specific error enum was folded into `AudioError` (option (a) in
+// docs/m14-scope.md). The other six values pre-date M-14 and are
+// preserved unchanged.
 enum class AudioError {
     FileNotFound,
     InvalidFormat,
@@ -21,6 +28,7 @@ enum class AudioError {
     ReadError,
     WriteError,
     InvalidRange,
+    ResampleError,
 };
 
 // Precondition contract macro.
@@ -46,135 +54,115 @@ enum class AudioError {
 
 // Simple expected type for C++20 compatibility (std::expected is C++23).
 //
-// Precondition contract: value() and error() are *unchecked accessors* in
-// the sense that they do not return an error code; they require the caller
-// to have already verified the discriminant via has_value() (or
-// operator bool()). Calling value() on an errored Expected, or error() on
-// a value-bearing Expected, is a contract violation and aborts the
-// process — assert() in Debug, std::terminate() in Release. Violations
-// are never silently undefined behaviour.
+// Storage. Backed by `std::variant<T, E>` (M-14). The previous layout
+// used placement-new into an aligned byte buffer plus a downcast to
+// T*/E* on the access path; that pattern carries a latent
+// `[basic.life]/8` UB hazard (the cast does not return a
+// pointer-to-the-actual-object the standard requires). The variant
+// rewrite eliminates that hazard entirely while preserving the same
+// public API surface, so call sites compile unchanged.
 //
-// The full migration to a std::variant<T,E>-backed implementation is
-// tracked under M-14; see docs/decisions/expected-api.md for the C-2
-// API-shape decision.
+// Precondition contract. value() and error() are *unchecked accessors*:
+// they require the caller to have already verified the discriminant via
+// has_value() (or operator bool()). Calling value() on an errored
+// Expected, or error() on a value-bearing Expected, is a contract
+// violation and aborts the process — assert() in Debug, std::terminate()
+// in Release. Violations are never silently undefined behaviour.
+// (`std::variant::get<T>` itself throws `std::bad_variant_access` on
+// mismatch, but we want a louder, non-throwing failure mode that's
+// consistent across exception-disabled builds.)
+//
+// Thread safety. Single-threaded contract: the discriminant check
+// (has_value()) and the access (value()/error()) must occur on the same
+// thread, and no other thread may mutate the Expected between them.
+// Concurrent mutation invalidates the precondition's TOCTOU window.
+//
+// Moved-from semantics. Move construction / move assignment leave the
+// source `Expected` with the *same* discriminant as the destination —
+// `other.has_value()` does not flip. Calling `value()` on a moved-from
+// Expected returns a moved-from `T` (not an abort); this matches
+// `std::optional` and `std::expected`. Callers that need to detect
+// moved-from state must track that themselves.
 template<typename T, typename E>
 class Expected {
 public:
+    // Default-constructed Expected holds a default-constructed T (the
+    // value path). This matches the pre-M-14 behaviour where
+    // `Expected()` set `has_value_=false` only by accident: the bool
+    // member was uninitialized in the pre-existing default ctor and
+    // happened to be cleared by the variant default for trivially
+    // initialisable types, but the contract that survives in tests is
+    // "has_value() reflects the constructor used". std::variant's
+    // default-init holds the first alternative (T), which gives us a
+    // well-defined default and aligns with std::expected.
     Expected() = default;
-    
+
     // Allow implicit conversion from T
     Expected(const T& value) noexcept(std::is_nothrow_copy_constructible_v<T>)
-        : has_value_(true) {
-        new (&storage_) T(value);
-    }
-    
+        : storage_(std::in_place_index<0>, value) {}
+
     // Allow implicit conversion from T via move
     Expected(T&& value) noexcept(std::is_nothrow_move_constructible_v<T>)
-        : has_value_(true) {
-        new (&storage_) T(std::move(value));
-    }
-    
+        : storage_(std::in_place_index<0>, std::move(value)) {}
+
     // Allow conversion from E (error case)
     Expected(const E& error) noexcept(std::is_nothrow_copy_constructible_v<E>)
-        : has_value_(false) {
-        new (&storage_) E(error);
-    }
-    
+        : storage_(std::in_place_index<1>, error) {}
+
     // Allow conversion from E via move
     Expected(E&& error) noexcept(std::is_nothrow_move_constructible_v<E>)
-        : has_value_(false) {
-        new (&storage_) E(std::move(error));
+        : storage_(std::in_place_index<1>, std::move(error)) {}
+
+    Expected(const Expected& other) = default;
+    Expected(Expected&& other) noexcept(
+        std::is_nothrow_move_constructible_v<T> &&
+        std::is_nothrow_move_constructible_v<E>) = default;
+
+    ~Expected() = default;
+
+    Expected& operator=(const Expected& other) = default;
+    Expected& operator=(Expected&& other) noexcept(
+        std::is_nothrow_move_constructible_v<T> &&
+        std::is_nothrow_move_constructible_v<E> &&
+        std::is_nothrow_move_assignable_v<T> &&
+        std::is_nothrow_move_assignable_v<E>) = default;
+
+    [[nodiscard]] bool has_value() const noexcept {
+        return storage_.index() == 0;
     }
-    
-    Expected(const Expected& other)
-        : has_value_(other.has_value_) {
-        if (has_value_) {
-            new (&storage_) T(other.value());
-        } else {
-            new (&storage_) E(other.error());
-        }
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return has_value();
     }
-    
-    Expected(Expected&& other) noexcept(std::is_nothrow_move_constructible_v<T>)
-        : has_value_(other.has_value_) {
-        if (has_value_) {
-            new (&storage_) T(std::move(other.value()));
-        } else {
-            new (&storage_) E(std::move(other.error()));
-        }
-    }
-    
-    ~Expected() {
-        if (has_value_) {
-            value().~T();
-        } else {
-            error().~E();
-        }
-    }
-    
-    Expected& operator=(const Expected& other) {
-        if (this == &other) return *this;
-        reset();
-        has_value_ = other.has_value_;
-        if (has_value_) {
-            new (&storage_) T(other.value());
-        } else {
-            new (&storage_) E(other.error());
-        }
-        return *this;
-    }
-    
-    Expected& operator=(Expected&& other) {
-        if (this == &other) return *this;
-        reset();
-        has_value_ = other.has_value_;
-        if (has_value_) {
-            new (&storage_) T(std::move(other.value()));
-        } else {
-            new (&storage_) E(std::move(other.error()));
-        }
-        return *this;
-    }
-    
-    [[nodiscard]] bool has_value() const noexcept { return has_value_; }
-    [[nodiscard]] explicit operator bool() const noexcept { return has_value_; }
-    
+
     [[nodiscard]] const T& value() const& noexcept {
-        MWAAC_ASSERT_PRECONDITION(has_value_);
-        return *reinterpret_cast<const T*>(&storage_);
+        MWAAC_ASSERT_PRECONDITION(has_value());
+        return *std::get_if<0>(&storage_);
     }
 
     [[nodiscard]] T& value() & noexcept {
-        MWAAC_ASSERT_PRECONDITION(has_value_);
-        return *reinterpret_cast<T*>(&storage_);
+        MWAAC_ASSERT_PRECONDITION(has_value());
+        return *std::get_if<0>(&storage_);
     }
 
     [[nodiscard]] T&& value() && noexcept {
-        MWAAC_ASSERT_PRECONDITION(has_value_);
-        return std::move(*reinterpret_cast<T*>(&storage_));
+        MWAAC_ASSERT_PRECONDITION(has_value());
+        return std::move(*std::get_if<0>(&storage_));
     }
 
     [[nodiscard]] const E& error() const& noexcept {
-        MWAAC_ASSERT_PRECONDITION(!has_value_);
-        return *reinterpret_cast<const E*>(&storage_);
+        MWAAC_ASSERT_PRECONDITION(!has_value());
+        return *std::get_if<1>(&storage_);
     }
 
     [[nodiscard]] E&& error() && noexcept {
-        MWAAC_ASSERT_PRECONDITION(!has_value_);
-        return std::move(*reinterpret_cast<E*>(&storage_));
+        MWAAC_ASSERT_PRECONDITION(!has_value());
+        return std::move(*std::get_if<1>(&storage_));
     }
 
 private:
-    void reset() {
-        if (has_value_) {
-            value().~T();
-        } else {
-            error().~E();
-        }
-    }
-    
-    alignas(T) alignas(E) unsigned char storage_[sizeof(T) > sizeof(E) ? sizeof(T) : sizeof(E)];
-    bool has_value_;
+    // Index 0 = value (T), index 1 = error (E). Order is contract:
+    // default-constructed Expected holds a value, matching std::expected.
+    std::variant<T, E> storage_;
 };
 
 // Audio file with header parsing support
