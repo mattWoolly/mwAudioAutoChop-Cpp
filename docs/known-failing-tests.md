@@ -53,15 +53,6 @@ A test that passes on the PR but is on this list is progress — update this fil
 - **Why failing.** Blind-mode pipeline returns only 1 split on the current synthetic 2-track fixture. The defect is documented as **NEW-BLIND-GAP** in BACKLOG.md (Tier 6 — Algorithmic correctness / blind-mode tuning). The score-gap thresholding currently misclassifies the inter-track silence as below-threshold for some fixture configurations.
 - **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Not in the current Tier 1+2 queue. Will remain failing after Tier 1+2 lands.
 
-### `test_integration` — TEST_CASE `"Lossless end-to-end: verify exported file formats"` (`[integration][e2e]`)
-
-- **File.** `tests/test_integration.cpp` (currently line 699 for the TEST_CASE; failing assertion at line 728; drifts).
-- **Assertion.** `REQUIRE(export_result.has_value())` against the `mwaac::write_track(...)` call.
-- **Assertion intent (as written).** Round-trip a 48 kHz, 2-channel, 24-bit WAV file: open → `write_track` → re-open. The export must succeed.
-- **Why failing.** **Test-side arithmetic bug, not a parser/write defect.** The local `create_test_wav` overload at `tests/test_integration.cpp:101` takes an optional `audio_data` vector; the call at `:710` passes `std::vector<float>(48000, 0.5f)` for a 2-channel/48000-frame request. libsndfile interprets 48000 floats as 24000 stereo frames, so the resulting source file has `info.frames = 24000`. `write_track(..., 0, 47999)` then trips `end_sample (47999) >= info.frames (24000)` and returns `AudioError::InvalidRange`. The source file is `SF_FORMAT_WAV | SF_FORMAT_PCM_24` — plain PCM, not `WAVE_FORMAT_EXTENSIBLE`.
-- **Cured by.** **`INT-728-FIXTURE-MISMATCH`** (BACKLOG.md). Two architectural options on the table for that item: (a) fix the arithmetic so the test round-trips plain 24-bit PCM, or (b) rewrite to use the `tests/fixtures/waveext/` artifact (now-parseable post-M-3) so the test exercises the genuine 24-bit 2ch EXTENSIBLE round-trip the comment describes.
-- **Audit-pass-discipline note.** This entry's prior `Cured by: M-3` claim was an unaudited cure-attribution that survived three doc audit passes (test-identity, line-shift schema, AIFF cluster) because each of those swept different axes. M-3's fix-agent caught it during dispatch on 2026-04-29 (the 4th catch on this doc, first on the cure-attribution axis). See `feedback_audit_pre_staged_docs_along_every_axis.md`. M-3 itself landed clean as PR #34 (`70a7745`) — its real cure scope was the four `[waveext]`-tagged tests in `test_audio_file.cpp` / `test_lossless.cpp`, none of which are in this Active set (they were `[!shouldfail]`-tagged and visible only in the regression-by-name check).
-
 ### `test_integration` — TEST_CASE `"Combined workflow: reference then blind analysis"` (`[integration][combined]`)
 
 - **File.** `tests/test_integration.cpp` (currently line 705 for the TEST_CASE; failing assertion currently at line 762 on main / line 799 after PR #23; drifts).
@@ -92,6 +83,13 @@ PR #23 advances the following from `SKIP()` to passing assertions; they were nev
 Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per the rebase fix-agent's verification. Does **not** flip the `test_integration` binary's status — the binary is still `Failed` because of `:479`, `:691`, and `:762` (NEW-BLIND-GAP and NEW-WAVEEXT-WRITE).
 
 ## Resolved entries
+
+### `test_integration` — TEST_CASE `"Lossless end-to-end: verify exported file formats"` (RESOLVED)
+
+- **Cured by.** **`INT-728-FIXTURE-MISMATCH` option (c)** — TEST_CASE dropped in commit `3a86871` (one-line file change to `tests/test_integration.cpp`, removing former lines 699–736). The local `create_test_wav` helper at `:101` was retained because seven other TEST_CASEs call it.
+- **Why option (c).** Coverage was fully subsumed by `tests/test_lossless.cpp:416–474` (`"Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes"` — opens FIXTURE-WAVEEXT 24-bit / 2-ch / 48 kHz EXTENSIBLE artifact, calls `write_track` over a deterministic mid-file region, re-opens, CHECKs `channels` / `sample_rate` / `bits_per_sample` / `frames`, and `REQUIRE`s data-byte identity). Plain-PCM bit-depth round-trip is independently in `tests/test_lossless.cpp:357` (`"Lossless export with different bit depths"` — 16/24/32) and `:223` (`"Lossless round-trip preserves exact bytes"` — stereo 24-bit byte-identity). The dropped TEST_CASE name (`"verify exported file formats"`) was always broader than the body (single fixture, plain PCM, no format-identity assertion). Subsumption verified line-by-line by independent coverage-audit agent and user before merge.
+- **Why options (a) and (b) were ruled out.** (a) would have left the TEST_CASE name lying about what it tested (plain PCM, despite the EXTENSIBLE-implying name). (b) required filing a `M-3-EMIT` write-side EXTENSIBLE item that does not yet exist; deferring (c) on speculation about a future item was the wrong cost/benefit.
+- **Doc-drift note.** Prior to the (c) decision, this Active entry listed only options (a) and (b); the third option (drop) was present in `BACKLOG.md` but never propagated here. The drift was caught by the coverage-audit agent at decision time and is recorded as `KNOWN-FAILING-VS-BACKLOG-OPTION-DRIFT-V1` in `docs/deviations.md`. The orchestrator playbook now requires a cross-doc reconciliation pass at decision time when two governance docs reference the same item.
 
 ### `test_lossless` — C-1 AIFF stack-smash cluster (RESOLVED)
 

@@ -397,53 +397,51 @@ migration to `std::expected`-style storage happens in M-14.
         **based on an incorrect cure attribution** — that test was never
         going to be cured by M-3. Re-attributed to `INT-728-FIXTURE-MISMATCH`.
 
-### INT-728-FIXTURE-MISMATCH — `Lossless end-to-end` integration test fails for test-side reason, not parser
+### INT-728-FIXTURE-MISMATCH — `Lossless end-to-end` integration test fails for test-side reason, not parser — **RESOLVED in `3a86871` via option (c)**
 
-- **Defect.** `tests/test_integration.cpp` has a local `create_test_wav`
-  overload at `:101` whose 6th parameter is an optional `audio_data` vector.
-  The call at `:710` passes 48000 floats for a 2-channel / 48000-frame
-  request. libsndfile interprets 48000 floats as 24000 stereo frames, so
-  the source file has `info.frames = 24000`. `write_track(..., 0, 47999)`
-  then trips `end_sample (47999) >= info.frames (24000)` and returns
-  `AudioError::InvalidRange`. The source file is
-  `SF_FORMAT_WAV | SF_FORMAT_PCM_24` — plain PCM, not WAVE_FORMAT_EXTENSIBLE.
-- **Origin.** Surfaced by M-3's fix-agent (PR #34) during validation-gate
-  verification. Previously misattributed to NEW-WAVEEXT-WRITE / M-3 in
-  `docs/known-failing-tests.md`; corrected at orchestrator paperwork
-  alongside M-3's merge.
-- **Architectural decision required (do not skip).** Two options have
-  meaningfully different intent:
-  - **(a) Fix arithmetic, round-trip plain 24-bit PCM.** Change `:709` to
-    `std::vector<float>(48000 * 2, 0.5f)` (or change `end_sample` to `23999`
-    and `samples` count to match). The test then exercises a plain PCM WAV
-    round-trip — useful regression for `write_track` but does NOT exercise
-    WAVE_FORMAT_EXTENSIBLE at all. Rename the TEST_CASE accordingly so the
-    name doesn't lie about what it tests.
-  - **(b) Rewrite to use `tests/fixtures/waveext/` artifact.** Replace the
-    `create_test_wav` call with a load of the FIXTURE-WAVEEXT 24-bit 2ch
-    EXTENSIBLE file (now parseable post-M-3). The test then exercises the
-    genuine end-to-end round-trip the original comment described. **This
-    matches the test name as written.** Requires the EXTENSIBLE *write*
-    path to also work — which is a separate gap (`write_track` writes plain
-    PCM, not EXTENSIBLE), so option (b) implicitly depends on a write-path
-    item that doesn't exist yet.
-- **Recommendation.** Surface the choice; do not pre-decide. Option (b) is
-  the architecturally clean answer but blocks on EXTENSIBLE-write support
-  that's not yet on the backlog (call it `M-3-EMIT` or similar when filed).
-  Option (a) is mechanical and lands in <1 hour but leaves the test name
-  lying about what it tests. A third path — drop this TEST_CASE entirely
-  and let `tests/test_lossless.cpp` `"Lossless: 24-bit 2-ch extensible WAV
-  round-trip preserves bytes"` (M-3 made this PASS) be the canonical
-  EXTENSIBLE round-trip — should also be considered.
-- **Files touched (depending on option).** `tests/test_integration.cpp`
-  for (a); `tests/test_integration.cpp` plus a new EXTENSIBLE-emit item for
-  (b); zero for (c) (delete-the-TEST_CASE path).
+- **Decision (recorded 2026-04-30).** Option (c): drop the TEST_CASE.
+  Coverage is fully subsumed by `tests/test_lossless.cpp:416–474`
+  (`"Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes"`),
+  which checks every metadata dimension `:728` checked plus
+  `bits_per_sample`, `frames`, mid-file offset arithmetic, and data-byte
+  identity. Plain-PCM bit-depth round-trip is independently in
+  `tests/test_lossless.cpp:223` (24-bit byte-identity) and `:357`
+  (16/24/32). The dropped TEST_CASE name (`"verify exported file
+  formats"`) was always broader than the body (single fixture, plain
+  PCM, no format-identity assertion). Subsumption verified line-by-line
+  by independent coverage-audit agent and user before merge.
+- **Why not (a) or (b).** (a) would have left the TEST_CASE name lying
+  about what it tested. (b) required filing a write-side EXTENSIBLE item
+  (`M-3-EMIT`) that does not yet exist; deferring (c) on speculation
+  about a future item was the wrong cost/benefit.
+- **Doc-drift note.** This BACKLOG entry listed three options
+  (a, b, and the "third path" of dropping); `docs/known-failing-tests.md`
+  listed only (a) and (b). The drift was caught at decision time and is
+  recorded as `KNOWN-FAILING-VS-BACKLOG-OPTION-DRIFT-V1` in
+  `docs/deviations.md`. The orchestrator playbook now requires a
+  cross-doc reconciliation pass at decision time for any item
+  referenced in multiple governance docs.
+- **Defect (historical).** `tests/test_integration.cpp` had a local
+  `create_test_wav` overload at `:101` whose 6th parameter was an
+  optional `audio_data` vector. The call at `:710` passed 48000 floats
+  for a 2-channel / 48000-frame request. libsndfile interpreted 48000
+  floats as 24000 stereo frames, so the source file had
+  `info.frames = 24000`. `write_track(..., 0, 47999)` then tripped
+  `end_sample (47999) >= info.frames (24000)` and returned
+  `AudioError::InvalidRange`. The source file was
+  `SF_FORMAT_WAV | SF_FORMAT_PCM_24` — plain PCM, not
+  WAVE_FORMAT_EXTENSIBLE.
+- **Origin.** Surfaced by M-3's fix-agent (PR #34) during
+  validation-gate verification. Previously misattributed to
+  NEW-WAVEEXT-WRITE / M-3 in `docs/known-failing-tests.md`; corrected at
+  orchestrator paperwork alongside M-3's merge.
+- **Files touched at resolution.** `tests/test_integration.cpp` only
+  (the helper at `:101` stayed because seven other TEST_CASEs call it).
 - **Exit criteria.**
-  - [ ] Architectural option chosen and recorded in `docs/deviations.md`
-        if it differs from the most-obvious read.
-  - [ ] `test_integration:728` either passes (a/b) or is removed (c); in
-        all cases, `docs/known-failing-tests.md` `:728` entry moves to
-        Resolved with the merging commit.
+  - [x] Architectural option chosen and recorded in
+        `docs/deviations.md` (`KNOWN-FAILING-VS-BACKLOG-OPTION-DRIFT-V1`).
+  - [x] `test_integration:728` removed; `docs/known-failing-tests.md`
+        entry moved to Resolved with merging commit `3a86871`.
 
 ### M-4 — RF64 data placeholder confuses chunk walker
 
