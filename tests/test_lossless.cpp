@@ -563,23 +563,53 @@ std::vector<uint8_t> rf64_read_header_window(const fs::path& path) {
     return buf;
 }
 
-// Read the LAST 64 KiB of `path`. parse_wav_header in production walks
-// only the first window, so for the ds64-after-data variant the trailing
-// ds64 is invisible to the current implementation. The M-4 fix will need
-// to make the parser look at the tail too — we expose this helper here
-// so that, post-fix, a richer test can verify the recovered data_size.
+// Read the first 64 KiB of `path` *spliced* with the last 1 MiB of `path`,
+// matching the buffer shape AudioFile::open feeds parse_wav_header for RF64
+// inputs (M-4). The spliced buffer keeps the middle of the file out of RAM
+// (so a 4 GiB+ fixture costs 1 MiB + 64 KiB to feed the parser, not 4 GiB)
+// while still letting parse_wav_header's tail-scan see a trailing ds64
+// chunk.
+//
+// Caveat for parser callers: bytes inside the spliced buffer at positions
+// >= head_size do NOT correspond to file offsets equal to their buffer
+// index. The chunk walker in parse_wav_header consumes only chunks that
+// live inside the head (the data chunk header is always near the start of
+// the file for well-formed WAV/RF64), so this is fine in practice; the
+// tail-scan reads ds64 body fields by buffer offset, not by file offset.
 std::vector<uint8_t> rf64_read_full_with_tail(const fs::path& path) {
-    // For the M-4 case the handcrafted parser will need access to the
-    // trailer. Returning the full file here would mean materialising 4 GiB
-    // into RAM. Instead we splice: first 64 KiB + last 1 MiB (the ds64
-    // trailer is at most 36 bytes; 1 MiB is overkill but cheap because
-    // the middle is sparse and we read the actual physical tail only).
-    //
-    // The current parser will not look here. Once M-4 lands, the parser
-    // is expected to either two-pass or fall through and we will revise
-    // this helper to feed it whatever shape it expects. For NOW we just
-    // return the head — the test below documents the failure mode.
-    return rf64_read_header_window(path);
+    constexpr size_t kHeaderWindow = 65536;
+    constexpr size_t kTailWindow = 1 * 1024 * 1024;  // 1 MiB
+
+    std::error_code ec;
+    const auto file_size_u = fs::file_size(path, ec);
+    REQUIRE_FALSE(ec);
+
+    std::ifstream f(path, std::ios::binary);
+    REQUIRE(f.good());
+
+    // Head.
+    std::vector<uint8_t> buf(kHeaderWindow);
+    f.read(reinterpret_cast<char*>(buf.data()),
+           static_cast<std::streamsize>(buf.size()));
+    buf.resize(static_cast<size_t>(f.gcount()));
+    f.clear();  // file may be smaller than the header window; clear EOF.
+
+    // Tail: last min(file_size - head_len, kTailWindow) bytes, if any.
+    if (file_size_u > buf.size()) {
+        const std::uintmax_t uncovered = file_size_u - buf.size();
+        const size_t tail_len = (uncovered < kTailWindow)
+                                    ? static_cast<size_t>(uncovered)
+                                    : kTailWindow;
+        const std::uintmax_t tail_offset = file_size_u - tail_len;
+        f.seekg(static_cast<std::streamoff>(tail_offset));
+        REQUIRE(f.good());
+        const size_t old_size = buf.size();
+        buf.resize(old_size + tail_len);
+        f.read(reinterpret_cast<char*>(buf.data() + old_size),
+               static_cast<std::streamsize>(tail_len));
+        REQUIRE(static_cast<size_t>(f.gcount()) == tail_len);
+    }
+    return buf;
 }
 
 // ---- SHA-256, public-domain reference implementation ----
@@ -738,11 +768,15 @@ TEST_CASE("parse_wav_header: RF64 with ds64 before data", "[lossless][rf64]") {
     REQUIRE(info.data_size == expected_data_size);
 }
 
-// [!shouldfail] — fails today because parse_wav_header advances past the
-// 0xFFFFFFFF data placeholder and never reaches the trailing ds64.
-// Removing this tag without a fix would re-mask the M-4 defect.
+// M-4 cure: parse_wav_header walks the head as before; when an RF64 file
+// shows a `data` chunk with the 0xFFFFFFFF placeholder, the walker stops
+// there and a tail-scan locates the trailing ds64 chunk. The helper above
+// (rf64_read_full_with_tail) feeds the parser the head + last-1 MiB shape
+// AudioFile::open uses in production. Keeping this assertion green is the
+// positive check that M-4 closed its invariant; if it regresses, ds64
+// recovery has broken again.
 TEST_CASE("parse_wav_header: RF64 with ds64 after data",
-          "[lossless][rf64][!shouldfail]") {
+          "[lossless][rf64]") {
     fs::path dir = rf64_fixture_dir();
     fs::path file = dir / "rf64_ds64_after.wav";
     fs::path manifest = dir / "manifest.txt";
