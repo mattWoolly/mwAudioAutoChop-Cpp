@@ -572,12 +572,23 @@ migration to `std::expected`-style storage happens in M-14.
      the float80 sampleRate slot. Likely stale code from when the writer
      side incorrectly emitted numSampleFrames as a 10-byte float80 (the
      C-1 / AIFF-INLINE-SCOPE bug); the writer was fixed but the reader
-     was never updated. Production safe today only because libsndfile
-     re-validates `bits_per_sample` at `AudioFile::open` time and
-     overrides the parser's value — but `parse_aiff_header`'s direct
-     contract is broken. Surfaced by M-5 audit (2026-04-30) when the new
-     SSND-offset success-path test attempted to assert
-     `bits_per_sample == 16` on an inline AIFF and failed.
+     was never updated. Production has not surfaced this because **no
+     existing test goes through `AudioFile::open` on an AIFF file and
+     asserts `bits_per_sample`** — the AIFF round-trip tests in
+     `tests/test_lossless.cpp` either use `build_aiff_header` directly
+     plus libsndfile-readback or assert structural fields only, never
+     exercising parse_aiff_header → AudioFile.info().bits_per_sample.
+     `AudioFile::open` only overrides `sample_rate`, `channels`,
+     `frames`, and `format` from libsndfile (`src/core/audio_file.cpp:
+     262-269`); `bits_per_sample` is *not* in that override list, so
+     once a test does exercise the path, the wrong value will surface.
+     Surfaced by M-5 audit (2026-04-30) when the new SSND-offset
+     success-path test attempted to assert `bits_per_sample == 16` on
+     an inline AIFF and would have failed; the M-5 test commented out
+     that assertion as Mi-1 territory and proceeded. (M-5 paperwork
+     entry initially stated "libsndfile cross-validates and overrides
+     bits_per_sample"; that was wrong — corrected at Mi-1 pre-dispatch
+     verification per the verify-scope-claims rule.)
 - **Invariant established.** "parse_aiff_header produces a fully-populated
   AudioInfo matching the file header, or returns InvalidFormat. Every
   COMM field — channels, numSampleFrames, sampleSize, sampleRate — is
