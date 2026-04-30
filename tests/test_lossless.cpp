@@ -400,36 +400,18 @@ TEST_CASE("Lossless export with different bit depths", "[lossless]") {
 }
 
 // =============================================================================
-// FIXTURE-WAVEEXT — round-trip a 24-bit WAVE_FORMAT_EXTENSIBLE source.
-//
-// Today this fails for two reasons:
-//   1) AudioFile::open rejects audio_format == 0xFFFE outright, so we
-//      can't even begin (M-3).
-//   2) Even if we could open it, write_track's header builder does not
-//      know how to emit an EXTENSIBLE header back, which is the
-//      separately-tracked NEW-WAVEEXT-WRITE defect.
-//
-// `[!shouldfail]` until both M-3 and the EXTENSIBLE-emit pieces land;
-// the tag is removed in the same PR that lands those fixes.
+// FIXTURE-WAVEEXT — data-byte round-trip from a 24-bit WAVE_FORMAT_EXTENSIBLE
+// source. M-3 made AudioFile::open accept audio_format == 0xFFFE for the
+// PCM and IEEE-float SubFormat GUIDs. write_track still emits a plain RIFF
+// (PCM) header, not EXTENSIBLE — that header-format-lossy behavior is
+// tracked separately as NEW-WAVEEXT-WRITE but is not gated by this test,
+// which checks data-byte identity over the extracted region plus the
+// re-opened output's metadata, not header-format identity.
 // =============================================================================
 
 #ifndef MWAAC_FIXTURE_WAVEEXT_DIR
 #error "MWAAC_FIXTURE_WAVEEXT_DIR must be defined by tests/fixtures/waveext/CMakeLists.txt"
 #endif
-
-namespace {
-
-std::vector<uint8_t> slurp_full_file(const fs::path& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    auto size = file.tellg();
-    file.seekg(0);
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.read(reinterpret_cast<char*>(data.data()), size);
-    return data;
-}
-
-} // namespace
 
 TEST_CASE("Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes",
           "[lossless][waveext]") {
@@ -489,11 +471,6 @@ TEST_CASE("Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes",
                                             static_cast<size_t>(extract_bytes));
     REQUIRE(source_data_bytes.size() == output_data_bytes.size());
     REQUIRE(source_data_bytes == output_data_bytes);
-
-    // Suppress unused-function warning under the `[!shouldfail]` path
-    // where a REQUIRE upstream may early-exit before slurp_full_file
-    // is reached.
-    (void)slurp_full_file;
 }
 
 TEST_CASE("Output WAV header has correct metadata", "[lossless]") {
