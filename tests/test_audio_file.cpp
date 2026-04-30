@@ -149,7 +149,7 @@ std::vector<uint8_t> slurp_fixture(const std::filesystem::path& path) {
 } // namespace
 
 TEST_CASE("parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit stereo accepted",
-          "[audio_file][waveext][!shouldfail]") {
+          "[audio_file][waveext]") {
     std::filesystem::path path =
         std::filesystem::path(MWAAC_FIXTURE_WAVEEXT_DIR) / "pcm_24bit_stereo.wav";
     auto bytes = slurp_fixture(path);
@@ -166,7 +166,7 @@ TEST_CASE("parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit stereo accepted",
 }
 
 TEST_CASE("parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit 5-channel accepted",
-          "[audio_file][waveext][!shouldfail]") {
+          "[audio_file][waveext]") {
     std::filesystem::path path =
         std::filesystem::path(MWAAC_FIXTURE_WAVEEXT_DIR) / "pcm_24bit_5ch.wav";
     auto bytes = slurp_fixture(path);
@@ -183,7 +183,7 @@ TEST_CASE("parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit 5-channel accepte
 }
 
 TEST_CASE("parse_wav_header: extensible with unknown SubFormat returns UnsupportedFormat",
-          "[audio_file][waveext][!shouldfail]") {
+          "[audio_file][waveext]") {
     std::filesystem::path path =
         std::filesystem::path(MWAAC_FIXTURE_WAVEEXT_DIR)
             / "pcm_extensible_unsupported_subformat.wav";
