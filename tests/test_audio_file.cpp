@@ -360,6 +360,105 @@ TEST_CASE("parse_aiff_header: zero SSND offset is byte-identical to pre-M-5",
 }
 
 // ============================================================================
+// Mi-1 — parse_aiff_header decodes COMM body fields at the correct offsets.
+//
+// Two parser-side defects fixed in Mi-1:
+//   1. sampleRate (10-byte IEEE 754 80-bit) was never decoded; AudioInfo's
+//      `sample_rate` was left at 0 by the parser. Production-safe at
+//      AudioFile::open via libsndfile cross-validation, but the parser's
+//      direct contract was broken.
+//   2. sampleSize (bits_per_sample) was read at chunk_offset + 18, which is
+//      bytes 2-3 of the float80 sampleRate slot, not the COMM sampleSize
+//      field. The AIFF 1.3 COMM body layout is:
+//          off | field           | bytes
+//          --- - --------------- - -----
+//           0  | numChannels     |  2
+//           2  | numSampleFrames |  4
+//           6  | sampleSize      |  2  <-- chunk_offset + 8 + 6 = +14
+//           8  | sampleRate (f80)| 10
+//      So sampleSize lives at chunk_offset + 14, not +18.
+//
+// Tests below build full inline AIFFs via `build_aiff_header` (the writer
+// already encodes sampleRate with `encode_float80`) and assert
+// `parse_aiff_header` recovers the same values.
+// ============================================================================
+
+TEST_CASE("parse_aiff_header: sample_rate decoded from 80-bit float",
+          "[audio_file][mi-1]") {
+    // Iterate the 6 PROJECT_SPEC sample rates. Pre-Mi-1 every iteration
+    // returned info.sample_rate == 0 because the parser never decoded the
+    // float80 slot; post-Mi-1 each iteration recovers the encoded value.
+    constexpr int channels        = 1;
+    constexpr int bits_per_sample = 16;
+    constexpr int64_t num_frames  = 4;
+    constexpr int64_t data_size   = num_frames * channels * 2;  // 16-bit mono
+
+    for (int rate : {44100, 48000, 88200, 96000, 176400, 192000}) {
+        INFO("sample_rate = " << rate);
+        auto header_bytes = mwaac::build_aiff_header(
+            channels, rate, bits_per_sample, num_frames, data_size);
+
+        // Append a zeroed body so SSND has the bytes it claims to.
+        std::vector<uint8_t> blob;
+        blob.reserve(header_bytes.size() +
+                     static_cast<size_t>(data_size));
+        for (auto b : header_bytes) {
+            blob.push_back(static_cast<uint8_t>(b));
+        }
+        for (int64_t i = 0; i < data_size; ++i) blob.push_back(0u);
+
+        auto result = mwaac::parse_aiff_header(blob);
+        REQUIRE(result.has_value());
+        const auto& info = result.value();
+        CHECK(info.sample_rate == rate);
+    }
+}
+
+TEST_CASE("parse_aiff_header: bits_per_sample decoded from correct COMM offset",
+          "[audio_file][mi-1]") {
+    // Pre-Mi-1 the parser read bits_per_sample at chunk_offset + 18, which
+    // lands at COMM-body offset 10 — i.e. mantissa bytes 2-3 of the
+    // float80 sampleRate slot. For 48000 Hz that's 0xBB80 (== 48000); for
+    // 44100 Hz that's 0xAC44 (== 44100). Either is non-zero and unequal
+    // to the true sampleSize. Post-Mi-1 the parser reads sampleSize at
+    // chunk_offset + 14 (body offset 6) and recovers the correct value.
+    // Walk multiple bit-depths so a regression to +18 fails for every
+    // iteration regardless of which mantissa pattern lands at +18.
+    constexpr int channels        = 2;
+    constexpr int sample_rate     = 48000;
+    constexpr int64_t num_frames  = 8;
+
+    // Walk the bit-depths the writer supports: 8, 16, 24, 32.
+    for (int bps : {8, 16, 24, 32}) {
+        INFO("bits_per_sample = " << bps);
+        const int bytes_per_sample = bps / 8;
+        const int64_t data_size =
+            num_frames * channels * bytes_per_sample;
+
+        auto header_bytes = mwaac::build_aiff_header(
+            channels, sample_rate, bps, num_frames, data_size);
+
+        std::vector<uint8_t> blob;
+        blob.reserve(header_bytes.size() +
+                     static_cast<size_t>(data_size));
+        for (auto b : header_bytes) {
+            blob.push_back(static_cast<uint8_t>(b));
+        }
+        for (int64_t i = 0; i < data_size; ++i) blob.push_back(0u);
+
+        auto result = mwaac::parse_aiff_header(blob);
+        REQUIRE(result.has_value());
+        const auto& info = result.value();
+        CHECK(info.bits_per_sample == bps);
+        // Belt-and-braces: also confirm channels and sample_rate are
+        // intact, so a refactor of build_aiff_header that broke COMM
+        // ordering wouldn't pass this test by accident.
+        CHECK(info.channels == channels);
+        CHECK(info.sample_rate == sample_rate);
+    }
+}
+
+// ============================================================================
 // FIXTURE-MALFORMED — parametric malformed-header parser tests.
 //
 // Walks the manifest checked in at tests/fixtures/malformed/manifest.txt
