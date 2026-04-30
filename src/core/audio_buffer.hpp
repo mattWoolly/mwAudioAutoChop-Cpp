@@ -44,7 +44,21 @@ struct AudioBuffer {
     int target_sample_rate = 0  // 0 = use native rate
 );
 
-// Simple linear resampling (for analysis, not quality-critical)
-AudioBuffer resample_linear(const AudioBuffer& input, int target_rate);
+// Simple linear resampling (for analysis, not quality-critical).
+//
+// Failure modes (return `AudioError::ResampleError`):
+//   - `input.sample_rate <= 0` — division by zero / non-positive ratio
+//     would produce undefined output. This is the precondition guard for
+//     the historical Mi-3 div-by-zero hazard.
+//   - `output_size` overflow — when
+//     `input.samples.size() * (target_rate / input.sample_rate)` is not
+//     finite, is negative, or exceeds `size_t`'s representable range,
+//     the unchecked double-to-size_t cast would produce a garbage
+//     allocation size. Guarded explicitly.
+//
+// On success the returned buffer has `sample_rate == target_rate` and a
+// `samples.size()` rounded down from the exact ratio.
+[[nodiscard]] Expected<AudioBuffer, AudioError> resample_linear(
+    const AudioBuffer& input, int target_rate);
 
 } // namespace mwaac

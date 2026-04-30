@@ -1,6 +1,7 @@
 #include "audio_buffer.hpp"
 #include <sndfile.h>
 #include <cmath>
+#include <limits>
 
 namespace mwaac {
 
@@ -43,17 +44,41 @@ Expected<AudioBuffer, AudioError> load_audio_mono(
     
     // Resample if requested
     if (target_sample_rate > 0 && target_sample_rate != buffer.sample_rate) {
-        buffer = resample_linear(buffer, target_sample_rate);
+        auto resampled = resample_linear(buffer, target_sample_rate);
+        if (!resampled) {
+            return resampled.error();
+        }
+        buffer = std::move(resampled).value();
     }
-    
+
     return buffer;
 }
 
-AudioBuffer resample_linear(const AudioBuffer& input, int target_rate) {
+Expected<AudioBuffer, AudioError> resample_linear(
+    const AudioBuffer& input, int target_rate)
+{
+    // Mi-3: precondition guard — a non-positive source rate would divide
+    // by zero (or produce a non-positive ratio that the cast below would
+    // either truncate to 0 or interpret as negative/garbage). Surface as
+    // a typed error rather than UB.
+    if (input.sample_rate <= 0) {
+        return AudioError::ResampleError;
+    }
+
     // Simple linear interpolation resampling
     // Good enough for analysis purposes
     double ratio = static_cast<double>(target_rate) / input.sample_rate;
-    size_t output_size = static_cast<size_t>(static_cast<double>(input.samples.size()) * ratio);
+
+    // Mi-3: guard the unchecked double-to-size_t cast on output_size.
+    // If `input.samples.size() * ratio` is non-finite, negative, or
+    // larger than size_t can represent, the cast result is unspecified.
+    double expected_double =
+        static_cast<double>(input.samples.size()) * ratio;
+    if (!std::isfinite(expected_double) || expected_double < 0.0 ||
+        expected_double > static_cast<double>(std::numeric_limits<size_t>::max())) {
+        return AudioError::ResampleError;
+    }
+    size_t output_size = static_cast<size_t>(expected_double);
 
     AudioBuffer output;
     output.sample_rate = target_rate;
