@@ -703,7 +703,7 @@ migration to `std::expected`-style storage happens in M-14.
 ## Tier 9 — Cleanup (Minor, Nit)
 
 ### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`.
-### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`.
+### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`. — **RESOLVED in #33 (`8af5793`)** via structural cure (deviation from original "early return {}" spec; see `docs/deviations.md` Mi-3 entry for reasoning).
 ### Mi-6 — `min` identifier shadows std::min — `src/main.cpp`, `src/modes/reference_mode.cpp`.
 ### Mi-11 — test_deps.cpp is dead — delete or compile.
 ### Mi-12 — src/core/core.hpp is dead — delete.

@@ -70,7 +70,7 @@ Format:
 
 ## Mi-3 — `resample_linear` fallibility, structural cure (deviation from "early return {}")
 
-- **Commit.** `<sha>` (will be the merge commit for the `remediation/mi-3-resample-fallible` PR; orchestrator paperwork fills in the hash post-merge).
+- **Commit.** `8af5793` (PR #33 merge).
 - **Reviewer.** orchestrator (self-recorded, with audit-agent confirmation).
 - **Review said.** Mi-3 in `BACKLOG.md` (Tier 9 — Cleanup, line ~706) specifies a minimal cure: "early return `{}`" when `input.sample_rate == 0` inside `resample_linear`, treating the precondition violation as a silently-defaulted output.
 - **We did.** Made `resample_linear` fallible — return type is now `Expected<AudioBuffer, AudioError>`. Two error producers, both yielding `AudioError::ResampleError`: (1) `input.sample_rate <= 0` (the Mi-3 div-by-zero precondition), and (2) `output_size` overflow during the `double → size_t` conversion at the buffer-sizing line, guarded with an `std::isfinite` / non-negative / `<= numeric_limits<size_t>::max()` check before the cast. Propagated through the one non-test caller (`load_audio_mono` in `src/core/audio_buffer.cpp`), whose return type was already `Expected<AudioBuffer, AudioError>` post-M-14. Updated the one test caller (`tests/test_audio_buffer.cpp:14`) and added a regression `TEST_CASE("resample_linear: sample_rate == 0 returns ResampleError", "[audio][error_path]")` adjacent to it.
