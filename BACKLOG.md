@@ -557,7 +557,7 @@ migration to `std::expected`-style storage happens in M-14.
   - [x] OOB rejection: `ssnd_offset > chunk_size - 8 → InvalidFormat`
         (parser-errors.md local-view rule).
 
-### Mi-1 — parse_aiff_header returns incomplete AudioInfo (sample_rate=0, bits_per_sample at wrong COMM offset)
+### Mi-1 — parse_aiff_header returns incomplete AudioInfo (sample_rate=0, bits_per_sample at wrong COMM offset) — **RESOLVED in #37 (`b1e9edd`)**
 
 - **Defect.** Two parser-side defects in `parse_aiff_header`'s COMM
   handling, both in violation of the stated invariant:
@@ -599,12 +599,19 @@ migration to `std::expected`-style storage happens in M-14.
   - `parse_aiff_header: bits_per_sample decoded from correct COMM
     offset` (new, raised by M-5 audit).
 - **Exit criteria.**
-  - [ ] Decode the IEEE 80-bit extended sample-rate field (inverse of
-        the fixed encode_float80).
-  - [ ] Read `bits_per_sample` from `chunk_offset + 14`, not
-        `chunk_offset + 18` (per AIFF 1.3 COMM body layout).
-  - [ ] New regression test asserts both fields against an inline
-        AIFF whose COMM body's true values are independently known.
+  - [x] Decode the IEEE 80-bit extended sample-rate field. New
+        `decode_float80_to_u64` / `decode_float80_to_u32` static
+        helpers in `src/core/audio_file.cpp`, inverse of the existing
+        `encode_float80`. Reject NaN/Inf/negative/subnormal/non-integer
+        /over-INT32_MAX → `InvalidFormat` per parser-errors.md
+        local-view rule.
+  - [x] Read `bits_per_sample` from `chunk_offset + 14`, not
+        `chunk_offset + 18`.
+  - [x] New regression tests assert both fields against inline
+        AIFFs built via `build_aiff_header` (genuine
+        encoder/decoder round-trip, not parallel encoder); 28
+        assertions across the 6 PROJECT_SPEC sample rates and four
+        bit depths.
 
 ### AIFF-INLINE-SCOPE — confirm `build_aiff_header` `numSampleFrames` fix has no other-caller fallout — **STATUS: [x] closed (work done; follow-up audit done)**
 
