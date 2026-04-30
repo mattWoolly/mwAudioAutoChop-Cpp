@@ -532,30 +532,68 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] If `AudioFile::open`'s splice ever diverges from the helper, the
         new TEST_CASE catches it before the helper-only test does.
 
-### M-5 — AIFF SSND offset field assumed zero
+### M-5 — AIFF SSND offset field assumed zero — **RESOLVED in #36 (`a1654a1`)**
 
-- **Defect.** `audio_file.cpp:376–381` ignores the 4-byte SSND offset field.
+- **Defect.** `parse_aiff_header` SSND-handling block (post-M-4 line numbers
+  `src/core/audio_file.cpp:587-595`; original mandate cited `:376-381`)
+  ignored the 4-byte SSND offset field.
 - **Invariant established.** "parse_aiff_header honors SSND offset: data
   begins at SSND_body + 8 + offset, data_size is chunk_size - 8 - offset."
-- **Files touched.** `src/core/audio_file.cpp`.
+- **Files touched.** `src/core/audio_file.cpp`,
+  `tests/fixtures/malformed/manifest.txt` (drop `-pending-M-5` suffix on
+  `aiff_ssnd_offset_nonzero.aiff` entry), `tests/test_audio_file.cpp` (new
+  TEST_CASEs for the success-path + offset=0 byte-identity guard).
 - **Tests added.**
-  - `parse_aiff_header: non-zero SSND offset is honored` (new, malformed
-    fixture).
+  - `non-zero SSND offset is honored` — inline-synthesized AIFF with
+    offset=4, chunk_size=28; asserts post-M-5 `data_offset=58, data_size=16`
+    against pre-M-5 `(54, 20)`.
+  - `zero SSND offset is byte-identical to pre-M-5` — regression guard for
+    the C-1 round-trip surface.
+  - The strict FIXTURE-MALFORMED TEST_CASE now picks up
+    `aiff_ssnd_offset_nonzero.aiff` (post-M-5: offset=16 > chunk_size-8=4 →
+    `InvalidFormat` via local-view rule).
 - **Exit criteria.**
-  - [ ] Read SSND offset; apply to data_offset and data_size.
+  - [x] Read SSND offset; apply to data_offset and data_size.
+  - [x] OOB rejection: `ssnd_offset > chunk_size - 8 → InvalidFormat`
+        (parser-errors.md local-view rule).
 
-### Mi-1 — parse_aiff_header returns sample_rate = 0
+### Mi-1 — parse_aiff_header returns incomplete AudioInfo (sample_rate=0, bits_per_sample at wrong COMM offset)
 
-- **Defect.** Comment says "libsndfile validates later"; function contract is
-  violated when called directly.
+- **Defect.** Two parser-side defects in `parse_aiff_header`'s COMM
+  handling, both in violation of the stated invariant:
+  1. `sample_rate` is never decoded from the 80-bit float field; comment
+     says "libsndfile validates later", but the function contract is
+     violated when called directly (it returns 0).
+  2. `bits_per_sample` is read from the wrong COMM-body offset.
+     `src/core/audio_file.cpp:580` reads at `chunk_offset + 18`, but per
+     AIFF 1.3 the COMM body layout is: numChannels(2) + numSampleFrames(4)
+     + sampleSize(2) + sampleRate(float80,10), so bits live at
+     `chunk_offset + 14`, not `+18`. The current `+18` reads bytes 2-3 of
+     the float80 sampleRate slot. Likely stale code from when the writer
+     side incorrectly emitted numSampleFrames as a 10-byte float80 (the
+     C-1 / AIFF-INLINE-SCOPE bug); the writer was fixed but the reader
+     was never updated. Production safe today only because libsndfile
+     re-validates `bits_per_sample` at `AudioFile::open` time and
+     overrides the parser's value — but `parse_aiff_header`'s direct
+     contract is broken. Surfaced by M-5 audit (2026-04-30) when the new
+     SSND-offset success-path test attempted to assert
+     `bits_per_sample == 16` on an inline AIFF and failed.
 - **Invariant established.** "parse_aiff_header produces a fully-populated
-  AudioInfo matching the file header, or returns InvalidFormat."
+  AudioInfo matching the file header, or returns InvalidFormat. Every
+  COMM field — channels, numSampleFrames, sampleSize, sampleRate — is
+  decoded at the correct byte offset."
 - **Files touched.** `src/core/audio_file.cpp`.
 - **Tests added.**
   - `parse_aiff_header: sample_rate decoded from 80-bit float`.
+  - `parse_aiff_header: bits_per_sample decoded from correct COMM
+    offset` (new, raised by M-5 audit).
 - **Exit criteria.**
-  - [ ] Decode the IEEE 80-bit extended sample-rate field (inverse of the
-        fixed encode_float80).
+  - [ ] Decode the IEEE 80-bit extended sample-rate field (inverse of
+        the fixed encode_float80).
+  - [ ] Read `bits_per_sample` from `chunk_offset + 14`, not
+        `chunk_offset + 18` (per AIFF 1.3 COMM body layout).
+  - [ ] New regression test asserts both fields against an inline
+        AIFF whose COMM body's true values are independently known.
 
 ### AIFF-INLINE-SCOPE — confirm `build_aiff_header` `numSampleFrames` fix has no other-caller fallout — **STATUS: [x] closed (work done; follow-up audit done)**
 
