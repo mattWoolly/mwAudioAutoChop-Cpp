@@ -432,7 +432,7 @@ std::vector<uint8_t> slurp_full_file(const fs::path& path) {
 } // namespace
 
 TEST_CASE("Lossless: 24-bit 2-ch extensible WAV round-trip preserves bytes",
-          "[lossless][waveext][!shouldfail]") {
+          "[lossless][waveext]") {
     fs::path source_path =
         fs::path(MWAAC_FIXTURE_WAVEEXT_DIR) / "pcm_24bit_stereo.wav";
     REQUIRE(fs::exists(source_path));

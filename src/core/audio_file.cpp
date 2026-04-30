@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -40,6 +41,24 @@ static constexpr uint8_t SSND[] = {'S', 'S', 'N', 'D'};
 static constexpr uint8_t fmt_[] = {'f', 'm', 't', ' '};
 static constexpr uint8_t data[] = {'d', 'a', 't', 'a'};
 static constexpr uint8_t ds64[] = {'d', 's', '6', '4'};
+
+// Microsoft KSDATAFORMAT_SUBTYPE_* GUIDs for WAVE_FORMAT_EXTENSIBLE.
+// 16-byte wire layout: little-endian Data1 (4) + little-endian Data2 (2)
+// + little-endian Data3 (2) + raw Data4 (8). See Microsoft mmreg.h and
+// the FIXTURE-WAVEEXT generator at tests/fixtures/waveext/generate.cpp.
+//
+// PCM:        00000001-0000-0010-8000-00aa00389b71
+// IEEE float: 00000003-0000-0010-8000-00aa00389b71
+static constexpr std::array<uint8_t, 16> KSDATAFORMAT_SUBTYPE_PCM = {
+    0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00,
+    0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+};
+static constexpr std::array<uint8_t, 16> KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = {
+    0x03, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00,
+    0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+};
 } // namespace magic
 
 // Helper: compare bytes at position
@@ -298,6 +317,49 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
                     audio_format == 6 ||    // A-law
                     audio_format == 7) {   // mu-law
                     found_fmt = true;
+                } else if (audio_format == 0xFFFE) {
+                    // WAVE_FORMAT_EXTENSIBLE — see Microsoft mmreg.h.
+                    // Layout after the 16-byte legacy fmt fields:
+                    //   uint16  cbSize                (must be >= 22)
+                    //   uint16  wValidBitsPerSample
+                    //   uint32  dwChannelMask
+                    //   byte[16] SubFormat GUID
+                    // Total extension size = 24 bytes (cbSize itself + 22).
+                    // Bounds-check both the chunk_size and the underlying
+                    // buffer before reading. A truncated EXTENSIBLE fmt
+                    // chunk is a structural inconsistency the local check
+                    // detects -> InvalidFormat (per parser-errors.md
+                    // local-view rule).
+                    if (chunk_size < 40) {
+                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                    }
+                    uint16_t cb_size = read_le_u16(data, fmt_data + 16);
+                    if (cb_size < 22) {
+                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                    }
+                    // SubFormat GUID lives at fmt_data + 16 (cbSize) + 2
+                    // + 2 (wValidBitsPerSample) + 4 (dwChannelMask) = +24.
+                    size_t guid_offset = fmt_data + 24;
+                    if (guid_offset + 16 > data.size()) {
+                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                    }
+                    bool guid_pcm = std::memcmp(data.data() + guid_offset,
+                                                magic::KSDATAFORMAT_SUBTYPE_PCM.data(),
+                                                16) == 0;
+                    bool guid_ieee = std::memcmp(data.data() + guid_offset,
+                                                 magic::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT.data(),
+                                                 16) == 0;
+                    if (guid_pcm || guid_ieee) {
+                        // Inner format channels/sample_rate/bits-per-sample
+                        // were already populated from the legacy fmt fields
+                        // above, which is what WAVE_FORMAT_EXTENSIBLE
+                        // requires for these SubFormats.
+                        found_fmt = true;
+                    } else {
+                        // Well-formed EXTENSIBLE chunk, SubFormat we don't
+                        // decode -> UnsupportedFormat (local-view rule).
+                        return Expected<AudioInfo, AudioError>(AudioError::UnsupportedFormat);
+                    }
                 } else {
                     return Expected<AudioInfo, AudioError>(AudioError::UnsupportedFormat);
                 }
