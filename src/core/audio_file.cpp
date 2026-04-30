@@ -104,6 +104,93 @@ static uint16_t read_be_u16(const std::vector<uint8_t>& data, size_t offset) {
         static_cast<uint16_t>(data[offset + 1]));
 }
 
+// Decode a 10-byte IEEE 754 80-bit extended-precision big-endian value
+// at `data[offset..offset+10)` into a non-negative integer (the AIFF
+// sampleRate use case). Returns std::nullopt on:
+//   * truncated input (fewer than 10 bytes available),
+//   * negative sign,
+//   * non-finite encoding (NaN/Inf — biased exponent = 0x7FFF),
+//   * subnormal encoding (biased exponent = 0 with non-zero mantissa),
+//   * non-integer value (mantissa low bits set after the integer part),
+//   * value exceeding INT32_MAX (sample rates are stored as `int` in
+//     AudioInfo — anything larger cannot be represented).
+//
+// Wire format (mirrors `encode_float80` documentation below):
+//   byte 0: sign(1) | exp_high(7)
+//   byte 1: exp_low(8)
+//   bytes 2..9: 64-bit mantissa, MSB first, with the explicit leading
+//               integer bit (so byte 2's top bit = 1 for finite normals).
+//
+// Algorithm: with biased exponent `b`, unbiased exponent e = b - 16383.
+// The mantissa M is interpreted as a Q1.63 fixed-point number, so the
+// real value is M * 2^(e - 63). For non-negative integer outputs this
+// reduces to `value = M >> (63 - e)`, valid when 0 <= e <= 63 and the
+// shifted-out low bits are zero.
+static std::optional<uint64_t>
+decode_float80_to_u64(const std::vector<uint8_t>& data, size_t offset) {
+    if (offset + 10 > data.size()) return std::nullopt;
+
+    const uint8_t b0 = data[offset];
+    const uint8_t b1 = data[offset + 1];
+
+    // Sign bit must be clear; AIFF sample rates are non-negative.
+    if ((b0 & 0x80u) != 0) return std::nullopt;
+
+    const uint16_t biased_exp =
+        static_cast<uint16_t>((static_cast<uint16_t>(b0 & 0x7Fu) << 8) |
+                               static_cast<uint16_t>(b1));
+
+    uint64_t mantissa = 0;
+    for (size_t i = 0; i < 8; ++i) {
+        mantissa = (mantissa << 8) |
+                   static_cast<uint64_t>(data[offset + 2 + i]);
+    }
+
+    // All-zero encoding -> 0.
+    if (biased_exp == 0 && mantissa == 0) return uint64_t{0};
+
+    // Subnormal (biased=0, mantissa!=0): not produced by encode_float80
+    // for non-zero finite values; reject for parser strictness.
+    if (biased_exp == 0) return std::nullopt;
+
+    // Inf / NaN: biased exponent of all 1s.
+    constexpr uint16_t kAllOnesExp = 0x7FFF;
+    if (biased_exp == kAllOnesExp) return std::nullopt;
+
+    constexpr int kBias = 16383;
+    const int unbiased = static_cast<int>(biased_exp) - kBias;
+
+    // Negative unbiased exponent: value < 1, can't be a positive integer.
+    if (unbiased < 0) return std::nullopt;
+
+    // Unbiased exponent > 63: value >= 2^64, overflows uint64_t.
+    if (unbiased > 63) return std::nullopt;
+
+    const int shift = 63 - unbiased;
+    // Low `shift` bits of the mantissa are the fractional part; for an
+    // integer result they must be zero.
+    if (shift > 0) {
+        const uint64_t frac_mask = (uint64_t{1} << shift) - 1;
+        if ((mantissa & frac_mask) != 0) return std::nullopt;
+    }
+    const uint64_t value =
+        (shift == 64) ? uint64_t{0} : (mantissa >> shift);
+    return value;
+}
+
+// Convenience wrapper: decode + range-check against int32 (AudioInfo's
+// `sample_rate` is `int`). Returns nullopt on overflow.
+static std::optional<uint32_t>
+decode_float80_to_u32(const std::vector<uint8_t>& data, size_t offset) {
+    auto v = decode_float80_to_u64(data, offset);
+    if (!v.has_value()) return std::nullopt;
+    if (v.value() >
+        static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<uint32_t>(v.value());
+}
+
 // AudioFile implementation
 AudioFile::AudioFile(const std::filesystem::path& path, AudioInfo info) noexcept
     : path_(path), info_(std::move(info)), valid_(true) {
@@ -575,11 +662,32 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
         // Check for COMM chunk
         if (compare_bytes(data, chunk_offset, magic::COMM, 4)) {
             if (chunk_size >= 18) {
+                // COMM body layout (AIFF 1.3, "Audio IFF Specification",
+                // Apple, 1989):
+                //   body off | field            | bytes
+                //   --------- ---------------- ------
+                //   0        | numChannels     | 2
+                //   2        | numSampleFrames | 4 (u32, *not* float80)
+                //   6        | sampleSize      | 2 (bits per sample)
+                //   8        | sampleRate      | 10 (IEEE 754 80-bit ext)
+                // Body starts at chunk_offset + 8.
                 info.channels = read_be_u16(data, chunk_offset + 8);
-                // frames is a 10-byte float80 - skip for now
-                info.bits_per_sample = read_be_u16(data, chunk_offset + 18);
-                // sample_rate is a 10-byte float80 - skip for now
-                // Just get 0 for now, libsndfile validates later
+                // numSampleFrames lives at chunk_offset + 10 (u32 BE).
+                // The parser does not currently expose this through
+                // AudioInfo because libsndfile cross-validates `frames`
+                // at AudioFile::open time; intentionally not decoded
+                // here to keep the parser-side surface narrow.
+                info.bits_per_sample =
+                    read_be_u16(data, chunk_offset + 14);
+                // Decode the 10-byte IEEE 80-bit extended sampleRate.
+                // Failure (non-finite, negative, non-integer, out of
+                // range) returns InvalidFormat per parser-errors.md.
+                auto sr = decode_float80_to_u32(data, chunk_offset + 16);
+                if (!sr.has_value()) {
+                    return Expected<AudioInfo, AudioError>(
+                        AudioError::InvalidFormat);
+                }
+                info.sample_rate = static_cast<int>(sr.value());
                 found_comm = true;
             }
         }
@@ -752,7 +860,10 @@ static_assert(float80_layout::kExponentBias <= float80_layout::kMaxBiasedExp,
 //     the `float80_layout` block above. No bytes beyond `out[9]` are touched.
 //
 // This function is the only place in the codebase that emits 80-bit
-// extended floats; `parse_aiff_header` does not currently decode them.
+// extended floats. The inverse decoder (`decode_float80_to_u64` near
+// the read-helpers above) is used by `parse_aiff_header` to recover the
+// integer sampleRate from the COMM chunk; if you change the wire layout
+// here, update the decoder in lockstep.
 static void encode_float80(double value, std::byte* out) {
     using namespace float80_layout;
 
