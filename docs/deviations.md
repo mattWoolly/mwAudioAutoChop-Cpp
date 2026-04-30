@@ -29,7 +29,7 @@ Format:
 
 ## KNOWN-FAILING-CURE-ATTRIBUTION-V1 — cure-attribution axis is its own audit sweep
 
-- **Commit.** `<sha>` (will be the orchestrator-paperwork commit landing alongside this entry, post-PR-#34 merge).
+- **Commit.** `772dc77` (orchestrator-paperwork commit landing this entry alongside the M-3 merge).
 - **Reviewer.** orchestrator (self-recorded after M-3 fix-agent halt; user-affirmed).
 - **Original doc said.** `docs/known-failing-tests.md` cited `M-3` as the cure for `test_integration:728` (`"Lossless end-to-end: verify exported file formats"`). The implicit assumption was that the failing assertion lived in a code path M-3 would touch.
 - **We did.** Re-attributed `:728`'s cure to a new backlog item `INT-728-FIXTURE-MISMATCH` (BACKLOG.md). The actual failure is a test-side arithmetic bug at `tests/test_integration.cpp:710` (48000 floats passed for a 2-channel/48000-frame request → libsndfile interprets as 24000 stereo frames → `write_track(..., 0, 47999)` returns `InvalidRange`). The source file is plain `SF_FORMAT_PCM_24`, not `WAVE_FORMAT_EXTENSIBLE`; M-3's parser cure cannot affect this test. M-3 itself landed clean as PR #34 (`70a7745`) cure-scoped to four `[!shouldfail]` flips only.
