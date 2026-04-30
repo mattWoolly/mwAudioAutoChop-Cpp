@@ -27,6 +27,15 @@ Format:
 - **Consequence.** If a future change to `parse_wav_header` decides that `chunk_size > remaining-file-bytes` should be treated as `InvalidFormat` outright, this manifest entry flips to `InvalidFormat` and the test still passes. No call-site implications.
 - **Re-evaluate.** When the parser-hardening epic owner picks up M-3 / M-4 / M-5, treat this entry as in-scope for that epic. Error-taxonomy consistency across the parser group matters more than any single call: if M-3/M-4/M-5 settle on a stronger "any chunk_size > remaining-bytes is `InvalidFormat`" convention, fold this case under it; if they don't, formalize the current "walker-survives → propagated through to whatever the body resolves to" rule and reference it from this entry.
 
+## M-4 dual-ds64 — head ds64 wins silently when ds64 appears in both positions
+
+- **Commit.** `039347e` (PR #35 merge), with the deviation surfaced post-merge in M-4 paperwork close-out.
+- **Reviewer.** orchestrator (self-recorded after audit-2 surfaced the case at M-4 close).
+- **Review said.** Audit-2 walked the post-cure walker behavior and noted: for an RF64 file (malformed-but-tolerated) carrying a ds64 chunk in *both* the head (before data) and the tail (after data), the production walker takes the head ds64 (sets `found_ds64 = true`, populates `rf64_data_size`), then breaks on the data chunk's 0xFFFFFFFF placeholder. The tail-scan is gated on `!found_ds64` and is therefore skipped. Head ds64 wins silently with no documented preference.
+- **We did.** Accepted the head-wins behavior as within-contract for M-4. The case is malformed (RF64 spec mandates exactly one ds64, immediately after the form chunk header per BS.2088); a malformed file with two ds64s is not a real-world artifact. Documenting the preference here rather than expanding M-4's scope to handle the case formally is the Knuth-discipline choice — fix-agents should not chase corner-case malformations across error-code boundaries.
+- **Reasoning.** The invariant M-4 established is "for RF64 files where ds64 appears after data, parse_wav_header still recovers the correct data_size." A file with ds64 in both positions is not what M-4 was scoped to address; the head-ds64 path resolves correctly, and the tail-scan's contract is unchanged ("only run when no head ds64 was seen"). Refactoring to "prefer tail ds64 over head ds64" or "compare the two and reject divergence" would expand M-4's scope to address a malformation case the test corpus does not exercise. Anti-Knuth.
+- **Consequence.** If a future RF64 fixture or real-world file surfaces with dual-ds64s and the head copy is wrong while the tail copy is right, this deviation is the entry to revisit. The cure at that point would either be "tail-scan always runs and asserts agreement when both seen" or "ds64 found at unusual position upgrades to InvalidFormat." Until that fixture exists, head-wins is the documented behavior.
+
 ## KNOWN-FAILING-VS-BACKLOG-OPTION-DRIFT-V1 — cross-doc consistency is its own audit pass
 
 - **Commit.** Will be the orchestrator-paperwork commit landing this entry alongside the INT-728 close-out (drop commit `3a86871`).

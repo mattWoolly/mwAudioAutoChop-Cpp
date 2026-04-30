@@ -784,9 +784,9 @@ TEST_CASE("parse_wav_header: RF64 with ds64 after data",
     REQUIRE(fs::exists(file));
     REQUIRE(fs::exists(manifest));
 
-    // Use the helper that, post-M-4, will feed whatever shape the parser
-    // expects (head + tail, two-pass, etc.). Today it just returns the
-    // first 64 KiB, which is what production sees through AudioFile::open.
+    // Helper returns the head + last-1 MiB splice, matching what
+    // AudioFile::open feeds parse_wav_header for RF64 inputs in
+    // production. The trailing ds64 lives in the tail slice.
     auto bytes = rf64_read_full_with_tail(file);
     auto info_result = mwaac::parse_wav_header(bytes);
     REQUIRE(info_result.has_value());

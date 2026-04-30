@@ -443,7 +443,7 @@ migration to `std::expected`-style storage happens in M-14.
   - [x] `test_integration:728` removed; `docs/known-failing-tests.md`
         entry moved to Resolved with merging commit `3a86871`.
 
-### M-4 — RF64 data placeholder confuses chunk walker
+### M-4 — RF64 data placeholder confuses chunk walker — **RESOLVED in #35 (`039347e`)**
 
 - **Defect.** `audio_file.cpp:263–317`: chunk_size == 0xFFFFFFFF placeholder
   causes the walker to skip ahead past any subsequent ds64/LIST chunks.
@@ -454,18 +454,83 @@ migration to `std::expected`-style storage happens in M-14.
 - **Tests added.**
   - Shared with FIXTURE-RF64's `ds64 after data` case.
 - **Exit criteria.**
-  - [ ] Two-pass scan, or use ds64's RIFF-size when present to cap the
+  - [x] Two-pass scan, or use ds64's RIFF-size when present to cap the
         walker, or break out of the loop after recognising RF64 + data.
-  - [ ] The helper `rf64_read_full_with_tail` in `tests/test_lossless.cpp`
-        (introduced by FIXTURE-RF64 as a documented stub returning head
-        only) is revised to feed the parser the exact shape the M-4 fix
-        expects — head-plus-tail slice, full file, or two-pass scan as
-        appropriate. Otherwise the `ds64-after-data` test will silently
-        pass by not-actually-exercising the fix. *Raised by invariant-agent
-        during Tier 1 fixture audit.*
-  - [ ] Remove the `[!shouldfail]` tag on the `ds64-after-data` test in
-        the same PR — the absence of that tag after M-4 lands is the
-        positive check that M-4 closed its invariant.
+        Chosen: two-pass scan with `AudioFile::open` head+tail splice
+        (head 64 KiB + last 1 MiB). Walker early-breaks on the
+        0xFFFFFFFF data placeholder; pass 2 scans the spliced buffer
+        for `ds64`.
+  - [x] The helper `rf64_read_full_with_tail` in `tests/test_lossless.cpp`
+        revised to return head + last 1 MiB, matching the production
+        splice shape (independently transcribed; audit-2 flagged the
+        copy-paste-vs-shared-helper trade as moderate signal).
+  - [x] Remove the `[!shouldfail]` tag on the `ds64-after-data` test
+        (`tests/test_lossless.cpp:744` pre-merge). Tag absent post-merge.
+
+### M-4-FU-TAILSCAN — RF64 tail-scan false-match window narrowing
+
+- **Defect.** Post-M-4 tail-scan in `parse_wav_header` starts at
+  `data_chunk_payload_start` (inside the head 64 KiB), exposing ~64 KiB
+  of head sample bytes to false-match against the `ds64` fourcc plus a
+  syntactically valid 24-byte trailer. Probability vanishingly small
+  (~1 in 4k across a typical RF64 file's spliced bytes per audit-2
+  estimate), but the scan window is wider than necessary — the
+  legitimate ds64-after-data trailer can only sit in the spliced tail,
+  not the head.
+- **Origin.** Audit-1 and audit-2 both flagged the false-match risk;
+  audit-2 named the mechanical cure ("narrow scan window further, e.g.
+  last 1 MiB"). Filed as own backlog item per
+  one-item-one-PR-one-audit treatment.
+- **Invariant established.** "Tail-scan for ds64 in RF64 inputs only
+  examines bytes outside the head window; head-window byte patterns
+  cannot trigger a false ds64 match."
+- **Files touched.** `src/core/audio_file.cpp` (one-line change at
+  `parse_wav_header` tail-scan loop start; replace
+  `data_chunk_payload_start` with the head/tail boundary computed from
+  the splice metadata).
+- **Tests added.**
+  - Targeted regression: an RF64 fixture whose head 64 KiB sample bytes
+    contain the literal `ds64` fourcc + 24 plausible bytes that pass
+    the chunk_size bounds check. Pre-fix: parser silently accepts the
+    in-head false ds64 and reports a wrong `data_size`. Post-fix:
+    parser ignores the in-head bytes and either resolves to
+    `InvalidFormat` (no real ds64 in tail) or to the correct
+    `data_size` (real ds64 in tail).
+- **Exit criteria.**
+  - [ ] Tail-scan starts at `head_size`, not `data_chunk_payload_start`.
+  - [ ] New regression fixture / TEST_CASE exercises the in-head false
+        match path.
+
+### M-4-FU-COVERAGE — RF64 ds64-after-data via `AudioFile::open` splice path
+
+- **Defect (coverage gap, not a code defect).** The cure-attribution
+  test for M-4 (`tests/test_lossless.cpp` `"parse_wav_header: RF64 with
+  ds64 after data"`) calls `parse_wav_header` directly via the
+  `rf64_read_full_with_tail` helper. The production path
+  (`AudioFile::open`'s head+tail splice → `parse_wav_header`) is not
+  directly tested for the ds64-after-data case. The independently-
+  transcribed helper and `AudioFile::open` could diverge silently, and
+  the helper-level test would not catch it.
+- **Origin.** Audit-1 surfaced as a non-blocking coverage suggestion at
+  M-4 close. Test-scaffold-co-evolution risk per audit-2: same logic
+  appears in both production (`audio_file.cpp:203-241`) and test helper
+  (`tests/test_lossless.cpp:579-613`), independently implemented but
+  algorithmically identical.
+- **Invariant established.** "An RF64 file with ds64-after-data, opened
+  via `AudioFile::open` (production read path), exposes the correct
+  `data_offset` and `data_size` through the `AudioInfo` returned by the
+  AudioFile."
+- **Files touched.** `tests/test_lossless.cpp` (new TEST_CASE; no
+  production code change expected).
+- **Tests added.**
+  - `AudioFile::open: RF64 with ds64 after data exposes correct
+    data_size` — opens `rf64_ds64_after.wav` via `AudioFile::open`
+    (not via the test helper), reads `audio_file.value().info()`, and
+    asserts `data_offset` / `data_size` against the manifest.
+- **Exit criteria.**
+  - [ ] New TEST_CASE exists and asserts manifest values.
+  - [ ] If `AudioFile::open`'s splice ever diverges from the helper, the
+        new TEST_CASE catches it before the helper-only test does.
 
 ### M-5 — AIFF SSND offset field assumed zero
 
