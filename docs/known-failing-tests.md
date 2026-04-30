@@ -55,12 +55,12 @@ A test that passes on the PR but is on this list is progress — update this fil
 
 ### `test_integration` — TEST_CASE `"Lossless end-to-end: verify exported file formats"` (`[integration][e2e]`)
 
-- **File.** `tests/test_integration.cpp` (currently line 662 for the TEST_CASE; failing assertion currently at line 691 on main / line 728 after PR #23; drifts).
-- **Assertion.** `REQUIRE(export_result.has_value())` for a `create_test_wav(..., 2, sample_rate, 24, 48000, ...)` source — that's 24-bit 2ch WAVE_FORMAT_EXTENSIBLE.
-- **Assertion intent.** Round-trip a 48 kHz, 2-channel, 24-bit WAVE_FORMAT_EXTENSIBLE file: open → write_track → re-open. The export must succeed.
-- **Why failing.** `write_track` does not currently support WAVE_FORMAT_EXTENSIBLE (`0xFFFE`) output. The defect is documented as **NEW-WAVEEXT-WRITE** in BACKLOG.md, anticipated to be subsumed by **M-3** (Tier 4 — Parser hardening, WAVE_FORMAT_EXTENSIBLE support).
-- **Cured by.** **M-3** (BACKLOG.md, Tier 4). Not in the current Tier 1+2 queue. Will remain failing after Tier 1+2 lands.
-- **Note.** PR #25 (FIXTURE-WAVEEXT) lands the *fixture* but not the *write* path; this test will continue failing in the same way after #25 merges. M-3's PR is the cure.
+- **File.** `tests/test_integration.cpp` (currently line 699 for the TEST_CASE; failing assertion at line 728; drifts).
+- **Assertion.** `REQUIRE(export_result.has_value())` against the `mwaac::write_track(...)` call.
+- **Assertion intent (as written).** Round-trip a 48 kHz, 2-channel, 24-bit WAV file: open → `write_track` → re-open. The export must succeed.
+- **Why failing.** **Test-side arithmetic bug, not a parser/write defect.** The local `create_test_wav` overload at `tests/test_integration.cpp:101` takes an optional `audio_data` vector; the call at `:710` passes `std::vector<float>(48000, 0.5f)` for a 2-channel/48000-frame request. libsndfile interprets 48000 floats as 24000 stereo frames, so the resulting source file has `info.frames = 24000`. `write_track(..., 0, 47999)` then trips `end_sample (47999) >= info.frames (24000)` and returns `AudioError::InvalidRange`. The source file is `SF_FORMAT_WAV | SF_FORMAT_PCM_24` — plain PCM, not `WAVE_FORMAT_EXTENSIBLE`.
+- **Cured by.** **`INT-728-FIXTURE-MISMATCH`** (BACKLOG.md). Two architectural options on the table for that item: (a) fix the arithmetic so the test round-trips plain 24-bit PCM, or (b) rewrite to use the `tests/fixtures/waveext/` artifact (now-parseable post-M-3) so the test exercises the genuine 24-bit 2ch EXTENSIBLE round-trip the comment describes.
+- **Audit-pass-discipline note.** This entry's prior `Cured by: M-3` claim was an unaudited cure-attribution that survived three doc audit passes (test-identity, line-shift schema, AIFF cluster) because each of those swept different axes. M-3's fix-agent caught it during dispatch on 2026-04-29 (the 4th catch on this doc, first on the cure-attribution axis). See `feedback_audit_pre_staged_docs_along_every_axis.md`. M-3 itself landed clean as PR #34 (`70a7745`) — its real cure scope was the four `[waveext]`-tagged tests in `test_audio_file.cpp` / `test_lossless.cpp`, none of which are in this Active set (they were `[!shouldfail]`-tagged and visible only in the regression-by-name check).
 
 ### `test_integration` — TEST_CASE `"Combined workflow: reference then blind analysis"` (`[integration][combined]`)
 

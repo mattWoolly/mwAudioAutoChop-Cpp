@@ -350,23 +350,100 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 4 — Parser hardening
 
-### M-3 — WAVE_FORMAT_EXTENSIBLE (0xFFFE) rejected
+### M-3 — WAVE_FORMAT_EXTENSIBLE (0xFFFE) rejected — **RESOLVED in #34 (`70a7745`)**
 
-- **Defect.** `audio_file.cpp:279–286` returns UnsupportedFormat for the
-  format tag most modern DAWs emit.
+- **Status.** RESOLVED 2026-04-29. Parser now accepts 0xFFFE when the SubFormat
+  GUID identifies PCM (`KSDATAFORMAT_SUBTYPE_PCM`) or IEEE-float
+  (`KSDATAFORMAT_SUBTYPE_IEEE_FLOAT`); other SubFormats return
+  `UnsupportedFormat`; truncated EXTENSIBLE structures return `InvalidFormat`
+  per the local-view rule in `docs/decisions/parser-errors.md`. Four
+  `[!shouldfail]` tags lifted in the same PR. Audit APPROVED with no
+  must-fix; GUID byte layout verified against Microsoft's canonical
+  `mmreg.h`.
+- **Note on the original "previously-failing integration tests" exit
+  criterion.** The original criterion claimed `Lossless end-to-end: verify
+  exported file formats` (`tests/test_integration.cpp:728`) would now pass.
+  M-3's fix-agent surfaced that the attribution was wrong — that test fails
+  for a test-side arithmetic bug, not a WAVE_FORMAT_EXTENSIBLE parser
+  defect. The cure for `:728` is tracked separately as
+  `INT-728-FIXTURE-MISMATCH` (below). See `docs/known-failing-tests.md` for
+  the audit-pass-discipline note on the 4th catch (first on the
+  cure-attribution axis).
+- **Defect.** `audio_file.cpp:279–286` returned UnsupportedFormat for the
+  format tag most modern DAWs emit. (Line range was stale at dispatch; the
+  actual return was at `:302` — not material to the cure.)
 - **Invariant established.** "parse_wav_header accepts 0xFFFE when the
   SubFormat GUID identifies PCM or IEEE-float; all other subtypes return
   UnsupportedFormat."
 - **Depends on.** FIXTURE-WAVEEXT.
-- **Files touched.** `src/core/audio_file.cpp`.
+- **Files touched.** `src/core/audio_file.cpp`, `tests/test_audio_file.cpp`,
+  `tests/test_lossless.cpp`.
 - **Tests added.**
-  - `parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM accepted`.
-  - `parse_wav_header: extensible with non-PCM/float subformat rejected`.
+  - `parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM accepted` (landed via
+    FIXTURE-WAVEEXT, untagged `[!shouldfail]` by M-3).
+  - `parse_wav_header: extensible with non-PCM/float subformat rejected`
+    (same).
 - **Exit criteria.**
-  - [ ] Both previously-failing integration tests
-        (`Lossless end-to-end: verify exported file formats`) now pass.
-  - [ ] Remove the `[!shouldfail]` tags on the four EXTENSIBLE tests added
-        by FIXTURE-WAVEEXT in the same PR.
+  - [x] WAVE_FORMAT_EXTENSIBLE with PCM/IEEE-float SubFormat accepted;
+        unknown SubFormat returns `UnsupportedFormat`.
+  - [x] Truncated EXTENSIBLE structure returns `InvalidFormat` (parser-errors.md
+        local-view rule).
+  - [x] The four `[!shouldfail]` tags on the EXTENSIBLE tests
+        (`tests/test_audio_file.cpp:151, 168, 185`,
+        `tests/test_lossless.cpp:434`) removed in the same PR; tests now pass
+        under their normal assertions.
+  - [~] Original criterion "the previously-failing integration test
+        `Lossless end-to-end: verify exported file formats` now passes" was
+        **based on an incorrect cure attribution** — that test was never
+        going to be cured by M-3. Re-attributed to `INT-728-FIXTURE-MISMATCH`.
+
+### INT-728-FIXTURE-MISMATCH — `Lossless end-to-end` integration test fails for test-side reason, not parser
+
+- **Defect.** `tests/test_integration.cpp` has a local `create_test_wav`
+  overload at `:101` whose 6th parameter is an optional `audio_data` vector.
+  The call at `:710` passes 48000 floats for a 2-channel / 48000-frame
+  request. libsndfile interprets 48000 floats as 24000 stereo frames, so
+  the source file has `info.frames = 24000`. `write_track(..., 0, 47999)`
+  then trips `end_sample (47999) >= info.frames (24000)` and returns
+  `AudioError::InvalidRange`. The source file is
+  `SF_FORMAT_WAV | SF_FORMAT_PCM_24` — plain PCM, not WAVE_FORMAT_EXTENSIBLE.
+- **Origin.** Surfaced by M-3's fix-agent (PR #34) during validation-gate
+  verification. Previously misattributed to NEW-WAVEEXT-WRITE / M-3 in
+  `docs/known-failing-tests.md`; corrected at orchestrator paperwork
+  alongside M-3's merge.
+- **Architectural decision required (do not skip).** Two options have
+  meaningfully different intent:
+  - **(a) Fix arithmetic, round-trip plain 24-bit PCM.** Change `:709` to
+    `std::vector<float>(48000 * 2, 0.5f)` (or change `end_sample` to `23999`
+    and `samples` count to match). The test then exercises a plain PCM WAV
+    round-trip — useful regression for `write_track` but does NOT exercise
+    WAVE_FORMAT_EXTENSIBLE at all. Rename the TEST_CASE accordingly so the
+    name doesn't lie about what it tests.
+  - **(b) Rewrite to use `tests/fixtures/waveext/` artifact.** Replace the
+    `create_test_wav` call with a load of the FIXTURE-WAVEEXT 24-bit 2ch
+    EXTENSIBLE file (now parseable post-M-3). The test then exercises the
+    genuine end-to-end round-trip the original comment described. **This
+    matches the test name as written.** Requires the EXTENSIBLE *write*
+    path to also work — which is a separate gap (`write_track` writes plain
+    PCM, not EXTENSIBLE), so option (b) implicitly depends on a write-path
+    item that doesn't exist yet.
+- **Recommendation.** Surface the choice; do not pre-decide. Option (b) is
+  the architecturally clean answer but blocks on EXTENSIBLE-write support
+  that's not yet on the backlog (call it `M-3-EMIT` or similar when filed).
+  Option (a) is mechanical and lands in <1 hour but leaves the test name
+  lying about what it tests. A third path — drop this TEST_CASE entirely
+  and let `tests/test_lossless.cpp` `"Lossless: 24-bit 2-ch extensible WAV
+  round-trip preserves bytes"` (M-3 made this PASS) be the canonical
+  EXTENSIBLE round-trip — should also be considered.
+- **Files touched (depending on option).** `tests/test_integration.cpp`
+  for (a); `tests/test_integration.cpp` plus a new EXTENSIBLE-emit item for
+  (b); zero for (c) (delete-the-TEST_CASE path).
+- **Exit criteria.**
+  - [ ] Architectural option chosen and recorded in `docs/deviations.md`
+        if it differs from the most-obvious read.
+  - [ ] `test_integration:728` either passes (a/b) or is removed (c); in
+        all cases, `docs/known-failing-tests.md` `:728` entry moves to
+        Resolved with the merging commit.
 
 ### M-4 — RF64 data placeholder confuses chunk walker
 
