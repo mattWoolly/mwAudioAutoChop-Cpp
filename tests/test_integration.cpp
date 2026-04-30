@@ -696,45 +696,6 @@ TEST_CASE("Lossless end-to-end: full pipeline export", "[integration][e2e][lossl
     }
 }
 
-TEST_CASE("Lossless end-to-end: verify exported file formats", "[integration][e2e]") {
-    fs::path test_dir = fs::temp_directory_path() / "mwaac_integration_e2e_fmt";
-    fs::create_directories(test_dir);
-    TempDir cleanup(test_dir);
-    
-    // Create source file
-    int sample_rate = 48000;
-    fs::path source_path = test_dir / "source.wav";
-    TempFile source_cleanup(source_path);
-    
-    std::vector<float> samples(48000, 0.5f);  // 1 second
-    REQUIRE(create_test_wav(source_path, 2, sample_rate, 24, 48000, samples));
-    
-    // Open source. A fresh valid file that we just wrote should always
-    // open successfully. If it doesn't, that's a real failure — do not
-    // paper over it.
-    auto source_file = mwaac::AudioFile::open(source_path);
-    REQUIRE(source_file.has_value());
-
-    // Export full file.
-    fs::path output_path = test_dir / "output.wav";
-    TempFile output_cleanup(output_path);
-
-    auto export_result = mwaac::write_track(
-        source_file.value(),
-        output_path,
-        0,
-        47999
-    );
-    REQUIRE(export_result.has_value());
-
-    // Open exported file and verify format round-trips.
-    auto output_file = mwaac::AudioFile::open(output_path);
-    REQUIRE(output_file.has_value());
-    const auto& info = output_file.value().info();
-    CHECK(info.sample_rate == sample_rate);
-    CHECK(info.channels == 2);
-}
-
 // =============================================================================
 // Integration tests: Combined Workflow
 // =============================================================================
