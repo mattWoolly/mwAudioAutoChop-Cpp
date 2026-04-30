@@ -208,6 +208,158 @@ TEST_CASE("parse_wav_header: extensible with unknown SubFormat returns Unsupport
 }
 
 // ============================================================================
+// M-5 — AIFF SSND offset field is honored.
+//
+// The SSND chunk body begins with two u32 fields — `offset` and
+// `block_size` — followed by `offset` bytes of alignment padding and
+// then the sample data. Pre-M-5 the parser skipped past the 8 header
+// bytes but did not read the `offset` value, so any non-zero offset
+// silently mis-located `data_offset` (and over-counted `data_size`).
+//
+// Two coverage angles for the fix:
+//   (i)  Success path: a *valid* in-bounds offset must be applied —
+//        `data_offset` shifts by the offset, `data_size` decreases by
+//        the same amount. Asserted by the inline-synthesized AIFF
+//        below.
+//   (ii) Rejection path: an offset that places the data region outside
+//        the SSND chunk body returns `InvalidFormat`. Covered by the
+//        FIXTURE-MALFORMED `aiff_ssnd_offset_nonzero.aiff` entry once
+//        its `-pending-M-5` suffix is dropped (M-5 PR flips the
+//        manifest atomically with this fix).
+//
+// We synthesize bytes inline rather than carrying a new fixture file —
+// the test exercises one specific arithmetic invariant of the parser
+// and a fixture would add round-trip surface (CMake wiring, manifest,
+// generator) without buying anything the inline blob does not already
+// give us.
+// ============================================================================
+
+namespace {
+
+// Build a syntactically-correct AIFF blob with a non-zero, in-bounds
+// SSND offset. Layout:
+//
+//   [ 0.. 3] "FORM"
+//   [ 4.. 7] form size (be u32)
+//   [ 8..11] "AIFF"
+//   [12..15] "COMM"
+//   [16..19] comm chunk size (= 18, be u32)
+//   [20..21] channels (be u16)            = 2
+//   [22..25] num frames (be u32)          = 0 (parser ignores)
+//   [26..27] bits per sample (be u16)     = 16
+//   [28..37] sample rate (float80, zero — parser does not decode)
+//   [38..41] "SSND"
+//   [42..45] ssnd chunk size (be u32)     = 8 + offset + payload
+//   [46..49] ssnd offset (be u32)         = 4 (the M-5 case)
+//   [50..53] ssnd block_size (be u32)     = 0
+//   [54..57] 4 bytes of alignment padding (the "offset" pad)
+//   [58..73] 16 bytes of sample payload
+//
+// data_offset is the absolute byte index of the first sample byte in
+// the buffer; with the layout above, that is 58. data_size is 16.
+std::vector<uint8_t>
+build_aiff_with_ssnd_offset(uint32_t ssnd_offset, uint32_t payload_bytes) {
+    auto push_be_u16 = [](std::vector<uint8_t>& out, uint16_t v) {
+        out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+        out.push_back(static_cast<uint8_t>(v & 0xFFu));
+    };
+    auto push_be_u32 = [](std::vector<uint8_t>& out, uint32_t v) {
+        out.push_back(static_cast<uint8_t>((v >> 24) & 0xFFu));
+        out.push_back(static_cast<uint8_t>((v >> 16) & 0xFFu));
+        out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+        out.push_back(static_cast<uint8_t>(v & 0xFFu));
+    };
+    auto push_tag = [](std::vector<uint8_t>& out, const char* tag) {
+        for (int i = 0; i < 4; ++i) {
+            out.push_back(static_cast<uint8_t>(tag[i]));
+        }
+    };
+
+    std::vector<uint8_t> b;
+
+    push_tag(b, "FORM");
+    push_be_u32(b, 0u);  // form size: parser does not validate
+    push_tag(b, "AIFF");
+
+    // COMM chunk
+    push_tag(b, "COMM");
+    push_be_u32(b, 18u);
+    push_be_u16(b, 2u);   // channels
+    push_be_u32(b, 0u);   // num_frames (parser does not decode)
+    push_be_u16(b, 16u);  // bits_per_sample
+    for (int i = 0; i < 10; ++i) b.push_back(0u);  // sample-rate float80 zero
+
+    // SSND chunk
+    push_tag(b, "SSND");
+    const uint32_t ssnd_chunk_size = 8u + ssnd_offset + payload_bytes;
+    push_be_u32(b, ssnd_chunk_size);
+    push_be_u32(b, ssnd_offset);  // OFFSET — the field M-5 must read
+    push_be_u32(b, 0u);            // block_size
+    for (uint32_t i = 0; i < ssnd_offset; ++i) b.push_back(0xAAu);  // pad
+    for (uint32_t i = 0; i < payload_bytes; ++i) {
+        b.push_back(static_cast<uint8_t>(i & 0xFFu));
+    }
+    return b;
+}
+
+}  // namespace
+
+TEST_CASE("parse_aiff_header: non-zero SSND offset is honored",
+          "[audio_file][m-5]") {
+    // Inline-synthesized AIFF: SSND offset = 4, payload = 16 bytes.
+    // Expected post-M-5 behaviour:
+    //   data_offset = (SSND chunk_offset = 38) + 8 (chunk hdr)
+    //               + 8 (offset+block_size fields) + 4 (alignment pad) = 58
+    //   data_size   = chunk_size (8 + 4 + 16 = 28) - 8 - 4 = 16
+    constexpr uint32_t kOffset  = 4;
+    constexpr uint32_t kPayload = 16;
+    const auto bytes = build_aiff_with_ssnd_offset(kOffset, kPayload);
+
+    auto result = mwaac::parse_aiff_header(bytes);
+    REQUIRE(result.has_value());
+    const auto& info = result.value();
+    CHECK(info.format == "AIFF");
+    CHECK(info.channels == 2);
+    // Note: parse_aiff_header does not currently decode bits_per_sample
+    // or sample_rate from the COMM chunk in a spec-correct way (Mi-1
+    // territory). libsndfile cross-validates these at AudioFile::open
+    // time. We deliberately do not assert bits_per_sample or
+    // sample_rate here so this M-5 test remains scoped to the SSND
+    // offset-handling invariant.
+
+    // Load-bearing M-5 invariant: data_offset is shifted by kOffset
+    // beyond the SSND-body-plus-8 anchor, and data_size is reduced by
+    // the same amount.
+    CHECK(info.data_offset == 58);
+    CHECK(info.data_size == static_cast<int64_t>(kPayload));
+
+    // Sanity-check the math against the constants above so a future
+    // refactor of the inline AIFF layout cannot pass this test
+    // accidentally without exercising the offset path.
+    CHECK(info.data_offset + info.data_size
+          == static_cast<int64_t>(bytes.size()));
+}
+
+TEST_CASE("parse_aiff_header: zero SSND offset is byte-identical to pre-M-5",
+          "[audio_file][m-5]") {
+    // Regression guard: with offset = 0, the parser must produce the
+    // same data_offset / data_size as the pre-M-5 code path. This is
+    // the common-case AIFF that every C-1 round-trip exercises; if
+    // M-5 broke it, all AIFF round-trips would regress.
+    constexpr uint32_t kOffset  = 0;
+    constexpr uint32_t kPayload = 16;
+    const auto bytes = build_aiff_with_ssnd_offset(kOffset, kPayload);
+
+    auto result = mwaac::parse_aiff_header(bytes);
+    REQUIRE(result.has_value());
+    const auto& info = result.value();
+    // SSND chunk_offset = 38 (after FORM/AIFF + COMM 26).
+    // With offset=0: data_offset = 38 + 8 + 8 = 54.
+    CHECK(info.data_offset == 54);
+    CHECK(info.data_size == static_cast<int64_t>(kPayload));
+}
+
+// ============================================================================
 // FIXTURE-MALFORMED — parametric malformed-header parser tests.
 //
 // Walks the manifest checked in at tests/fixtures/malformed/manifest.txt

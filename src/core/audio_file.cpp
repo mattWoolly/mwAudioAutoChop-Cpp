@@ -586,11 +586,30 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
         // Check for SSND chunk
         else if (compare_bytes(data, chunk_offset, magic::SSND, 4)) {
             found_ssnd = true;
+            // SSND body layout (AIFF 1.3):
+            //   u32 offset | u32 block_size | <offset bytes of pad> | sample bytes
+            // Sample data begins at (SSND body start) + 8 + offset; the
+            // offset value is alignment padding the writer may insert.
+            // Available sample-byte budget is chunk_size - 8 - offset.
             data_offset = static_cast<int64_t>(chunk_offset + 8);
             if (chunk_size >= 8) {
-                // SSND has initial offset and block size
-                data_size = static_cast<int64_t>(chunk_size - 8);
-                data_offset += 8; // Skip the offset and block size fields
+                // Read the 4-byte big-endian SSND offset field. M-5: the
+                // pre-fix code skipped past these bytes without reading
+                // them; non-zero offsets silently mis-located data.
+                const uint32_t ssnd_offset =
+                    read_be_u32(data, chunk_offset + 8);
+                // Reject if the offset alone exceeds the remaining chunk
+                // body (would yield negative data_size). Local-view rule
+                // per docs/decisions/parser-errors.md: structural
+                // inconsistency the local check detects -> InvalidFormat.
+                if (static_cast<uint64_t>(ssnd_offset) >
+                    static_cast<uint64_t>(chunk_size - 8)) {
+                    return Expected<AudioInfo, AudioError>(
+                        AudioError::InvalidFormat);
+                }
+                data_size = static_cast<int64_t>(chunk_size - 8 - ssnd_offset);
+                data_offset += 8; // Skip the offset and block_size fields
+                data_offset += static_cast<int64_t>(ssnd_offset); // Skip alignment pad
             }
         }
 
