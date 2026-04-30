@@ -15,9 +15,25 @@ TEST_CASE("Resampling doubles sample count when doubling rate", "[audio]") {
     mwaac::AudioBuffer input;
     input.sample_rate = 22050;
     input.samples.resize(22050);  // 1 second at 22050
-    
+
     auto output = mwaac::resample_linear(input, 44100);
-    
-    REQUIRE(output.sample_rate == 44100);
-    REQUIRE(output.samples.size() == 44100);  // Still 1 second
+
+    REQUIRE(output.has_value());
+    REQUIRE(output.value().sample_rate == 44100);
+    REQUIRE(output.value().samples.size() == 44100);  // Still 1 second
+}
+
+TEST_CASE("resample_linear: sample_rate == 0 returns ResampleError",
+          "[audio][error_path]") {
+    // Mi-3 regression test: a zero source sample_rate would historically
+    // divide by zero inside resample_linear. The fallible signature now
+    // surfaces this as AudioError::ResampleError instead.
+    mwaac::AudioBuffer input;
+    input.sample_rate = 0;
+    input.samples.resize(1024);
+
+    auto output = mwaac::resample_linear(input, 44100);
+
+    REQUIRE_FALSE(output.has_value());
+    REQUIRE(output.error() == mwaac::AudioError::ResampleError);
 }
