@@ -805,6 +805,113 @@ TEST_CASE("parse_wav_header: RF64 with ds64 after data",
     REQUIRE(info.data_size == expected_data_size);
 }
 
+// M-4-FU-TAILSCAN regression: an RF64 buffer whose `data` payload happens
+// to contain the literal `ds64` fourcc plus a syntactically valid 24-byte
+// trailer must NOT trigger a false ds64 match by the tail-scan. The buffer
+// is built with no real ds64 chunk anywhere; pre-fix, the tail-scan
+// started at the data-chunk-payload offset (inside the head window) and
+// would have matched the in-payload `ds64` bytes, returning a wrong
+// data_size from the synthesized trailer. Post-fix, the tail-scan starts
+// at kHeadSize (= 65536), which is past the end of this small inline
+// buffer; the loop iterates zero times, no ds64 is found, and the parser
+// returns InvalidFormat per parser-errors.md (a well-formed RF64 must
+// carry a ds64 chunk).
+//
+// Cure-attribution: this exercises the tightened scan window from
+// M-4-FU-TAILSCAN. It cures no Active known-failing entry — it's a
+// latent-risk closure of the false-match window opened by M-4 (PR #35).
+TEST_CASE("parse_wav_header: in-head ds64-shaped sample bytes are not "
+          "false-matched by tail-scan",
+          "[lossless][rf64]") {
+    // Inline RF64 buffer with no real ds64. Layout:
+    //   [0..3]   "RF64"
+    //   [4..7]   0xFFFFFFFF      RIFF size placeholder (real size in ds64,
+    //                            absent here on purpose)
+    //   [8..11]  "WAVE"
+    //   [12..15] "fmt "
+    //   [16..19] 16              fmt chunk_size (PCM)
+    //   [20..21] 1               audio_format = PCM
+    //   [22..23] 1               channels = 1
+    //   [24..27] 48000           sample_rate
+    //   [28..31] 96000           byte_rate
+    //   [32..33] 2               block_align
+    //   [34..35] 16              bits_per_sample
+    //   [36..39] "data"
+    //   [40..43] 0xFFFFFFFF      data chunk_size placeholder (RF64)
+    //   [44..47] "ds64"          *FALSE* in-head ds64 fourcc
+    //   [48..51] 24              false ds64 chunk_size (passes >=24 check)
+    //   [52..59] 0               false RIFF size (8 bytes)
+    //   [60..67] 1234567890      false data_size (would be returned pre-fix)
+    //   [68..75] 0               false sample_count (8 bytes)
+    //   [76.....] padding to ensure data.size() >= 80 (so scan_end >= 44)
+    std::vector<uint8_t> buf;
+    auto put_u16_le = [&](uint16_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    };
+    auto put_u32_le = [&](uint32_t v) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+    };
+    auto put_u64_le = [&](uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            buf.push_back(static_cast<uint8_t>((v >> (8 * i)) & 0xFF));
+        }
+    };
+    auto put_fourcc = [&](const char* s) {
+        for (int i = 0; i < 4; ++i) buf.push_back(static_cast<uint8_t>(s[i]));
+    };
+
+    put_fourcc("RF64");
+    put_u32_le(0xFFFFFFFFu);            // RIFF size placeholder
+    put_fourcc("WAVE");
+    put_fourcc("fmt ");
+    put_u32_le(16);                      // fmt chunk_size
+    put_u16_le(1);                       // PCM
+    put_u16_le(1);                       // 1 channel
+    put_u32_le(48000);                   // sample_rate
+    put_u32_le(96000);                   // byte_rate
+    put_u16_le(2);                       // block_align
+    put_u16_le(16);                      // bits_per_sample
+    put_fourcc("data");
+    put_u32_le(0xFFFFFFFFu);             // data chunk_size placeholder
+    REQUIRE(buf.size() == 44);           // sanity: data payload starts at 44
+
+    // False ds64 trailer planted INSIDE the data payload. Pre-fix, the
+    // tail-scan starts at offset 44 (= data_chunk_payload_start) and
+    // matches these bytes, reading bytes 60..67 as a wrong data_size.
+    put_fourcc("ds64");                  // [44..47] false fourcc
+    put_u32_le(24);                      // [48..51] chunk_size = 24 (>= 24)
+    put_u64_le(0);                       // [52..59] false RIFF size
+    constexpr uint64_t kFalseDataSize = 1234567890ULL;
+    put_u64_le(kFalseDataSize);          // [60..67] false data_size
+    put_u64_le(0);                       // [68..75] false sample_count
+
+    // Pad to keep buf.size() comfortably > 36 so the tail-scan precondition
+    // (data.size() >= 36) holds and scan_end (= data.size() - 36) >= 44
+    // (which is data_chunk_payload_start) — i.e., the pre-fix scan would
+    // actually iterate to the false fourcc.
+    while (buf.size() < 128) buf.push_back(0);
+    REQUIRE(buf.size() < /* kHeadSize */ 65536);
+    REQUIRE(buf.size() >= 80);           // scan_end >= 44
+
+    auto info_result = mwaac::parse_wav_header(buf);
+
+    // Post-fix: tail-scan starts at kHeadSize (65536) which exceeds
+    // buf.size(); the loop iterates zero times. No ds64 found anywhere
+    // (walker pass 1 saw the data placeholder and broke; tail-scan saw
+    // nothing). Per the post-loop hardening, an RF64 with no ds64 is
+    // structurally inconsistent -> InvalidFormat (parser-errors.md
+    // local-view rule).
+    //
+    // Pre-fix this assertion would have FAILED: info_result.has_value()
+    // would have been true with info.data_size == 1234567890.
+    REQUIRE_FALSE(info_result.has_value());
+    REQUIRE(info_result.error() == mwaac::AudioError::InvalidFormat);
+}
+
 // [!shouldfail] — fails today because build_wav_header writes data_size
 // as a uint32, truncating the 4 GiB+ payload range. The output file's
 // header claims the wrong length, write_track silently produces a
