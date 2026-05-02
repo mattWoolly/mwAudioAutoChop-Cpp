@@ -64,12 +64,23 @@ an RF64 file whose `ds64` chunk appears immediately after `WAVE`.
 ### INV-RF64-2 — RF64 with `ds64` after data still parses
 
 `parse_wav_header` recovers `data_offset` / `data_size` correctly when
-`ds64` follows the `data` chunk. *Currently violated.*
+`ds64` follows the `data` chunk. End-to-end via `AudioFile::open`,
+production pipeline returns the parser-recovered `AudioInfo` even when
+libsndfile rejects the file at `sf_open`.
 
-- **Owner.** `parse_wav_header` + `tests/fixtures/rf64/rf64_ds64_after.wav`.
-- **Enforcement.** `parse_wav_header: RF64 with ds64 after data`
-  `[!shouldfail]` in `tests/test_lossless.cpp`. Tag drops when M-4 lands.
-- **Dependents.** FIXTURE-RF64, M-4.
+- **Owner.** `parse_wav_header` + `AudioFile::open` (libsndfile-rejected
+  RF64 fallback) + `tests/fixtures/rf64/rf64_ds64_after.wav`.
+- **Enforcement.**
+  - Helper-direct (M-4 cure-attribution): `parse_wav_header: RF64 with
+    ds64 after data` in `tests/test_lossless.cpp`.
+  - Production-pipeline (M-4-FU-LIBSNDFILE-GATE cure-attribution):
+    `AudioFile::open: RF64 with ds64 after data exposes correct
+    data_size` in `tests/test_lossless.cpp`.
+  - In-head false-match regression (M-4-FU-TAILSCAN): `parse_wav_header:
+    in-head ds64-shaped sample bytes are not false-matched by tail-scan`
+    in `tests/test_lossless.cpp`.
+- **Dependents.** FIXTURE-RF64, M-4 (RESOLVED #35), M-4-FU-TAILSCAN
+  (RESOLVED #38), M-4-FU-LIBSNDFILE-GATE (RESOLVED #40).
 
 ### INV-RF64-3 — RF64 round-trip is byte-identical and format-preserving
 

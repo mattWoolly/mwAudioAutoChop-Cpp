@@ -467,7 +467,7 @@ migration to `std::expected`-style storage happens in M-14.
   - [x] Remove the `[!shouldfail]` tag on the `ds64-after-data` test
         (`tests/test_lossless.cpp:744` pre-merge). Tag absent post-merge.
 
-### M-4-FU-TAILSCAN — RF64 tail-scan false-match window narrowing
+### M-4-FU-TAILSCAN — RF64 tail-scan false-match window narrowing — **RESOLVED in #38 (`e4c572a`)**
 
 - **Defect.** Post-M-4 tail-scan in `parse_wav_header` starts at
   `data_chunk_payload_start` (inside the head 64 KiB), exposing ~64 KiB
@@ -497,11 +497,10 @@ migration to `std::expected`-style storage happens in M-14.
     `InvalidFormat` (no real ds64 in tail) or to the correct
     `data_size` (real ds64 in tail).
 - **Exit criteria.**
-  - [ ] Tail-scan starts at `head_size`, not `data_chunk_payload_start`.
-  - [ ] New regression fixture / TEST_CASE exercises the in-head false
-        match path.
+  - [x] Tail-scan starts at `kHeadSize` (file-scope `static constexpr` per cure shape (γ)), not `data_chunk_payload_start`. *Implemented at `src/core/audio_file.cpp:71` (lifted constant) + `:593` (loop start).*
+  - [x] New regression TEST_CASE exercises the in-head false-match path. *`parse_wav_header: in-head ds64-shaped sample bytes are not false-matched by tail-scan` in `tests/test_lossless.cpp` — inline 128-byte buffer with planted false `ds64` fourcc + 24-byte trailer; pre-fix returns wrong `data_size`, post-fix returns `InvalidFormat`.*
 
-### M-4-FU-COVERAGE — RF64 ds64-after-data via `AudioFile::open` splice path
+### M-4-FU-COVERAGE — RF64 ds64-after-data via `AudioFile::open` splice path — **RESOLVED via redirect in #39 (`0c1a9cf`); production-pipeline gap re-attributed to M-4-FU-LIBSNDFILE-GATE**
 
 - **Defect (coverage gap, not a code defect).** The cure-attribution
   test for M-4 (`tests/test_lossless.cpp` `"parse_wav_header: RF64 with
@@ -527,12 +526,12 @@ migration to `std::expected`-style storage happens in M-14.
     data_size` — opens `rf64_ds64_after.wav` via `AudioFile::open`
     (not via the test helper), reads `audio_file.value().info()`, and
     asserts `data_offset` / `data_size` against the manifest.
+- **Resolution note.** The original filing predicted a helper-vs-splice co-evolution risk (audit-2 of M-4). When the COVERAGE fix-agent drafted the TEST_CASE to mandate, it failed on main with `ReadError` from `AudioFile::open`'s libsndfile cross-validation gate — surfacing a different gap-family (libsndfile-gate axis missed by M-4 audits). Re-attributed to **M-4-FU-LIBSNDFILE-GATE** (filed below). PR #39 landed the drafted TEST_CASE under that attribution with `[!shouldfail]` per C-3 precedent; PR #40 (LIBSNDFILE-GATE production fix) un-tagged it atomic with the cure. The TEST_CASE now serves both cure-attribution roles: libsndfile-fallback regression for LIBSNDFILE-GATE, and the helper-vs-splice co-evolution check originally predicted by COVERAGE.
 - **Exit criteria.**
-  - [ ] New TEST_CASE exists and asserts manifest values.
-  - [ ] If `AudioFile::open`'s splice ever diverges from the helper, the
-        new TEST_CASE catches it before the helper-only test does.
+  - [x] New TEST_CASE exists and asserts manifest values. *`AudioFile::open: RF64 with ds64 after data exposes correct data_size` in `tests/test_lossless.cpp` (un-tagged as of #40).*
+  - [x] If `AudioFile::open`'s splice ever diverges from the helper, the new TEST_CASE catches it before the helper-only test does. *Production-path direct via `AudioFile::open`; helper-direct test at `tests/test_lossless.cpp` `parse_wav_header: RF64 with ds64 after data` unchanged.*
 
-### M-4-FU-LIBSNDFILE-GATE — `AudioFile::open` libsndfile cross-validation discards parser-recovered AudioInfo for RF64 ds64-after-data
+### M-4-FU-LIBSNDFILE-GATE — `AudioFile::open` libsndfile cross-validation discards parser-recovered AudioInfo for RF64 ds64-after-data — **RESOLVED in #40 (`65200b9`)**
 
 - **Defect.** `AudioFile::open` runs two validation steps in sequence: (1) head+tail splice → `parse_wav_header` (M-4-cured), and (2) `sf_open` libsndfile cross-validation at `src/core/audio_file.cpp:343-347`. Libsndfile 1.2.2 returns "Unspecified internal error" on RF64 ds64-after-data files (verified by direct probe on `tests/fixtures/rf64/rf64_ds64_after.wav`; the ds64-before-data fixture is accepted). `AudioFile::open` then returns `AudioError::ReadError` at `:345`, **discarding the parser's recovered `AudioInfo`** (including the M-4-cured `data_offset` / `data_size`) before it reaches the caller. M-4's parser-scoped invariant (INV-RF64-2) holds; the production-pipeline-scoped invariant does not.
 - **Origin.** Surfaced by M-4-FU-COVERAGE fix-agent at pre-PR halt-and-surface (mandate-explicit halt clause: "new test FAILS on main" → governance escalation). Audit-1 and audit-2 of M-4 swept the helper-vs-splice axis (closed by M-4-FU-COVERAGE filing) and the post-cure tail-scan window axis (closed by M-4-FU-TAILSCAN filing). The libsndfile-gate axis was not swept until COVERAGE fix-agent's halt caught it. Same gap-family as `KNOWN-FAILING-CURE-ATTRIBUTION-V1` (axis-coverage gap on M-4 close-out paperwork).
@@ -544,10 +543,10 @@ migration to `std::expected`-style storage happens in M-14.
   - Optionally (fix-agent's call): a separate TEST_CASE asserting `info.frames` is correctly derived from `data_size` when libsndfile fails, if the COVERAGE redirect's existing assertions don't already cover it.
 - **Audit shape.** Single Tier 4 default. Item is not UB-class.
 - **Exit criteria.**
-  - [ ] `AudioFile::open` does not return `ReadError` when `format == AudioFormat::RF64 && parse_wav_header succeeded && sf_open failed`; instead returns the parser's `AudioInfo` with `info.frames` derived.
-  - [ ] Non-RF64 libsndfile-failure still returns `ReadError`.
-  - [ ] RF64 libsndfile-success still uses libsndfile's overrides.
-  - [ ] Redirected M-4-FU-COVERAGE TEST_CASE's `[!shouldfail]` tag removed in the same PR (atomic with the production fix); test passes via strict assertion.
+  - [x] `AudioFile::open` does not return `ReadError` when `format == AudioFormat::RF64 && parse_wav_header succeeded && sf_open failed`; instead returns the parser's `AudioInfo` with `info.frames` derived. *Implemented at `src/core/audio_file.cpp:344-388` (cross-validation block restructured for RF64 fallback).*
+  - [x] Non-RF64 libsndfile-failure still returns `ReadError`. *Verified at `:354`.*
+  - [x] RF64 libsndfile-success still uses libsndfile's overrides. *Verified in the `else` arm at `:368-388`.*
+  - [x] Redirected M-4-FU-COVERAGE TEST_CASE's `[!shouldfail]` tag removed in the same PR (atomic with the production fix); test passes via strict assertion. *Verified across all 5 test-running CI jobs (Linux Debug + Release, sanitizers, macOS Debug + Release).*
 
 ### M-5 — AIFF SSND offset field assumed zero — **RESOLVED in #36 (`a1654a1`)**
 
