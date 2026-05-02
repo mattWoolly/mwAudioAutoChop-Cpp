@@ -532,6 +532,23 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] If `AudioFile::open`'s splice ever diverges from the helper, the
         new TEST_CASE catches it before the helper-only test does.
 
+### M-4-FU-LIBSNDFILE-GATE — `AudioFile::open` libsndfile cross-validation discards parser-recovered AudioInfo for RF64 ds64-after-data
+
+- **Defect.** `AudioFile::open` runs two validation steps in sequence: (1) head+tail splice → `parse_wav_header` (M-4-cured), and (2) `sf_open` libsndfile cross-validation at `src/core/audio_file.cpp:343-347`. Libsndfile 1.2.2 returns "Unspecified internal error" on RF64 ds64-after-data files (verified by direct probe on `tests/fixtures/rf64/rf64_ds64_after.wav`; the ds64-before-data fixture is accepted). `AudioFile::open` then returns `AudioError::ReadError` at `:345`, **discarding the parser's recovered `AudioInfo`** (including the M-4-cured `data_offset` / `data_size`) before it reaches the caller. M-4's parser-scoped invariant (INV-RF64-2) holds; the production-pipeline-scoped invariant does not.
+- **Origin.** Surfaced by M-4-FU-COVERAGE fix-agent at pre-PR halt-and-surface (mandate-explicit halt clause: "new test FAILS on main" → governance escalation). Audit-1 and audit-2 of M-4 swept the helper-vs-splice axis (closed by M-4-FU-COVERAGE filing) and the post-cure tail-scan window axis (closed by M-4-FU-TAILSCAN filing). The libsndfile-gate axis was not swept until COVERAGE fix-agent's halt caught it. Same gap-family as `KNOWN-FAILING-CURE-ATTRIBUTION-V1` (axis-coverage gap on M-4 close-out paperwork).
+- **Invariant established.** "When `parse_wav_header` recovers `data_offset` / `data_size` for an RF64 file but libsndfile rejects the file at `sf_open`, `AudioFile::open` returns the parser's recovered `AudioInfo` rather than discarding it. `info.frames` is derived from `info.data_size / info.bytes_per_frame()`."
+- **Cure path (orchestrator + user blessed).** Path (a1) — try libsndfile; on `format == AudioFormat::RF64 && !sf`, fall back to parser truth. Skip the libsndfile-success override block; derive `info.frames = info.data_size / info.bytes_per_frame()`; default `info.subtype` ("PCM" derived from `bits_per_sample`). Non-RF64 libsndfile-failure path unchanged (still `ReadError`). RF64 libsndfile-success path unchanged (still overrides). Estimated ~10–20 lines diff in `audio_file.cpp`.
+- **Files touched.** `src/core/audio_file.cpp` (cross-validation block at `:341-356`); `tests/test_lossless.cpp` (un-tag the redirected M-4-FU-COVERAGE TEST_CASE's `[!shouldfail]` tag, atomic with the production fix per (α) — cycle precedent: M-3 four un-tags + M-4 `:744` un-tag, both atomic with cure).
+- **Tests added.**
+  - The redirected M-4-FU-COVERAGE TEST_CASE (`[!shouldfail]`-tagged in M-4-FU-COVERAGE's PR, attribution citing this item) un-tags in this PR and passes via strict assertion. Becomes both the libsndfile-fallback regression and the cure-attribution test.
+  - Optionally (fix-agent's call): a separate TEST_CASE asserting `info.frames` is correctly derived from `data_size` when libsndfile fails, if the COVERAGE redirect's existing assertions don't already cover it.
+- **Audit shape.** Single Tier 4 default. Item is not UB-class.
+- **Exit criteria.**
+  - [ ] `AudioFile::open` does not return `ReadError` when `format == AudioFormat::RF64 && parse_wav_header succeeded && sf_open failed`; instead returns the parser's `AudioInfo` with `info.frames` derived.
+  - [ ] Non-RF64 libsndfile-failure still returns `ReadError`.
+  - [ ] RF64 libsndfile-success still uses libsndfile's overrides.
+  - [ ] Redirected M-4-FU-COVERAGE TEST_CASE's `[!shouldfail]` tag removed in the same PR (atomic with the production fix); test passes via strict assertion.
+
 ### M-5 — AIFF SSND offset field assumed zero — **RESOLVED in #36 (`a1654a1`)**
 
 - **Defect.** `parse_aiff_header` SSND-handling block (post-M-4 line numbers
