@@ -809,20 +809,22 @@ TEST_CASE("parse_wav_header: RF64 with ds64 after data",
 // M-4-FU-COVERAGE; redirected at fix-agent halt-and-surface, see
 // BACKLOG.md).
 //
-// [!shouldfail] today: AudioFile::open's libsndfile cross-validation at
-// audio_file.cpp:343-347 rejects RF64 ds64-after-data files (libsndfile
-// 1.2.2 returns "Unspecified internal error"), discarding the parser's
-// M-4-cured data_offset / data_size before the caller sees them. The
-// `[!shouldfail]` tag is removed atomic with M-4-FU-LIBSNDFILE-GATE's
-// production fix per cycle precedent (M-3 four un-tags + M-4 :744
-// un-tag, both atomic with cure).
+// Post-cure (M-4-FU-LIBSNDFILE-GATE landed): AudioFile::open's
+// libsndfile cross-validation at audio_file.cpp falls back to the
+// parser's recovered AudioInfo when libsndfile rejects an RF64 file
+// at sf_open (libsndfile 1.2.2 returns "Unspecified internal error" on
+// RF64 ds64-after-data). The fallback retains the M-4-cured
+// data_offset / data_size; this TEST_CASE asserts the production-
+// pipeline-scoped invariant directly. The `[!shouldfail]` tag was
+// removed atomic with the production fix per cycle precedent (M-3
+// four un-tags + M-4 :744 un-tag, both atomic with cure).
 //
-// Post-fix, this TEST_CASE serves both cure-attribution roles: the
+// This TEST_CASE now serves both cure-attribution roles: the
 // libsndfile-fallback regression for M-4-FU-LIBSNDFILE-GATE, and the
 // helper-vs-splice co-evolution check originally predicted by M-4-FU-
 // COVERAGE — same fixture, same assertions, same end-to-end path.
 TEST_CASE("AudioFile::open: RF64 with ds64 after data exposes correct data_size",
-          "[lossless][rf64][!shouldfail]") {
+          "[lossless][rf64]") {
     fs::path dir = rf64_fixture_dir();
     fs::path file = dir / "rf64_ds64_after.wav";
     fs::path manifest = dir / "manifest.txt";
@@ -849,6 +851,20 @@ TEST_CASE("AudioFile::open: RF64 with ds64 after data exposes correct data_size"
         rf64_manifest_u64(manifest, "DATA_SIZE"));
     REQUIRE(info.data_offset == expected_data_offset);
     REQUIRE(info.data_size == expected_data_size);
+
+    // M-4-FU-LIBSNDFILE-GATE post-fix assertion: in the libsndfile-
+    // rejected RF64 fallback path, info.frames is derived from
+    // data_size / bytes_per_frame() (the parser's tail-of-parse_wav_header
+    // step). Asserting it here pins the derivation so a regression that
+    // forgets to populate frames in the fallback branch surfaces
+    // immediately. Manifest-derived expected_frames matches what the
+    // libsndfile-success path would have reported for a non-rejected
+    // RF64 file of the same geometry.
+    int64_t bytes_per_frame = static_cast<int64_t>(
+        rf64_manifest_u64(manifest, "BYTES_PER_FRAME"));
+    REQUIRE(bytes_per_frame > 0);
+    int64_t expected_frames = expected_data_size / bytes_per_frame;
+    REQUIRE(info.frames == expected_frames);
 }
 
 // [!shouldfail] — fails today because build_wav_header writes data_size
