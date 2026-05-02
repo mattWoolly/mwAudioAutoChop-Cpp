@@ -61,6 +61,16 @@ static constexpr std::array<uint8_t, 16> KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = {
 };
 } // namespace magic
 
+// Head-window size for header parsing. AudioFile::open reads this many
+// bytes from the start of the file, then for RF64 inputs splices on the
+// last `kTailWindow` bytes. parse_wav_header's M-4 ds64 tail-scan uses
+// kHeadSize as the lower bound of its scan range so head sample bytes
+// cannot false-match the `ds64` fourcc. M-4-FU-TAILSCAN: lifted from a
+// block-local constant inside AudioFile::open so both the splice site
+// and the tail-scan reference the same value (no magic-number coupling).
+static constexpr size_t kHeadSize = 65536;
+static constexpr size_t kTailWindow = 1 * 1024 * 1024;  // 1 MiB
+
 // Helper: compare bytes at position
 static bool compare_bytes(const std::vector<uint8_t>& data, size_t offset, const uint8_t* magic, size_t len) {
     if (offset + len > data.size()) return false;
@@ -261,10 +271,12 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
     // The trailer is at most 36 bytes (ds64 chunk header + body); 1 MiB
     // is overkill for the trailer alone but cheap and keeps the in-RAM
     // working set bounded regardless of file size.
-    constexpr size_t HEADER_SIZE = 65536;
-    constexpr size_t kTailWindow = 1 * 1024 * 1024;  // 1 MiB
-    std::vector<uint8_t> header(HEADER_SIZE);
-    file.read(reinterpret_cast<char*>(header.data()), HEADER_SIZE);
+    //
+    // M-4-FU-TAILSCAN: kHeadSize and kTailWindow are file-scope constants
+    // (see top of file). parse_wav_header references kHeadSize for its
+    // tail-scan lower bound so the two sites cannot drift apart.
+    std::vector<uint8_t> header(kHeadSize);
+    file.read(reinterpret_cast<char*>(header.data()), kHeadSize);
 
     // Check for actual read errors (badbit), not just EOF (failbit)
     if (file.bad()) {
@@ -288,7 +300,7 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
     // file is small enough that the head already covers the whole file
     // (or the head + tail would overlap), and skipped for non-RF64.
     if (format == AudioFormat::RF64) {
-        // file.read above set EOF if the file was smaller than HEADER_SIZE,
+        // file.read above set EOF if the file was smaller than kHeadSize,
         // which leaves the stream in a fail state. Clear it before seeking
         // to the tail.
         file.clear();
@@ -460,10 +472,6 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
     bool found_ds64 = false;
     bool ds64_truncated = false;  // ds64 found but chunk_size < 24 (M-4 hardening).
     uint64_t rf64_data_size = 0;
-    // Buffer offset just past the data chunk header. Used as the lower
-    // bound of the M-4 ds64 tail-scan so the scan cannot false-match
-    // against header chunks that already participated in the walker.
-    size_t data_chunk_payload_start = 0;
 
     size_t chunk_offset = 12;
     while (chunk_offset + 8 <= data.size()) {
@@ -541,7 +549,6 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
         else if (compare_bytes(data, chunk_offset, magic::data, 4)) {
             found_data = true;
             data_offset = static_cast<int64_t>(chunk_offset + 8);
-            data_chunk_payload_start = chunk_offset + 8;
             // For RF64, data chunk size is 0xFFFFFFFF placeholder - actual size comes from ds64
             // For regular WAV, use the chunk size directly
             if (!is_rf64) {
@@ -589,18 +596,24 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
     // direct-call test path in tests/test_lossless.cpp does the same via
     // the rf64_read_full_with_tail helper.
     //
-    // The scan is restricted to the byte range [data_chunk_payload_start,
-    // data.size() - 36] — i.e., past the data chunk header (so it cannot
-    // re-find a chunk the walker already consumed) and short enough that
-    // the matched 8-byte ds64 header plus 24 bytes of body actually fit
-    // inside the buffer. Sample bytes happening to spell "ds64" with a
-    // chunk_size >= 24 followed by 24 syntactically valid trailer bytes
-    // is theoretically possible but vanishingly unlikely; should it ever
-    // surface, the cure is to narrow the scan window further (e.g. to
-    // the last 1 MiB), not to abandon the tail-scan.
+    // M-4-FU-TAILSCAN: the scan is restricted to the byte range
+    // [kHeadSize, data.size() - 36] — i.e., only the spliced tail region.
+    // A legitimate ds64-after-data trailer can only sit there; bytes at
+    // positions < kHeadSize are inside the head window where sample bytes
+    // could happen to spell `ds64` followed by a syntactically valid
+    // 24-byte body. Excluding the head window eliminates that latent
+    // false-match risk (audit-1 + audit-2 of M-4 / PR #35).
+    //
+    // Edge case: when data.size() <= kHeadSize (file smaller than the
+    // head window — whole file already in buffer, no tail spliced), the
+    // for-loop iterates zero times because kHeadSize > scan_end. This is
+    // correct: a small RF64 file's ds64 should already be located by the
+    // chunk walker in pass 1; if the walker missed it (e.g., 0xFFFFFFFF
+    // data placeholder break), there is no real ds64 anywhere and the
+    // post-loop "no ds64 found" path returns InvalidFormat.
     if (is_rf64 && !found_ds64 && found_data && data.size() >= 36) {
         const size_t scan_end = data.size() - 36;
-        for (size_t i = data_chunk_payload_start; i <= scan_end; ++i) {
+        for (size_t i = kHeadSize; i <= scan_end; ++i) {
             if (compare_bytes(data, i, magic::ds64, 4)) {
                 uint32_t tail_chunk_size = read_le_u32(data, i + 4);
                 if (tail_chunk_size < 24) {
