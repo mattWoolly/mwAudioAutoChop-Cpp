@@ -805,6 +805,52 @@ TEST_CASE("parse_wav_header: RF64 with ds64 after data",
     REQUIRE(info.data_size == expected_data_size);
 }
 
+// M-4-FU-LIBSNDFILE-GATE cure-attribution test (originally filed as
+// M-4-FU-COVERAGE; redirected at fix-agent halt-and-surface, see
+// BACKLOG.md).
+//
+// [!shouldfail] today: AudioFile::open's libsndfile cross-validation at
+// audio_file.cpp:343-347 rejects RF64 ds64-after-data files (libsndfile
+// 1.2.2 returns "Unspecified internal error"), discarding the parser's
+// M-4-cured data_offset / data_size before the caller sees them. The
+// `[!shouldfail]` tag is removed atomic with M-4-FU-LIBSNDFILE-GATE's
+// production fix per cycle precedent (M-3 four un-tags + M-4 :744
+// un-tag, both atomic with cure).
+//
+// Post-fix, this TEST_CASE serves both cure-attribution roles: the
+// libsndfile-fallback regression for M-4-FU-LIBSNDFILE-GATE, and the
+// helper-vs-splice co-evolution check originally predicted by M-4-FU-
+// COVERAGE — same fixture, same assertions, same end-to-end path.
+TEST_CASE("AudioFile::open: RF64 with ds64 after data exposes correct data_size",
+          "[lossless][rf64][!shouldfail]") {
+    fs::path dir = rf64_fixture_dir();
+    fs::path file = dir / "rf64_ds64_after.wav";
+    fs::path manifest = dir / "manifest.txt";
+
+    REQUIRE(fs::exists(file));
+    REQUIRE(fs::exists(manifest));
+
+    auto opened = mwaac::AudioFile::open(file);
+    REQUIRE(opened.has_value());
+    const auto& info = opened.value().info();
+
+    // Parity with the :778 helper-direct test: same fixture, same
+    // expected geometry. Asserting the full set keeps the two tests
+    // symmetric so a divergence in any field (not just data_size) is
+    // visible at the AudioFile::open layer.
+    REQUIRE(info.format == "RF64");
+    REQUIRE(info.channels == 2);
+    REQUIRE(info.sample_rate == 48000);
+    REQUIRE(info.bits_per_sample == 16);
+
+    int64_t expected_data_offset = static_cast<int64_t>(
+        rf64_manifest_u64(manifest, "DS64_AFTER_DATA_OFFSET"));
+    int64_t expected_data_size = static_cast<int64_t>(
+        rf64_manifest_u64(manifest, "DATA_SIZE"));
+    REQUIRE(info.data_offset == expected_data_offset);
+    REQUIRE(info.data_size == expected_data_size);
+}
+
 // [!shouldfail] — fails today because build_wav_header writes data_size
 // as a uint32, truncating the 4 GiB+ payload range. The output file's
 // header claims the wrong length, write_track silently produces a
