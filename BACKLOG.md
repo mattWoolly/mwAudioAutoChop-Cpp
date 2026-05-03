@@ -123,7 +123,7 @@ Tier 3 item but touches every C-2 call site, so C-2 is scoped to *signalling
 the UB in the existing type* first (assert-or-terminate), and the full
 migration to `std::expected`-style storage happens in M-14.
 
-### C-1 — encode_float80 stack buffer overflow
+### C-1 — encode_float80 stack buffer overflow — **RESOLVED in #27 (`0bf13a1`)**
 
 - **Defect.** `encode_float80` writes 11 bytes into a 10-byte `std::byte`
   buffer at `audio_file.cpp:496` (`out[10] = ...`). Buffer declared at
@@ -134,13 +134,13 @@ migration to `std::expected`-style storage happens in M-14.
 - **Tests added/re-enabled.** Two `[lossless]` AIFF tests already re-enabled
   in F-4 currently crash under ASan. The fix makes them pass.
 - **Exit criteria.**
-  - [ ] ASan reports no stack-buffer-overflow on `test_lossless` under
-        `MWAAC_SANITIZE=ON`.
-  - [ ] AIFF mantissa layout matches a reference implementation (see
-        comment citation in the diff).
-  - [ ] Re-audit comment on the function explains why 10 bytes is correct.
+  - [x] ASan reports no stack-buffer-overflow on `test_lossless` under
+        `MWAAC_SANITIZE=ON`. *Verified across all asan+ubsan CI runs since PR #27 (`0bf13a1`); `test_lossless` passes under sanitizers; encode_float80 wire-format TEST_CASEs at `tests/test_lossless.cpp:1115+` exercise the cured byte layout.*
+  - [x] AIFF mantissa layout matches a reference implementation. *`float80_layout` namespace at `src/core/audio_file.cpp:864-880` references IEEE 754 80-bit / SANE / AIFF spec; `static_assert` at `:880` verifies bias / exp constants.*
+  - [x] Re-audit comment on the function explains why 10 bytes is correct. *Comment block at `src/core/audio_file.cpp:895-898` states "Writes *exactly* 10 bytes to `out`... No bytes beyond `out[9]` are touched."*
+- **Surfaced inline scope expansion.** AIFF-INLINE-SCOPE — `build_aiff_header`'s `numSampleFrames` field type corrected from float80 to u32 in same PR; recorded in `docs/deviations.md`. Closed as own backlog item ([x] AIFF-INLINE-SCOPE below).
 
-### C-2 — `Expected<T,E>::value()` is UB when holding error
+### C-2 — `Expected<T,E>::value()` is UB when holding error — **RESOLVED in #29 (`083431c`)**
 
 - **Defect.** `audio_file.hpp:106–116` `return *reinterpret_cast<T*>(&storage_)`
   without checking `has_value_`. Call sites: `main.cpp:160, 250–260, 300`.
@@ -153,12 +153,11 @@ migration to `std::expected`-style storage happens in M-14.
     `Catch::Matchers::Throws` or a death-test equivalent).
   - `main: failed AudioFile::open exits cleanly` (new, subprocess test).
 - **Exit criteria.**
-  - [ ] `Expected<T,E>::value()` has a precondition check (`assert` in
-        Debug, `std::terminate` otherwise) — *not* a full reimplementation;
-        that lands in M-14.
-  - [ ] Every `audio_file.value()` call in `main.cpp` is guarded by
-        `if (!audio_file) { ... return 1; }` on first use.
-  - [ ] UBSan passes on full test suite.
+  - [x] `Expected<T,E>::value()` has a precondition check (`assert` in
+        Debug, `std::terminate` otherwise). *`MWAAC_ASSERT_PRECONDITION` macro at `src/core/audio_file.hpp:47-52` (assert in Debug / std::terminate in Release); applied at `:139, :143` in `value()` accessors. M-14 (#31) preserved the macro on the variant-backed implementation.*
+  - [x] Every `audio_file.value()` call in `main.cpp` is guarded by
+        `if (!audio_file) { ... return 1; }` on first use. *Canonical pattern at `src/main.cpp:144-152` and `:285-295` (`if (!opened) return ...; auto& audio_file = opened.value();`). C-2 audit-2 grep verified 0 unguarded `.value()` calls in main.cpp.*
+  - [x] UBSan passes on full test suite. *Verified across all asan+ubsan CI runs since PR #29 (`083431c`); death-test TEST_CASEs at `tests/test_audio_file.cpp:773, 803, 824` plus subprocess test at `:859` (`main: failed AudioFile::open exits cleanly`).*
 - **Audit mandate (orchestrator-recorded).** The C-2 audit pass must
   explicitly evaluate the `Expected` API shape choice — assert + `value_or`
   on top of the current placement-new-in-aligned-storage layout, vs.
@@ -273,7 +272,7 @@ migration to `std::expected`-style storage happens in M-14.
         validated guard. *(Verified by grep on C-2 branch: 0 unguarded
         `.value()` calls remain.)*
 
-### M-16 — write_track is not atomic on partial write
+### M-16 — write_track is not atomic on partial write — **RESOLVED in #28 (`82a774a`)**
 
 - **Defect.** `audio_file.cpp:414` writes directly to the output path; a
   partial write leaves a corrupt file masquerading as valid output.
@@ -284,18 +283,11 @@ migration to `std::expected`-style storage happens in M-14.
   - `write_track: partial write (disk full simulation) leaves no target
     file` (new, using a constrained filesystem or a hooked ofstream).
 - **Exit criteria.**
-  - [ ] Uses temp-sibling + `std::filesystem::rename` idiom.
-  - [ ] Temp file is cleaned on any error path.
-  - [ ] Temp-sibling path generation handles filenames up to `NAME_MAX`
+  - [x] Uses temp-sibling + `std::filesystem::rename` idiom. *`make_temp_sibling_path` helper at `src/core/audio_file.cpp:801`; `std::filesystem::rename` at `:1357`.*
+  - [x] Temp file is cleaned on any error path. *Verified by TEST_CASEs `write_track: failure leaves no file at output path (parent dir missing)` at `tests/test_lossless.cpp:1262` and `(target is a directory)` at `:1302`.*
+  - [x] Temp-sibling path generation handles filenames up to `NAME_MAX`
         (255 on POSIX) without losing the random uniqueness component.
-        Truncation results in `WriteError`, never a non-unique temp path.
-        Regression test uses a ≥50-char target filename and ≥8 concurrent
-        threads writing to the same target; assertion: no file at the
-        target with size below the WAV header size at any time after the
-        threads return. *Audit-1 finding (REJECTED) on the first M-16
-        attempt: snprintf into a 64-byte buffer silently truncated the
-        random suffix, producing 40 corrupt target files in 6400 calls
-        under 32-thread stress with a 54-char filename.*
+        Truncation results in `WriteError`, never a non-unique temp path. *NAME_MAX handling at `src/core/audio_file.cpp:822-827` (`constexpr NAME_MAX_BYTES = 255`) with explicit `WriteError` refusal at `:1310-1313`. Regression tests: `write_track: long-filename concurrent writes do not collide` at `tests/test_lossless.cpp:1363` (≥50-char filename + concurrent threads) and `write_track: target filename longer than NAME_MAX returns WriteError` at `:1453`. *Audit-1 finding (REJECTED) on the first M-16 attempt: snprintf into a 64-byte buffer silently truncated the random suffix, producing 40 corrupt target files in 6400 calls under 32-thread stress with a 54-char filename — cured before merge.*
 
 ---
 

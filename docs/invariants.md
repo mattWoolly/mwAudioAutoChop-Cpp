@@ -64,23 +64,68 @@ an RF64 file whose `ds64` chunk appears immediately after `WAVE`.
 ### INV-RF64-2 — RF64 with `ds64` after data still parses
 
 `parse_wav_header` recovers `data_offset` / `data_size` correctly when
-`ds64` follows the `data` chunk. End-to-end via `AudioFile::open`,
-production pipeline returns the parser-recovered `AudioInfo` even when
-libsndfile rejects the file at `sf_open`.
+the `ds64` chunk follows the `data` chunk. The tail-scan that finds
+the post-data `ds64` is bounded to the spliced tail window
+(`[kHeadSize, end)`) so head-window sample bytes cannot false-match
+the `ds64` fourcc plus a syntactically valid 24-byte trailer
+(M-4-FU-TAILSCAN tightening). The end-to-end production-pipeline
+behaviour — that `AudioFile::open` exposes the parser-recovered
+`AudioInfo` even when libsndfile rejects the file at `sf_open` —
+is asserted separately by `INV-RF64-LIBSNDFILE-FALLBACK` below; both
+invariants share the production-pipeline TEST_CASE for cure
+attribution.
 
-- **Owner.** `parse_wav_header` + `AudioFile::open` (libsndfile-rejected
-  RF64 fallback) + `tests/fixtures/rf64/rf64_ds64_after.wav`.
+- **Owner.** `parse_wav_header` (helper-direct path) +
+  `tests/fixtures/rf64/rf64_ds64_after.wav`. File-scope constants
+  `kHeadSize` / `kTailWindow` at `src/core/audio_file.cpp:71-72`
+  bind the tail-scan window.
 - **Enforcement.**
   - Helper-direct (M-4 cure-attribution): `parse_wav_header: RF64 with
     ds64 after data` in `tests/test_lossless.cpp`.
-  - Production-pipeline (M-4-FU-LIBSNDFILE-GATE cure-attribution):
+  - In-head false-match regression (M-4-FU-TAILSCAN cure-attribution):
+    `parse_wav_header: in-head ds64-shaped sample bytes are not
+    false-matched by tail-scan` in `tests/test_lossless.cpp`. Inline
+    128-byte buffer with planted false `ds64` fourcc + 24-byte
+    trailer; pre-fix returns wrong `data_size`, post-fix returns
+    `InvalidFormat`.
+  - Production-pipeline (shared with INV-RF64-LIBSNDFILE-FALLBACK):
     `AudioFile::open: RF64 with ds64 after data exposes correct
-    data_size` in `tests/test_lossless.cpp`.
-  - In-head false-match regression (M-4-FU-TAILSCAN): `parse_wav_header:
-    in-head ds64-shaped sample bytes are not false-matched by tail-scan`
-    in `tests/test_lossless.cpp`.
+    data_size` in `tests/test_lossless.cpp` is also a regression
+    guard against helper-vs-splice divergence (the original
+    M-4-FU-COVERAGE concern).
 - **Dependents.** FIXTURE-RF64, M-4 (RESOLVED #35), M-4-FU-TAILSCAN
-  (RESOLVED #38), M-4-FU-LIBSNDFILE-GATE (RESOLVED #40).
+  (RESOLVED #38).
+
+### INV-RF64-LIBSNDFILE-FALLBACK — `AudioFile::open` returns parser truth when libsndfile rejects RF64
+
+When `parse_wav_header` recovers `data_offset` / `data_size` for an
+RF64 file but libsndfile rejects the file at `sf_open` (libsndfile
+1.2.2 returns "Unspecified internal error" on RF64 ds64-after-data
+files, verified by direct probe), `AudioFile::open` returns the
+parser's recovered `AudioInfo` rather than discarding it as
+`AudioError::ReadError`. `info.frames` is derived from
+`info.data_size / info.bytes_per_frame()`; `info.subtype` defaults
+to `"PCM"`. Non-RF64 libsndfile failure remains `ReadError`
+(unchanged); RF64 libsndfile success still uses libsndfile's
+overrides. Production-pipeline-scoped: complements INV-RF64-2's
+parser-scoped contract.
+
+- **Owner.** `AudioFile::open` cross-validation block at
+  `src/core/audio_file.cpp:344-388`.
+- **Enforcement.**
+  - Production-pipeline (also serves INV-RF64-2): `AudioFile::open:
+    RF64 with ds64 after data exposes correct data_size` in
+    `tests/test_lossless.cpp`. Opens
+    `rf64_ds64_after.wav` via `AudioFile::open` (not via the helper),
+    reads `audio_file.value().info()`, asserts `data_offset` /
+    `data_size` against the manifest. The TEST_CASE was filed under
+    M-4-FU-COVERAGE (axis: helper-vs-splice co-evolution) and
+    redirected to M-4-FU-LIBSNDFILE-GATE attribution with
+    `[!shouldfail]` per C-3 precedent in PR #39, then un-tagged
+    atomic with the production fix in PR #40.
+- **Dependents.** FIXTURE-RF64, M-4-FU-COVERAGE (RESOLVED via
+  redirect in #39), M-4-FU-LIBSNDFILE-GATE (RESOLVED #40). Built on
+  top of INV-RF64-2 (parser must succeed before fallback applies).
 
 ### INV-RF64-3 — RF64 round-trip is byte-identical and format-preserving
 
@@ -100,41 +145,48 @@ region, AND whose container format remains `RF64`. *Currently violated.*
 `WAVE_FORMAT_EXTENSIBLE` (0xFFFE) file whose SubFormat GUID identifies PCM
 or IEEE-float, regardless of channel count, returning an `AudioInfo` whose
 `channels`, `sample_rate`, `bits_per_sample`, `data_offset`, and
-`data_size` match the on-disk header. *Currently violated.*
+`data_size` match the on-disk header.
 
 - **Owner.** `parse_wav_header` + the `pcm_24bit_stereo.wav` /
   `pcm_24bit_5ch.wav` fixtures in `tests/fixtures/waveext/`.
-- **Enforcement.** Two `[!shouldfail]` tests in `tests/test_audio_file.cpp`:
+- **Enforcement.** Two tests in `tests/test_audio_file.cpp`:
   `parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit stereo accepted`
-  and `... 5-channel accepted`. Tag drops when M-3 lands.
-- **Dependents.** FIXTURE-WAVEEXT, M-3.
+  and `parse_wav_header: WAVE_FORMAT_EXTENSIBLE PCM 24-bit 5-channel
+  accepted`. `[!shouldfail]` tag dropped at M-3 merge (PR #34).
+- **Dependents.** FIXTURE-WAVEEXT, M-3 (RESOLVED #34).
 
 ### INV-WAVEEXT-2 — Unknown SubFormat GUID returns UnsupportedFormat
 
 `parse_wav_header` returns `UnsupportedFormat` (not `InvalidFormat`, not a
-crash) when the SubFormat GUID is neither PCM nor IEEE-float. *Currently
-satisfied incidentally (parser rejects all 0xFFFE today); the post-M-3
-test verifies this is the deliberate path.*
+crash) when the SubFormat GUID is neither PCM nor IEEE-float. Post-M-3
+the parser inspects the GUID deliberately rather than rejecting all
+0xFFFE incidentally.
 
 - **Owner.** `parse_wav_header` + `pcm_extensible_unsupported_subformat.wav`.
 - **Enforcement.** `parse_wav_header: extensible with unknown SubFormat
-  returns UnsupportedFormat` `[!shouldfail]` in
-  `tests/test_audio_file.cpp`. Tag drops when M-3 lands and the parser
-  inspects GUIDs deliberately.
-- **Dependents.** FIXTURE-WAVEEXT, M-3.
+  returns UnsupportedFormat` in `tests/test_audio_file.cpp`. The test
+  also asserts the PCM-subformat sibling parses successfully, confirming
+  that GUID inspection (not blanket 0xFFFE rejection) drives the result.
+  `[!shouldfail]` tag dropped at M-3 merge (PR #34).
+- **Dependents.** FIXTURE-WAVEEXT, M-3 (RESOLVED #34).
 
 ### INV-WAVEEXT-3 — Round-trip of an EXTENSIBLE source preserves data bytes
 
 `write_track` of a `WAVE_FORMAT_EXTENSIBLE` source produces an output WAV
 whose data section is byte-identical to the requested region of the
-source's data section. *Currently violated.*
+source's data section.
 
 - **Owner.** `write_track` + `build_*_header` + the `pcm_24bit_stereo.wav`
   fixture.
 - **Enforcement.** `Lossless: 24-bit 2-ch extensible WAV round-trip
-  preserves bytes` `[!shouldfail]` in `tests/test_lossless.cpp`. Tag drops
-  when M-3 *and* the EXTENSIBLE-emit piece (NEW-WAVEEXT-WRITE) land.
-- **Dependents.** FIXTURE-WAVEEXT, NEW-WAVEEXT-WRITE, M-3.
+  preserves bytes` in `tests/test_lossless.cpp`. `[!shouldfail]` tag
+  dropped at M-3 merge (PR #34); the read-side cure was sufficient on
+  the round-trip-byte-identity axis. NEW-WAVEEXT-WRITE remains open as
+  a separate concern (the EXTENSIBLE-emit format-identity surface), not
+  a dependency of this invariant's byte-identity assertion.
+- **Dependents.** FIXTURE-WAVEEXT, M-3 (RESOLVED #34). NEW-WAVEEXT-WRITE
+  is orthogonal — it gates a format-identity invariant, not byte
+  identity.
 
 ## Parser invariants
 
@@ -151,7 +203,8 @@ every member of the FIXTURE-MALFORMED corpus.
   asserts total parse time < 1 s wall clock. The test binary runs under
   ASan + UBSan in CI, so a crash, infinite loop, or absurd allocation
   fails loudly with the offending blob name.
-- **Dependents.** FIXTURE-MALFORMED, M-2, M-3, M-4, M-5, C-5.
+- **Dependents.** FIXTURE-MALFORMED, M-2, M-3 (RESOLVED #34), M-4
+  (RESOLVED #35), M-5 (RESOLVED #36), C-5.
 
 ### INV-PARSER-REJECT — Each malformation elicits a defined rejection
 
@@ -166,37 +219,80 @@ parser is expected to handle correctly only after a backlog item lands
 - **Enforcement.** Two `TEST_CASE`s in `tests/test_audio_file.cpp`
   (`FIXTURE-MALFORMED: header parsers reject every malformation` for the
   must-pass set, and `FIXTURE-MALFORMED: parsers reject pending-fix
-  malformations` `[!shouldfail]` for the M-2 / M-5 set). Behaviour for
-  `fmt_size_max.wav` deviates from the spec's implied
-  `InvalidFormat`; see `docs/deviations.md`.
-- **Dependents.** FIXTURE-MALFORMED, M-2, M-3, M-5.
+  malformations` `[!shouldfail]` for the remaining gated set). Post-M-5
+  the only `-pending-` entry left in
+  `tests/fixtures/malformed/manifest.txt` is
+  `data_size_overflows_file.wav` (`InvalidFormat-pending-M-2`); the
+  M-5-gated entry was un-suffixed at the M-5 merge. Behaviour for
+  `fmt_size_max.wav` deviates from the spec's implied `InvalidFormat`;
+  see `docs/deviations.md`.
+- **Dependents.** FIXTURE-MALFORMED, M-2 (last remaining
+  `[!shouldfail]` gate), M-3 (RESOLVED #34), M-5 (RESOLVED #36).
 
-## Implementation invariants (named in BACKLOG.md, enforcement pending)
+## Implementation invariants (named in BACKLOG.md)
 
 These are invariants the backlog promises will be enforced when the
-named item lands. Listed here so that, when DOC-3 is updated after an
-item lands, only this section's entry needs to move into the relevant
-"Owner / Enforcement" form.
+named item lands. Entries flip from `pending` to a full Owner /
+Enforcement form as items resolve; entries already in the full form
+have their RESOLVED-status backlog item cited inline.
 
 ### INV-FLOAT80-10BYTES — `encode_float80` writes exactly 10 bytes
 
-- **Status.** `pending` (C-1).
-- **Owner-to-be.** `encode_float80` in `src/core/audio_file.cpp`.
+`encode_float80` writes exactly 10 bytes to its output buffer, matching
+IEEE 754 80-bit extended-precision wire format used by the AIFF COMM
+sampleRate field.
+
+- **Owner.** `encode_float80` in `src/core/audio_file.cpp`.
+- **Enforcement.**
+  - `encode_float80: wire-format value 1.0` and
+    `encode_float80: wire-format value 44100.0` in
+    `tests/test_lossless.cpp` — direct wire-format byte assertions.
+  - `AIFF sample-rate round-trip via libsndfile` in
+    `tests/test_lossless.cpp` — six-rate end-to-end round-trip
+    (44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz).
+  - ASan + UBSan jobs on `test_lossless` (no stack-buffer-overflow on
+    any AIFF emission path).
+- **Dependents.** C-1 (RESOLVED #27), AIFF-INLINE-SCOPE (closed).
 
 ### INV-EXPECTED-PRECONDITION — `Expected<T,E>::value()` is a precondition
 
-Calling `value()` on an errored `Expected` is loud (assert / terminate),
-not silent UB.
+Calling `value()` on an errored `Expected` (or `error()` on a
+value-bearing `Expected`) is loud (assert / terminate), not silent UB.
 
-- **Status.** `pending` (C-2; full migration is M-14 / INV-RESULT-WRAPPER).
-- **Owner-to-be.** `Expected<T,E>` in `src/core/audio_file.hpp`.
+- **Owner.** `Expected<T,E>` in `src/core/audio_file.hpp` (post-M-14
+  the storage is `std::variant<T,E>`-backed; the precondition contract
+  is unchanged).
+- **Enforcement.**
+  - `Expected: value() on errored Expected aborts the process`
+    (death-test, fork-based) in `tests/test_audio_file.cpp`.
+  - `Expected: error() on value-bearing Expected aborts the process`
+    (death-test) in `tests/test_audio_file.cpp`.
+  - `Expected: documented contract — has_value() gates value()` in
+    `tests/test_audio_file.cpp` — the non-death-test half of the
+    contract.
+- **Dependents.** C-2 (RESOLVED #29), M-14 (RESOLVED #31). M-15 is
+  subsumed by C-2 (no separate dispatch); see INV-CLI-OPEN-GUARD for
+  the call-site half.
 
 ### INV-RESULT-WRAPPER — One result wrapper, defined behaviour
 
-The codebase has exactly one error-result wrapper, with defined behaviour
-on every accessor.
+The codebase has exactly one error-result wrapper (`Expected<T,E>`),
+backed by `std::variant<T,E>` with no `reinterpret_cast`-based
+storage. Its value/error accessors have defined behaviour on every
+input via the precondition contract above. `LoadResult` is removed
+from the tree; `AudioError` includes `ResampleError` so the unified
+taxonomy is a strict superset of the previous load-specific values.
 
-- **Status.** `pending` (M-14).
+- **Owner.** `Expected<T,E>` in `src/core/audio_file.hpp`; `AudioError`
+  in the same header.
+- **Enforcement.** Sanitizer-clean build + the death-test pair under
+  INV-EXPECTED-PRECONDITION; M-14 audit verified all 5 exit criteria
+  + sanitizer-clean Expected access paths + no `LoadResult` symbol
+  remains in the tree.
+- **Dependents.** M-14 (RESOLVED #31), C-2 (RESOLVED #29), M-11
+  (closed as duplicate of M-14), Mi-3 (RESOLVED #33; structural
+  cure made `resample_linear` fallible under the unified taxonomy —
+  see `docs/deviations.md` Mi-3 entry).
 
 ### INV-RATECONV-ROUNDED — Reference-mode rate conversion rounds, not truncates
 
@@ -226,32 +322,102 @@ info.data_size`; a violation returns `InvalidFormat`.
 
 ### INV-AIFF-SSND-OFFSET — `parse_aiff_header` honours SSND offset
 
+`parse_aiff_header` reads the SSND `offset` field and applies it:
 `data_offset = SSND_body + 8 + offset`,
-`data_size = chunk_size - 8 - offset`.
+`data_size = chunk_size - 8 - offset`. An out-of-bounds offset
+(`offset > chunk_size - 8`) returns `InvalidFormat` per the
+parser-errors local-view rule.
 
-- **Status.** `pending` (M-5). Gates
-  FIXTURE-MALFORMED's `aiff_ssnd_offset_nonzero.aiff`.
+- **Owner.** `parse_aiff_header` SSND-handling block in
+  `src/core/audio_file.cpp`.
+- **Enforcement.**
+  - `parse_aiff_header: non-zero SSND offset is honored` in
+    `tests/test_audio_file.cpp` — inline AIFF with offset=4,
+    chunk_size=28; asserts `data_offset=58, data_size=16`.
+  - `parse_aiff_header: zero SSND offset is byte-identical to
+    pre-M-5` in `tests/test_audio_file.cpp` — regression guard for
+    the C-1 round-trip surface.
+  - `FIXTURE-MALFORMED: header parsers reject every malformation`
+    picks up `aiff_ssnd_offset_nonzero.aiff` (offset=16 > chunk_size-8=4
+    → `InvalidFormat`); the `-pending-M-5` suffix dropped from the
+    manifest atomically with the M-5 fix.
+- **Dependents.** M-5 (RESOLVED #36), FIXTURE-MALFORMED.
 
 ### INV-AIFF-SAMPLERATE — `parse_aiff_header` decodes the 80-bit sample rate
 
 `parse_aiff_header` produces an `AudioInfo` whose `sample_rate` matches
-the file header (no `0`).
+the file header (no `0`); also reads `bits_per_sample` from the correct
+COMM-body offset (`chunk_offset + 14`, not the pre-Mi-1 `+18` which
+read into the float80 sampleRate slot). NaN/Inf/negative/subnormal/
+non-integer/over-INT32_MAX float80 sample rates return `InvalidFormat`.
+Inverse of the (post-C-1) `encode_float80`.
 
-- **Status.** `pending` (Mi-1). Inverse of the (post-C-1) `encode_float80`.
+- **Owner.** `parse_aiff_header` COMM-handling block in
+  `src/core/audio_file.cpp` (uses `decode_float80_to_u64` /
+  `decode_float80_to_u32` static helpers, inverse of `encode_float80`).
+- **Enforcement.**
+  - `parse_aiff_header: sample_rate decoded from 80-bit float` in
+    `tests/test_audio_file.cpp` — six PROJECT_SPEC sample rates,
+    genuine encoder/decoder round-trip via `build_aiff_header`.
+  - `parse_aiff_header: bits_per_sample decoded from correct COMM
+    offset` in `tests/test_audio_file.cpp` — four bit depths.
+- **Dependents.** Mi-1 (RESOLVED #37), C-1 (RESOLVED #27;
+  `encode_float80` is the inverse).
 
 ### INV-CLI-OPEN-GUARD — CLI short-circuits on failed `AudioFile::open`
 
 Every `main.cpp` branch that uses `audio_file.value()` is preceded by a
-validated guard.
+validated guard. The C-2 fix-agent rewrote all three CLI branches
+(reference, blind, tui) to the canonical
+`if (!opened) return 1; auto& audio_file = opened.value();` pattern,
+and the post-M-14 precondition guards on `Expected<T,E>::value()` /
+`error()` (INV-EXPECTED-PRECONDITION) abort hard if any future
+caller regresses, providing belt-and-braces protection beyond the
+textual guards.
 
-- **Status.** `pending` (C-2 + M-15).
+- **Owner.** `src/main.cpp` (three CLI branches: reference, blind,
+  tui); precondition backstop in `src/core/audio_file.hpp`.
+- **Enforcement.**
+  - `main: failed AudioFile::open exits cleanly (no crash)` subprocess
+    test in `tests/test_audio_file.cpp` — invokes the built
+    `mwAudioAutoChop` binary with a non-existent path; asserts
+    non-zero exit, no crash, sanitizer-clean.
+  - Backstopped by INV-EXPECTED-PRECONDITION's death-test pair (any
+    future unguarded `.value()` call aborts the process loudly).
+- **Dependents.** C-2 (RESOLVED #29), M-15 (subsumed by C-2; no
+  separate dispatch). F-AUDIT2-1 remains open as a coverage extension
+  (an integration variant that exercises the guard end-to-end via a
+  WAVE_FORMAT_EXTENSIBLE fixture rather than a non-existent path).
 
 ### INV-WRITE-ATOMIC — `write_track` is all-or-nothing at the target path
 
 `write_track` produces either the complete output file or no file at the
-target path.
+target path. Implementation uses temp-sibling +
+`std::filesystem::rename` (POSIX-atomic on a single filesystem); the
+temp file is cleaned on every error path; temp-sibling path generation
+handles filenames up to `NAME_MAX` (255 on POSIX) without losing the
+random uniqueness component (truncation returns `WriteError`, never a
+non-unique temp path).
 
-- **Status.** `pending` (M-16).
+- **Owner.** `write_track` and `make_temp_sibling_path` helper in
+  `src/core/audio_file.cpp`.
+- **Enforcement.**
+  - `write_track: success leaves only target file at output path` in
+    `tests/test_lossless.cpp`.
+  - `write_track: failure leaves no file at output path (parent dir
+    missing)` in `tests/test_lossless.cpp`.
+  - `write_track: failure leaves no file at output path (target is a
+    directory)` in `tests/test_lossless.cpp`.
+  - `write_track: long-filename concurrent writes do not collide` in
+    `tests/test_lossless.cpp` — ≥50-char filename × ≥8-thread stress;
+    asserts no partial file at the target.
+  - `write_track: target filename longer than NAME_MAX returns
+    WriteError` in `tests/test_lossless.cpp`.
+- **Dependents.** M-16. *Note:* M-16's BACKLOG.md entry header still
+  reads as Active (no RESOLVED tag, exit-criteria checkboxes unmarked)
+  but the production code and the five enforcement TEST_CASEs above are
+  in tree — the BACKLOG drift is surfaced separately (out of
+  invariant-doc scope).
 
 ### INV-ALIGN-EMPTY-VINYL — `align_per_track` skips against empty vinyl
 
@@ -293,7 +459,39 @@ wrong. Documented in the header.
 
 ### INV-RESULT-NO-AMBIGUOUS-DEFAULT — No default construction leaves a result wrapper ambiguous
 
-- **Status.** `pending` (M-11; resolved by M-14).
+Subsumed by INV-RESULT-WRAPPER above. With `Expected<T,E>` backed by
+`std::variant<T,E>` post-M-14, default construction follows the
+variant's defined behaviour (default-constructs the first alternative,
+`T`, when `T` is default-constructible); no aligned-storage
+discriminant can be left unset. `LoadResult`'s ambiguous default
+constructor is removed from the tree.
+
+- **Status.** Closed by M-14. M-11 was filed as a duplicate;
+  documented in BACKLOG.md M-11 entry.
+- **Dependents.** M-11 (closed via M-14), M-14 (RESOLVED #31).
+
+### INV-RESAMPLE-FALLIBLE — `resample_linear` surfaces precondition violations as `ResampleError`
+
+`resample_linear` returns `Expected<AudioBuffer, AudioError>` (not the
+pre-Mi-3 infallible `AudioBuffer`). Two error producers, both yielding
+`AudioError::ResampleError`: (1) `input.sample_rate <= 0` (the
+historical Mi-3 div-by-zero precondition); (2) `output_size` overflow
+during the `double → size_t` conversion at the buffer-sizing line,
+guarded with `std::isfinite` / non-negative / `<= numeric_limits
+<size_t>::max()` before the cast. Establishes that
+`AudioError::ResampleError` has a real producer (no contract-lie
+enum value) under the post-M-14 unified taxonomy.
+
+- **Owner.** `resample_linear` in `src/core/audio_buffer.cpp`;
+  one production caller `load_audio_mono` already returns
+  `Expected<AudioBuffer, AudioError>` so the `Expected` propagates.
+- **Enforcement.**
+  - `resample_linear: sample_rate == 0 returns ResampleError` in
+    `tests/test_audio_buffer.cpp`.
+- **Dependents.** Mi-3 (RESOLVED #33; structural cure deviates from
+  the original "early return `{}`" spec — see `docs/deviations.md`
+  Mi-3 entry for reasoning), M-14 (RESOLVED #31; the unified
+  taxonomy made this cure the right shape).
 
 ### INV-SPLITPOINT-ORDER — `0 ≤ start ≤ end ≤ total - 1` for every SplitPoint
 
