@@ -190,23 +190,42 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Remove the `[!shouldfail]` tag on the RF64 round-trip test in
         `tests/test_lossless.cpp` in the same PR.
 
-### C-4 — Rate-conversion truncation breaks "sample-accurate" claim
+### C-4 — Rate-conversion truncation breaks "sample-accurate" claim — **RESOLVED in #41 (`e519bf6`)**
 
 - **Defect.** `reference_mode.cpp:1109, 1111` convert analysis-rate sample
   indices to native-rate via integer division, truncating up to ~9 samples
   at 192 kHz.
 - **Invariant established.** "Reference mode boundaries are within one
   native-rate sample of the analysis-rate result."
-- **Files touched.** `src/modes/reference_mode.cpp`.
+- **Files touched.** `src/modes/reference_mode.cpp`,
+  `src/modes/reference_mode.hpp`, `tests/test_reference_mode.cpp`.
 - **Tests added.**
   - `Reference mode: native-rate boundary is rounded not truncated` (new,
-    unit-level, using a direct analysis→native conversion helper).
+    unit-level, 4 sections / 15 assertions, exercises the helper directly).
 - **Exit criteria.**
-  - [ ] Conversion uses rounding (`std::llround` or `(a*num + den/2)/den`).
-  - [ ] A dedicated helper function carries the rounding; inline
+  - [x] Conversion uses rounding (`std::llround` or `(a*num + den/2)/den`).
+        *Integer arithmetic with explicit half-denominator bias chosen for
+        64-bit purity (no IEEE-754 reasoning, no precision loss for large
+        indices); see `analysis_to_native_sample` at
+        `src/modes/reference_mode.cpp:765-787`.*
+  - [x] A dedicated helper function carries the rounding; inline
         multiplications by native_sr/analysis_sr are removed.
-  - [ ] README's "sample-accurate" claim is reconciled (DOC-1) with the
+        *Helper at `src/modes/reference_mode.cpp:765-787` (declared in
+        `src/modes/reference_mode.hpp:50-67`); both former call sites at
+        the SplitPoint loop wired through;
+        `grep '\* native_sr / analysis_sr' src/modes/reference_mode.cpp`
+        returns no hits. Tolerance constant
+        `kAnalysisToNativeRoundingTolerance = 1` named at file scope per
+        `kHeadSize` cycle precedent.*
+  - [~] README's "sample-accurate" claim is reconciled (DOC-1) with the
         achievable tolerance.
+        *Deferred to DOC-1 (Tier 8) per Tier 5 governing prompt's
+        "DOC-1 implications surfaced for next epic without expanding scope
+        into DOC-1 itself" rule. C-4 establishes the achievable tolerance
+        (≤ 1 native-rate sample, round-half-away-from-zero); DOC-1 will
+        reconcile the README claim against this tolerance when DOC-1
+        dispatches. `[~]` deferral precedent: BACKLOG.md's M-3 entry on
+        re-attributed `:728` cure.*
 
 ### C-5 — `compute_spectral_flatness` unsigned wrap + stub implementation
 
@@ -884,6 +903,70 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Root cause traced (noise-floor estimator? gap detector? threshold?).
   - [ ] Two integration tests (`clear silence detection`, `combined
         workflow`) pass.
+
+### M-REF-RATE-VALIDATION — `analysis_to_native_sample` precondition checks compile out in Release
+
+- **Origin.** Surfaced as audit-2 finding F3 during C-4 dispatch
+  (2026-05-04). Latent — not yet exercised in production. Filed
+  per close-followups-before-next-epic rule
+  (`feedback_close_followups_before_next_epic.md`) so the finding
+  doesn't carry into Tier 6 dispatch as a vestigial.
+- **Defect.** `src/modes/reference_mode.cpp` (post-C-4): the
+  `analysis_to_native_sample` helper guards preconditions with
+  `assert(native_sr > 0); assert(analysis_sr > 0);`. C++ runtime
+  `assert` compiles out in Release builds (`NDEBUG` defined), so a
+  future caller passing zero or negative `analysis_sr` would trigger
+  integer division-by-zero (UB) instead of a clean abort. Production
+  callers in `analyze_reference_mode` derive these from
+  `AudioBuffer::sample_rate` and the function-parameter `analysis_sr`
+  (default 22050) — current call paths are safe by construction, but
+  the helper's contract is enforced asymmetrically across build types
+  while it lives in the public header.
+- **Invariant established.** "`analysis_to_native_sample`'s
+  precondition checks are enforced symmetrically in Debug and
+  Release builds; zero or negative sample rates produce a documented
+  abort or error path, never integer division-by-zero UB."
+- **Files touched.** `src/modes/reference_mode.cpp`,
+  `src/modes/reference_mode.hpp`,
+  `tests/test_reference_mode.cpp`.
+- **Tests added.**
+  - `analysis_to_native_sample: zero or negative sample rate is
+    rejected, not divided by` (new; Release-mode UB-adjacent
+    regression test — must run under both Debug and Release CI
+    lanes to verify symmetry).
+- **Tier rationale.** Tier 6 (API hygiene): the helper is exposed in
+  the public header `src/modes/reference_mode.hpp` for unit-test
+  access (per C-4's audit-2 precedent-setting decision). A public
+  API with debug-only precondition validation is API-hygiene-class.
+- **Cure options.**
+  - (a) Promote `assert` to unconditional check + `std::abort()` on
+        invalid input. Simple, matches the helper's `noexcept`
+        signature, smallest blast radius.
+  - (b) Change return type to `std::optional<int64_t>`; callers
+        handle invalid-rate paths explicitly. Wider blast radius
+        (every caller updates).
+  - (c) Validate at the helper's callers in `analyze_reference_mode`
+        only; leave the helper's contract debug-only-checked but
+        document explicitly that callers must pre-validate. Smaller
+        code change; weaker guarantee. Inconsistent with public-
+        header exposure.
+  Pick one when M-REF-RATE-VALIDATION dispatches; document choice in
+  the PR body.
+- **Out of overlap.** Distinct from C-4 (establishes the helper and
+  its rounding behaviour) and from `DRIFT-MODEL-RATE-TRUNCATION`
+  (extends C-4's helper to `src/core/drift_model.cpp`'s three sites).
+  M-REF-RATE-VALIDATION addresses the helper's precondition contract,
+  orthogonal to the conversion semantics.
+- **Effort.** ≤ 15 lines of code + 1 unit test. One PR, one audit.
+- **Exit criteria.**
+  - [ ] `analysis_to_native_sample`'s precondition checks fire in
+        Release builds, not just Debug.
+  - [ ] New unit test exercises the invalid-rate path and asserts
+        the documented behaviour (abort, optional-empty, or whichever
+        cure is chosen).
+  - [ ] Header-side comment in `src/modes/reference_mode.hpp`
+        documents the precondition-enforcement guarantee
+        (Debug + Release symmetric).
 
 ---
 
