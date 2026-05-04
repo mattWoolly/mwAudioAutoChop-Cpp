@@ -662,6 +662,75 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 5 — Algorithmic correctness
 
+### DRIFT-MODEL-RATE-TRUNCATION — Rate-conversion truncation in DriftModel::ref_to_vinyl_sample
+
+- **Origin.** Adjacent-entry sweep during C-4 pre-dispatch checklist
+  (2026-05-04). Same physical-quantity defect class as C-4 (analysis-rate
+  ↔ native-rate sample-index conversion) but in a dormant code path
+  that BACKLOG's C-4 scope did not cover. Filed as own Tier 5 item per
+  one-item-one-PR pattern; cure mechanism uses C-4's rounding helper at
+  two of the three sites.
+- **Defect.** `src/core/drift_model.cpp:10, 16, 33` —
+  `DriftModel::ref_to_vinyl_sample` converts analysis-rate sample
+  indices to native-rate via truncation, introducing the same up-to-
+  ~9-sample error at 192 kHz that C-4 cures in `reference_mode.cpp`.
+  Two distinct mechanical defect surfaces:
+  - Lines 10, 16: pure integer-division truncation
+    (`ref_sample * native_sr / analysis_sr` with integral operands;
+    the `static_cast<int64_t>` is redundant). Cure: route through
+    C-4's integer-arithmetic rounding helper.
+  - Line 33: float→int truncation (`vinyl_sample` is `double`
+    post-polynomial-evaluation at line 32; the cast to `int64_t`
+    truncates toward zero). Cure: `std::llround` on the double
+    product, or pre-round `vinyl_sample` to `int64_t` and route
+    through the integer helper.
+- **Dormancy.** `DriftModel::ref_to_vinyl_sample` has no production
+  callers as of 2026-05-04 (`grep -rn ref_to_vinyl_sample src/`
+  shows zero hits outside its definition). `DriftModel` itself is
+  referenced only as `std::optional<DriftModel>` at
+  `src/core/alignment_result.hpp:26`. Defect is latent. Cured here to
+  prevent activation of `DriftModel` in any future epic from
+  reintroducing the C-4 defect class.
+- **Invariant established.** "All analysis-rate ↔ native-rate
+  sample-index conversions in `src/core/drift_model.cpp` round, not
+  truncate, matching the tolerance C-4 establishes for
+  `reference_mode.cpp`."
+- **Depends on.** C-4 (the rounding helper must exist before this
+  dispatches; sequenced after C-4 audit-2 close).
+- **Files touched.** `src/core/drift_model.cpp`,
+  `tests/test_drift_model.cpp` (new file — no drift-model tests
+  exist on main as of filing).
+- **Tests added.**
+  - `DriftModel::ref_to_vinyl_sample: empty-segment fast path rounds,
+    not truncates` (new; exercises line 10 — integer-arithmetic site).
+  - `DriftModel::ref_to_vinyl_sample: max_pos == 0 path rounds, not
+    truncates` (new; exercises line 16 — integer-arithmetic site).
+  - `DriftModel::ref_to_vinyl_sample: polynomial-applied path rounds,
+    not truncates` (new; exercises line 33 — float→int site, with
+    a non-zero polynomial offset to engage the line-32 path).
+- **Tier rationale.** Tier 5 (Algorithmic correctness): same axis as
+  C-4. Filed in Tier 5 rather than deferred to avoid carrying as a
+  vestigial finding into Tier 6 (per
+  `feedback_close_followups_before_next_epic.md`).
+- **Effort.** ≤ 30 lines of code in `drift_model.cpp` + ≤ 60 lines
+  of unit-test code (new test file). One PR, one audit.
+- **Exit criteria.**
+  - [ ] All three sites at `src/core/drift_model.cpp:10, 16, 33` no
+        longer truncate. Lines 10 and 16 use C-4's integer-arithmetic
+        helper directly; line 33 uses `std::llround` or routes through
+        the integer helper after explicit pre-rounding of
+        `vinyl_sample` to `int64_t`.
+  - [ ] Three new unit tests exercising each site with canonical
+        inputs (e.g. `(native_sr=192000, analysis_sr=44100)` and
+        `ref_sample` chosen so rounding and truncation produce
+        different `int64_t` outputs); assertions are exact-match on
+        the rounded output, not tolerance windows.
+  - [ ] No new integer-division or float→int truncation paths
+        introduced in `src/core/drift_model.cpp`.
+  - [ ] Cure mechanism at lines 10, 16 is the same helper C-4 lifts
+        (no duplicate helper). Line 33's cure is documented in the
+        PR body if it diverges from the helper's signature.
+
 ### M-9 — std::clamp with hi < lo when vinyl is empty
 
 - **Defect.** `reference_mode.cpp:994` clamp upper bound may be -1.
