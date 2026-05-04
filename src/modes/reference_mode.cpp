@@ -5,6 +5,7 @@
 #include "core/music_detection.hpp"
 #include "core/verbose.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <filesystem>
 #include <optional>
@@ -13,6 +14,18 @@
 #include <sstream>
 
 namespace mwaac {
+
+// C-4: Maximum allowed deviation, in native-rate samples, between the
+// rounded analysis->native sample-index conversion produced by
+// analysis_to_native_sample() and the mathematically exact (real-valued)
+// conversion. With round-half-away-from-zero the bound is 0.5 native
+// samples, which is < 1; this constant pins the C-4 invariant
+// "Reference mode boundaries are within one native-rate sample of the
+// analysis-rate result." It is distinct from
+// kRefFixtureToleranceSamples in tests/test_integration.cpp, which
+// measures end-to-end alignment-fixture tolerance against a ground-truth
+// manifest (an orthogonal physical quantity).
+static constexpr int64_t kAnalysisToNativeRoundingTolerance = 1;
 
 namespace {
 
@@ -731,6 +744,49 @@ bool is_audio_file(const std::filesystem::path& p) {
 
 } // anonymous namespace
 
+// C-4: Convert an analysis-rate sample index to native-rate, rounding to
+// nearest (half away from zero).
+//
+// Implementation choice: integer arithmetic with explicit half-denominator
+// bias. Chosen over `std::llround(analysis_sample * (double)native_sr /
+// analysis_sr)` to keep the conversion in pure 64-bit integer math: no
+// IEEE-754 rounding-mode reasoning, no precision loss for very large
+// `analysis_sample` values where double's 53-bit mantissa would start
+// rounding before the conversion finishes. The product
+// `analysis_sample * native_sr` is bounded well below INT64_MAX for any
+// realistic vinyl side length (a one-hour side at 22.05 kHz analysis is
+// ~7.94e7 samples; multiplied by 192000 native that's ~1.52e13 << 9.22e18).
+//
+// Sign handling: the bias is applied symmetrically (toward +inf for
+// non-negative products, toward -inf for negative ones), which yields
+// round-half-away-from-zero. The two production call sites in
+// analyze_reference_mode pass non-negative indices (vinyl-frame offsets
+// and clamped exclusive-end positions); negative-input behaviour is
+// supported only as a defensive correctness property of the helper itself
+// and is exercised by the unit test for completeness.
+int64_t analysis_to_native_sample(int64_t analysis_sample,
+                                  int native_sr,
+                                  int analysis_sr) noexcept
+{
+    // Document the C-4 invariant at the conversion site: the rounded
+    // result is within kAnalysisToNativeRoundingTolerance native-rate
+    // samples of the real-valued conversion. The tolerance is by
+    // construction (round-half-away-from-zero gives a 0.5-sample
+    // worst case, which is < 1); this static_assert is a compile-time
+    // guard against accidental tightening of the constant below the
+    // value the algorithm can deliver.
+    static_assert(kAnalysisToNativeRoundingTolerance >= 1,
+                  "C-4 invariant requires at least 1 native-rate sample of "
+                  "rounding tolerance for round-half-away-from-zero conversion");
+    assert(native_sr > 0);
+    assert(analysis_sr > 0);
+    const int64_t num     = static_cast<int64_t>(native_sr);
+    const int64_t den     = static_cast<int64_t>(analysis_sr);
+    const int64_t product = analysis_sample * num;
+    const int64_t bias    = (product >= 0) ? (den / 2) : -(den / 2);
+    return (product + bias) / den;
+}
+
 Expected<std::vector<ReferenceTrack>, ReferenceError> load_reference_tracks(
     const std::filesystem::path& reference_dir,
     int sample_rate)
@@ -1106,9 +1162,14 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
 
     for (size_t i = 0; i < offsets.size(); ++i) {
         SplitPoint sp;
-        sp.start_sample = offsets[i].first * native_sr / analysis_sr;
+        // C-4: Use rounded analysis->native conversion (was integer-divide
+        // truncation; see analysis_to_native_sample comment and
+        // kAnalysisToNativeRoundingTolerance at the top of this file).
+        sp.start_sample = analysis_to_native_sample(
+            offsets[i].first, native_sr, analysis_sr);
         // Convert exclusive end in analysis_sr to inclusive end in native_sr
-        sp.end_sample = (end_decisions[i].end_sample_excl * native_sr / analysis_sr) - 1;
+        sp.end_sample = analysis_to_native_sample(
+            end_decisions[i].end_sample_excl, native_sr, analysis_sr) - 1;
 
         sp.confidence = offsets[i].second;
         sp.source = "reference";
