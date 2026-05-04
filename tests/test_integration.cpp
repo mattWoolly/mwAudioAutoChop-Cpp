@@ -39,6 +39,15 @@ namespace {
 // in src/modes/reference_mode.cpp): 50 ms at 44100 Hz = 2205 samples.
 // That is the documented hard tolerance. Inside that, the test still
 // asserts the result is within the same envelope frame as the truth.
+//
+// Distinct from `kAnalysisToNativeRoundingTolerance` in
+// `src/modes/reference_mode.cpp` (introduced by C-4): that constant
+// pins per-conversion rounding error of the `analysis_to_native_sample`
+// helper at <= 1 native-rate sample — the intrinsic error of the
+// rounding step alone. `kRefFixtureToleranceSamples` below is the
+// end-to-end algorithmic alignment tolerance for `align_per_track`
+// against fixture ground-truth, an orthogonal physical quantity that
+// sits on top of (not in place of) the rounding tolerance.
 constexpr int kRefAnalysisSr = 22050;
 constexpr int kRefNativeSr = 44100;
 constexpr int64_t kRefFrameMs = 50;
