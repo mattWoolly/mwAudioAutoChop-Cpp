@@ -695,6 +695,9 @@ migration to `std::expected`-style storage happens in M-14.
 - **Tests added.**
   - `cross_correlate and cross_correlate_fft agree on lag` (already in
     test suite; just re-verify after comment).
+- **Exit criteria.**
+  - [ ] Header docstring notes the normalization difference explicitly.
+  - [ ] Consider marking `[[deprecated]]` or `/* testing-only */`.
 
 ### M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture
 
@@ -723,7 +726,7 @@ migration to `std::expected`-style storage happens in M-14.
   through to `test_reference_mode` if not already there).
 - **Tests added.** Replace `tests/test_reference_mode.cpp:14` SKIP
   with a real assertion calling `align_per_track` directly, comparing
-  against `tests/fixtures/ref_v1/refs/manifest.json`'s ground-truth
+  against `tests/fixtures/ref_v1/manifest.txt`'s ground-truth
   start samples.
 - **Tier rationale.** Tier 5 (Algorithmic correctness): asserts an
   algorithmic precision invariant on `align_per_track`, which is a
@@ -744,9 +747,6 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] `test_reference_mode` binary's exit status flips from
         `Failed` to `Passed` (alongside Mi-17's natural-sort
         un-SKIP — the binary needs both to fully pass).
-- **Exit criteria.**
-  - [ ] Header docstring notes the normalization difference explicitly.
-  - [ ] Consider marking `[[deprecated]]` or `/* testing-only */`.
 
 ---
 
