@@ -1026,6 +1026,91 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Header docstring restated.
   - [ ] Exit code matches doc.
 
+### M-WAVEFORM-CLAMP-UB — `render_waveform` `std::clamp` UB on `height == 1` input
+
+- **Origin.** Adjacent-entry sweep during M-9 pre-dispatch checklist
+  (2026-05-04). Same defect class as M-9 (empty-container `std::clamp`
+  with `hi = container_size - 1` going to -1 when size is 0) but in a
+  TUI code path rather than reference-mode. Cross-tier finding;
+  filed under Tier 7 (TUI invariants) per cycle's tier-boundary
+  discipline rather than expanded into Tier 5's algorithmic-
+  correctness scope. Cycle precedent on tier-boundary preservation:
+  C-3 deferred from Tier 5 because it's Tier-4-shape; same logic
+  here in the opposite direction.
+- **Defect.** `src/tui/waveform.cpp:68-69` —
+  ```
+  min_row = std::clamp(min_row, 0, waveform_height - 1);
+  max_row = std::clamp(max_row, 0, waveform_height - 1);
+  ```
+  When `waveform_height == 0`, `hi = -1 < lo = 0`; per cppreference,
+  `std::clamp` with `hi < lo` is undefined behavior. Reachable input
+  trace: `render_waveform(..., height=1, ...)` passes the early-return
+  guard at `:53` (`if (peaks.empty() || height <= 0) return {};`),
+  computes `waveform_height = height - 1 = 0` at `:59`, then enters
+  the per-column loop at `:61` and trips the UB at `:68`/`:69`. The
+  `height == 1` case is a degenerate but valid input (very small TUI
+  pane); the guard at `:53` admits it.
+- **Reachability dormancy.** TUI tests are absent on main as of
+  2026-05-04 (per Mi-8 and Mi-9 BACKLOG entries which both note
+  "TUI tests are currently absent; add a headless unit test at the
+  state-mutator level"); the UB has not been observed in production
+  use because (a) production TUI panes are typically much taller
+  than 1 row, and (b) sanitizers don't run against TUI render paths
+  without a test harness. Cured here to prevent the defect surfacing
+  the moment Tier 7's TUI test infrastructure exists.
+- **Invariant established.** "`render_waveform` does not invoke
+  `std::clamp` with `hi < lo` for any valid `height > 0` input;
+  the `waveform_height == 0` degenerate case is guarded explicitly."
+- **Files touched.** `src/tui/waveform.cpp`, plus the Tier 7 TUI
+  test harness (new file or per-tier test target — exact wiring
+  depends on what Tier 7's TUI test infrastructure work establishes;
+  Mi-8 and Mi-9 BACKLOG entries both call out the same harness gap).
+- **Tests added.**
+  - `render_waveform: height == 1 does not invoke std::clamp with
+    hi < lo` (new; engages the degenerate-height path with peaks
+    non-empty). Sanitizer-clean run is the primary signal; functional
+    assertion is on the returned rows being well-formed.
+- **Cure shape (cycle precedent).** Mirrors M-9's pattern: top-of-
+  loop guard before the std::clamp call, or pre-loop guard that
+  early-returns if `waveform_height == 0`. Two valid shapes:
+  - (a) Tighten the early-return at `:53` to also guard
+    `height < 2` (since `height == 1` produces zero usable waveform
+    rows). Single-line change; semantically: "render_waveform returns
+    empty for inputs that have no waveform rows to draw."
+  - (b) Guard inside the loop at `:67` with `if (waveform_height == 0)
+    continue;` (or break — the entire loop iterates over peaks but
+    produces no per-column rows when waveform_height is 0).
+  Pick one when M-WAVEFORM-CLAMP-UB dispatches; (a) is the cleaner
+  contract (fail-fast at the input boundary).
+- **Tier rationale.** Tier 7 (TUI invariants): the cure lives in
+  `src/tui/`, the test depends on TUI test infrastructure that
+  Tier 7 establishes (Mi-8, Mi-9 both depend on the same harness),
+  and the invariant ("render_waveform on degenerate height returns
+  cleanly") is TUI-shape, not algorithmic-correctness shape. Cross-
+  tier expansion into Tier 5 was considered and rejected per
+  tier-boundary discipline; user-adjudicated.
+- **Out of overlap.** Distinct from M-9 (same defect class, different
+  file/area, different test surface). M-9's cure on
+  `src/modes/reference_mode.cpp:1048` is independent of this; both
+  items use the same guard pattern but cure different code paths.
+  Distinct from Mi-8 / Mi-9 (which address other TUI invariants —
+  marker nudge bounds, view bounds inversion). Distinct from
+  Mi-10 (TUI exit-code documentation).
+- **Effort.** ≤ 5 lines of code (single guard) + 1 unit test. One
+  PR, one audit. Test infrastructure dependency adds work if
+  Tier 7's TUI harness is not yet established when this dispatches.
+- **Exit criteria.**
+  - [ ] `src/tui/waveform.cpp:68-69` no longer invoke `std::clamp`
+        with `hi < lo` for any reachable input (verified by reachability
+        analysis on the `height == 1` path).
+  - [ ] Guard added per (a) or (b); cure choice documented in the
+        PR body.
+  - [ ] New unit test exercises `render_waveform(..., height=1, ...)`
+        with non-empty peaks; sanitizer-clean run; assertions on
+        returned rows well-formed.
+  - [ ] No regression in `render_waveform`'s behavior for `height >= 2`
+        inputs (existing TUI rendering unchanged for typical heights).
+
 ---
 
 ## Tier 8 — Documentation, attribution, hygiene
