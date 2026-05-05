@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include "modes/reference_mode.hpp"
+#include "core/audio_buffer.hpp"
 
 #include <cstdint>
+#include <vector>
 
 // These test cases existed only as placeholders that asserted REQUIRE(true).
 // They are skipped pending a real test-fixture effort (see BACKLOG.md item
@@ -85,4 +87,34 @@ TEST_CASE("Reference mode: native-rate boundary is rounded not truncated",
         //   exact = -1.5; round-half-away-from-zero -> -2.
         REQUIRE(analysis_to_native_sample(-1, 3, 2) == -2);
     }
+}
+
+// M-9: empty-vinyl regression. Pre-cure, align_per_track ran the
+// per-track loop and ended each iteration with
+//   std::clamp(chosen_pos, int64_t{0},
+//              static_cast<int64_t>(vinyl.samples.size()) - 1);
+// which evaluates to std::clamp(x, 0, -1) when vinyl is empty —
+// hi < lo, undefined behavior per cppreference. Post-cure, the
+// function early-returns an empty offsets vector before entering the
+// loop. Test passes a non-empty `tracks` so the loop *would* run if
+// the guard were missing; UBSan-clean execution is the second signal.
+TEST_CASE("align_per_track: empty vinyl returns empty offsets, no UB",
+          "[reference]")
+{
+    mwaac::AudioBuffer vinyl;
+    vinyl.sample_rate = 44100;
+    // vinyl.samples is default-constructed empty.
+    REQUIRE(vinyl.samples.empty());
+
+    // One non-empty track: forces the function to be tempted to enter
+    // the per-track loop, so the guard is the only thing standing
+    // between us and the std::clamp UB at the end of each iteration.
+    std::vector<mwaac::ReferenceTrack> tracks(1);
+    tracks[0].audio.sample_rate = 44100;
+    tracks[0].audio.samples.assign(44100, 0.0f);  // 1 s of silence
+    tracks[0].duration_samples =
+        static_cast<int64_t>(tracks[0].audio.samples.size());
+
+    auto offsets = mwaac::align_per_track(vinyl, tracks, /*music_start=*/0);
+    REQUIRE(offsets.empty());
 }
