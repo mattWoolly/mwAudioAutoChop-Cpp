@@ -681,7 +681,7 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 5 — Algorithmic correctness
 
-### DRIFT-MODEL-RATE-TRUNCATION — Rate-conversion truncation in DriftModel::ref_to_vinyl_sample
+### DRIFT-MODEL-RATE-TRUNCATION — Rate-conversion truncation in DriftModel::ref_to_vinyl_sample — **RESOLVED in #42 (`718330c`)**
 
 - **Origin.** Adjacent-entry sweep during C-4 pre-dispatch checklist
   (2026-05-04). Same physical-quantity defect class as C-4 (analysis-rate
@@ -734,21 +734,43 @@ migration to `std::expected`-style storage happens in M-14.
 - **Effort.** ≤ 30 lines of code in `drift_model.cpp` + ≤ 60 lines
   of unit-test code (new test file). One PR, one audit.
 - **Exit criteria.**
-  - [ ] All three sites at `src/core/drift_model.cpp:10, 16, 33` no
+  - [x] All three sites at `src/core/drift_model.cpp:10, 16, 33` no
         longer truncate. Lines 10 and 16 use C-4's integer-arithmetic
         helper directly; line 33 uses `std::llround` or routes through
         the integer helper after explicit pre-rounding of
         `vinyl_sample` to `int64_t`.
-  - [ ] Three new unit tests exercising each site with canonical
+        *Lines 10 and 16 cured via `analysis_to_native_sample` calls
+        post-merge at `src/core/drift_model.cpp:11` and `:17` (line
+        numbers post-cure include the inserted block comment); line 33
+        cured via `std::llround` at `:50-52` (choice (a) per BACKLOG
+        — single-step round-half-away-from-zero on the double product;
+        rationale at `drift_model.cpp:36-49`).*
+  - [x] Three new unit tests exercising each site with canonical
         inputs (e.g. `(native_sr=192000, analysis_sr=44100)` and
         `ref_sample` chosen so rounding and truncation produce
         different `int64_t` outputs); assertions are exact-match on
         the rounded output, not tolerance windows.
-  - [ ] No new integer-division or float→int truncation paths
+        *`tests/test_drift_model.cpp` (new file, 128 lines): three
+        TEST_CASEs under `[drift_model]`, 21 total exact-match `==`
+        assertions on `int64_t` outputs. Each TEST_CASE engages its
+        target branch via construction (segment_offsets empty /
+        back().first==0 / 1000 with non-empty coefficients);
+        polynomial-path expected values re-derived independently by
+        audit via Python. Each input chosen so rounded ≠ truncated,
+        proving each test would fail under pre-cure code.*
+  - [x] No new integer-division or float→int truncation paths
         introduced in `src/core/drift_model.cpp`.
-  - [ ] Cure mechanism at lines 10, 16 is the same helper C-4 lifts
+        *`grep '\* native_sr / analysis_sr' src/core/drift_model.cpp`
+        post-merge returns only the cure block-comment text mention
+        at the top of the file; no live code expressions.*
+  - [x] Cure mechanism at lines 10, 16 is the same helper C-4 lifts
         (no duplicate helper). Line 33's cure is documented in the
         PR body if it diverges from the helper's signature.
+        *`#include "modes/reference_mode.hpp"` added (root-relative
+        to `src/`, matching `reference_mode.cpp`'s
+        `#include "core/audio_buffer.hpp"` convention; no circular
+        dep). Line 33's `std::llround` divergence documented in
+        the PR body and at `drift_model.cpp:36-49`.*
 
 ### M-9 — std::clamp with hi < lo when vinyl is empty
 
