@@ -772,9 +772,12 @@ migration to `std::expected`-style storage happens in M-14.
         dep). Line 33's `std::llround` divergence documented in
         the PR body and at `drift_model.cpp:36-49`.*
 
-### M-9 — std::clamp with hi < lo when vinyl is empty
+### M-9 — std::clamp with hi < lo when vinyl is empty — **RESOLVED in #43 (`7969aec`)**
 
 - **Defect.** `reference_mode.cpp:994` clamp upper bound may be -1.
+  *Site drifted from `:994` (BACKLOG-cite) to `:1068` post-cure
+  (post-C-4 helper additions and post-M-9 guard-block insertion);
+  per `KNOWN-FAILING-SCHEMA-V2`, line is drift-tolerant nav hint.*
 - **Invariant established.** "align_per_track skips tracks against empty
   vinyl rather than invoking std::clamp with invalid bounds."
 - **Files touched.** `src/modes/reference_mode.cpp`,
@@ -782,7 +785,24 @@ migration to `std::expected`-style storage happens in M-14.
 - **Tests added.**
   - `align_per_track: empty vinyl returns empty offsets, no UB` (new).
 - **Exit criteria.**
-  - [ ] Guard at top of per-track loop.
+  - [x] Guard at top of per-track loop.
+        *Cure landed as **function-entry guard** (option (a)) at
+        `src/modes/reference_mode.cpp:858-860` rather than literal
+        top-of-loop (option (b)). Mathematically equivalent for the
+        empty-vinyl invariant the criterion targets:
+        `vinyl.samples.size()` is never mutated during the loop, so
+        an in-loop guard would never have a different effect than
+        function-entry. Function-entry is the stricter version —
+        cleaner contract ("empty vinyl ⇒ empty offsets" with no
+        per-track loop body executed) and avoids conflating
+        "this track skipped" with "no vinyl at all". (a)-vs-(b)
+        rationale documented in cure comment at
+        `src/modes/reference_mode.cpp:843-857`. New TEST_CASE
+        `align_per_track: empty vinyl returns empty offsets, no UB`
+        at `tests/test_reference_mode.cpp:101-118` exercises the
+        guard with empty vinyl + non-empty tracks (loop would run
+        pre-cure); `REQUIRE(offsets.empty())` exact-match;
+        UBSan-clean.*
 
 ### M-10 — compute_zero_crossing_rate divides by zero
 
