@@ -840,6 +840,26 @@ std::vector<std::pair<int64_t, double>> align_per_track(
     constexpr double MIN_CONFIDENCE = 0.05;
 
     std::vector<std::pair<int64_t, double>> offsets;
+
+    // M-9: empty-vinyl guard. The per-track loop ends with a
+    //   chosen_pos = std::clamp(chosen_pos,
+    //                            int64_t{0},
+    //                            static_cast<int64_t>(vinyl.samples.size()) - 1);
+    // call. When vinyl.samples.size() == 0, the upper bound becomes -1,
+    // making `hi < lo` — std::clamp's precondition is violated and the
+    // call is undefined behavior (cppreference). Guarding here at
+    // function entry establishes the invariant
+    //   "align_per_track skips tracks against empty vinyl rather than
+    //    invoking std::clamp with invalid bounds."
+    // and pins the contract: empty vinyl ⇒ empty offsets, with no
+    // per-track loop body executed at all. An in-loop continue/break
+    // would be mathematically equivalent (vinyl.samples.size() does not
+    // change during the loop) but conflates "this track skipped" with
+    // "no vinyl at all"; the early return is the cleaner shape.
+    if (vinyl.samples.empty()) {
+        return offsets;
+    }
+
     int64_t expected_position = music_start_sample;
 
     for (size_t i = 0; i < tracks.size(); ++i) {
