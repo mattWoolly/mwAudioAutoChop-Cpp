@@ -804,7 +804,7 @@ migration to `std::expected`-style storage happens in M-14.
         pre-cure); `REQUIRE(offsets.empty())` exact-match;
         UBSan-clean.*
 
-### M-10 — compute_zero_crossing_rate divides by zero
+### M-10 — compute_zero_crossing_rate divides by zero — **RESOLVED in #44 (`6a8c805`)**
 
 - **Defect.** `analysis.cpp:68` when `end - start == 1`.
 - **Invariant established.** "ZCR is defined as 0 for frames of length
@@ -812,7 +812,29 @@ migration to `std::expected`-style storage happens in M-14.
 - **Files touched.** `src/core/analysis.cpp`, `tests/test_analysis.cpp`.
 - **Tests added.**
   - `compute_zero_crossing_rate: single-sample frame returns 0, not NaN`.
-- **Exit criteria.** [ ] Guard and test.
+- **Exit criteria.**
+  - [x] Guard and test.
+        *Cure: per-frame in-loop guard at `src/core/analysis.cpp:73-76`
+        — `if (end - start < 2) { zcr[i] = 0.0f; continue; }` — sits
+        adjacent to the offending divisor at `:80` (formerly `:68`
+        pre-cure; +12-line drift from cure-comment block insertion at
+        `:60-72`). Choice (a) in-loop guard over (b) function-entry
+        early-return per defense-in-depth: (a) pins the BACKLOG
+        invariant verbatim ("ZCR is defined as 0 *for frames* of
+        length less than 2") at per-frame granularity; (b) would
+        conflate frame-length with input-length and leave a latent
+        gap if a non-empty signal produced a degenerate trailing
+        frame. Defensive double-zero: `< 2` correctly subsumes both
+        `end - start == 1` (reachable via `samples.size() == 1` →
+        short-signal branch) and the unreachable-but-defensive
+        `end - start == 0`. Rationale documented in cure comment at
+        `analysis.cpp:60-72`. New TEST_CASE
+        `compute_zero_crossing_rate: single-sample frame returns 0,
+        not NaN` at `tests/test_analysis.cpp:66-77` exercises the
+        guard with `samples = {1.0f}, frame_length = hop_length = 1`;
+        three independent assertions (size, exact-match `== 0.0f`,
+        NaN exclusion). Pre-cure both content REQUIREs would fail
+        (NaN ≠ 0.0f, isnan true). UBSan-clean.*
 
 ### Mi-4 — Naive cross_correlate normalization documentation
 
