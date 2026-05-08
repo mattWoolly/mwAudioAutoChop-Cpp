@@ -57,6 +57,24 @@ std::vector<float> compute_zero_crossing_rate(
         size_t start = i * static_cast<std::size_t>(hop_length);
         size_t end = std::min(start + static_cast<std::size_t>(frame_length), samples.size());
 
+        // M-10: per-frame degenerate-length guard. The normalization below
+        // divides by `end - start - 1`, which is the count of adjacent-pair
+        // comparisons performed in the inner loop. When `end - start < 2`
+        // (i.e. the frame contains 0 or 1 samples — reachable, e.g., when
+        // samples.size() == 1 and the short-signal branch above sets
+        // num_frames = 1 with end == 1), the inner loop performs zero
+        // iterations (crossings == 0) and the divisor is also 0, producing
+        // 0.0f / 0.0f = NaN per IEEE-754. Pin the BACKLOG invariant
+        // verbatim — "ZCR is defined as 0 for frames of length less than 2"
+        // — at the per-frame granularity adjacent to the offending
+        // divisor. A function-entry early-return on samples.size() < 2
+        // would be coarser and would conflate frame-length with
+        // input-length; the in-loop guard is the cleaner shape.
+        if (end - start < 2) {
+            zcr[i] = 0.0f;
+            continue;
+        }
+
         int crossings = 0;
         for (size_t j = start + 1; j < end; ++j) {
             if ((samples[j] >= 0) != (samples[j-1] >= 0)) {

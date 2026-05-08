@@ -58,7 +58,20 @@ TEST_CASE("Empty input returns empty", "[analysis]") {
     std::vector<float> empty;
     auto rms = mwaac::compute_rms_energy(empty, 44100, 100, 50);
     REQUIRE(rms.empty());
-    
+
     auto zcr = mwaac::compute_zero_crossing_rate(empty, 100, 50);
     REQUIRE(zcr.empty());
+}
+
+TEST_CASE("compute_zero_crossing_rate: single-sample frame returns 0, not NaN", "[analysis]") {
+    // M-10 regression test. Pre-cure: divisor (end - start - 1) is 0 when
+    // the frame contains a single sample, and the inner loop has zero
+    // iterations, so the normalization computes 0.0f / 0.0f = NaN per
+    // IEEE-754. Post-cure: the per-frame guard returns the BACKLOG-mandated
+    // 0.0f — "ZCR is defined as 0 for frames of length less than 2."
+    std::vector<float> samples{1.0f};
+    auto zcr = mwaac::compute_zero_crossing_rate(samples, /*frame_length=*/1, /*hop_length=*/1);
+    REQUIRE(zcr.size() == 1);
+    REQUIRE(zcr[0] == 0.0f);          // exact-match: defined as 0 for short frames
+    REQUIRE(!std::isnan(zcr[0]));     // explicit NaN exclusion (independent signal)
 }
