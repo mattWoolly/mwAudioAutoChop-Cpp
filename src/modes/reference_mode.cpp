@@ -12,6 +12,7 @@
 #include <regex>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
 
 namespace mwaac {
 
@@ -29,49 +30,8 @@ static constexpr int64_t kAnalysisToNativeRoundingTolerance = 1;
 
 namespace {
 
-// Natural sort helper - compares numeric parts as integers
-bool natural_less(const std::string& a, const std::string& b) {
-    auto get_parts = [](const std::string& s) -> std::vector<std::pair<bool, std::string>> {
-        std::vector<std::pair<bool, std::string>> parts;
-        std::string current;
-        bool is_digit = false;
-        
-        for (char c : s) {
-            bool digit = std::isdigit(static_cast<unsigned char>(c));
-            if (!current.empty() && digit != is_digit) {
-                parts.push_back({is_digit, current});
-                current.clear();
-            }
-            current += c;
-            is_digit = digit;
-        }
-        if (!current.empty()) {
-            parts.push_back({is_digit, current});
-        }
-        return parts;
-    };
-    
-    auto a_parts = get_parts(a);
-    auto b_parts = get_parts(b);
-    
-    for (size_t i = 0; i < std::min(a_parts.size(), b_parts.size()); ++i) {
-        if (a_parts[i].first && b_parts[i].first) {
-            // Both numeric - compare as numbers
-            long long num_a = std::stoll(a_parts[i].second);
-            long long num_b = std::stoll(b_parts[i].second);
-            if (num_a != num_b) return num_a < num_b;
-        } else {
-            // At least one is text - compare as strings
-            if (a_parts[i].second != b_parts[i].second) {
-                return a_parts[i].second < b_parts[i].second;
-            }
-        }
-    }
-    return a_parts.size() < b_parts.size();
-}
-
 std::vector<std::filesystem::path> natural_sort(
-    std::vector<std::filesystem::path> paths) 
+    std::vector<std::filesystem::path> paths)
 {
     std::sort(paths.begin(), paths.end(), [](const auto& a, const auto& b) {
         return natural_less(a.filename().string(), b.filename().string());
@@ -743,6 +703,63 @@ bool is_audio_file(const std::filesystem::path& p) {
 }
 
 } // anonymous namespace
+
+// Mi-17: see header for rationale. Numeric compare on digit-run strings
+// uses length-then-lex on zero-stripped digit strings rather than
+// std::stoll, which throws std::out_of_range on digit runs > ~19 chars
+// and propagated out of the std::sort callsite at natural_sort to abort
+// the program. The cure is mathematically equivalent to numeric compare
+// for any in-range value (strip leading zeros so length == significant-
+// digit count: longer = numerically larger; on equal lengths, lex compare
+// on the remaining digits matches numeric compare) AND well-defined for
+// digit runs of any length.
+bool natural_less(const std::string& a, const std::string& b) {
+    auto cmp_digit_runs = [](const std::string& x,
+                             const std::string& y) -> int {
+        auto strip = [](const std::string& s) -> std::string_view {
+            std::size_t i = 0;
+            while (i + 1 < s.size() && s[i] == '0') ++i;
+            return std::string_view(s.data() + i, s.size() - i);
+        };
+        auto sx = strip(x), sy = strip(y);
+        if (sx.size() != sy.size()) return sx.size() < sy.size() ? -1 : 1;
+        return sx < sy ? -1 : (sx > sy ? 1 : 0);
+    };
+
+    auto get_parts = [](const std::string& s) -> std::vector<std::pair<bool, std::string>> {
+        std::vector<std::pair<bool, std::string>> parts;
+        std::string current;
+        bool is_digit = false;
+        for (char c : s) {
+            bool digit = std::isdigit(static_cast<unsigned char>(c));
+            if (!current.empty() && digit != is_digit) {
+                parts.push_back({is_digit, current});
+                current.clear();
+            }
+            current += c;
+            is_digit = digit;
+        }
+        if (!current.empty()) {
+            parts.push_back({is_digit, current});
+        }
+        return parts;
+    };
+
+    auto a_parts = get_parts(a);
+    auto b_parts = get_parts(b);
+
+    for (std::size_t i = 0; i < std::min(a_parts.size(), b_parts.size()); ++i) {
+        if (a_parts[i].first && b_parts[i].first) {
+            int c = cmp_digit_runs(a_parts[i].second, b_parts[i].second);
+            if (c != 0) return c < 0;
+        } else {
+            if (a_parts[i].second != b_parts[i].second) {
+                return a_parts[i].second < b_parts[i].second;
+            }
+        }
+    }
+    return a_parts.size() < b_parts.size();
+}
 
 // C-4: Convert an analysis-rate sample index to native-rate, rounding to
 // nearest (half away from zero).

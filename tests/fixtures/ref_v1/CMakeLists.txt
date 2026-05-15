@@ -51,3 +51,14 @@ if(TARGET test_integration)
     target_compile_definitions(test_integration PRIVATE
         MWAAC_REF_FIXTURE_V1_DIR="${REF_FIXTURE_V1_OUT_DIR}")
 endif()
+
+# M-REF-ALIGN-UNIT — same fixture is consumed by the unit-level
+# align_per_track assertion in test_reference_mode (un-SKIPs the placeholder
+# at tests/test_reference_mode.cpp:18 against the FIXTURE-REF v1 manifest).
+# Mirrors the test_integration wiring above; same target_compile_definitions
+# value so fixture path resolution is identical across the two binaries.
+if(TARGET test_reference_mode)
+    add_dependencies(test_reference_mode ref_fixture_v1)
+    target_compile_definitions(test_reference_mode PRIVATE
+        MWAAC_REF_FIXTURE_V1_DIR="${REF_FIXTURE_V1_OUT_DIR}")
+endif()

@@ -5,6 +5,7 @@
 #include "core/audio_buffer.hpp"
 #include "core/audio_file.hpp"
 #include <filesystem>
+#include <string>
 #include <vector>
 #include <cstdint>
 
@@ -63,5 +64,23 @@ std::vector<std::pair<int64_t, double>> align_per_track(
 int64_t analysis_to_native_sample(int64_t analysis_sample,
                                   int native_sr,
                                   int analysis_sr) noexcept;
+
+// Mi-17: natural-sort comparator on filename strings. Splits each input
+// into alternating text/digit runs and compares digit runs as numbers
+// (so "Track 2.wav" < "Track 10.wav"); ties on a part fall through to
+// the next part; a tie on every part is broken by which input has more
+// parts. Exposed in the public header rather than kept file-static so
+// the unit test can assert ordering and overflow behavior directly,
+// without going through the `load_reference_tracks` filesystem path.
+//
+// Pre-cure (Mi-17): the implementation called `std::stoll` on each
+// digit run, which throws `std::out_of_range` for digit runs longer
+// than ~19 chars and propagated out of the `std::sort` callsite at
+// `natural_sort` (file-static helper used by `load_reference_tracks`)
+// to abort the program. Post-cure: numeric compare on digit runs is
+// performed by length-then-lexicographic compare on zero-stripped
+// digit strings, equivalent to numeric compare for any in-range value
+// AND well-defined for digit runs of any length. Never throws.
+[[nodiscard]] bool natural_less(const std::string& a, const std::string& b);
 
 } // namespace mwaac

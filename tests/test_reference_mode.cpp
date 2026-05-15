@@ -3,28 +3,173 @@
 #include "core/audio_buffer.hpp"
 
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <string>
 #include <vector>
 
-// These test cases existed only as placeholders that asserted REQUIRE(true).
-// They are skipped pending a real test-fixture effort (see BACKLOG.md item
-// FIXTURE-REF). Once reproducible synthetic vinyl rips exist with known
-// reference tracks and known ground-truth boundaries, they will be
-// rewritten to verify actual alignment behavior within a sample-count
-// tolerance.
+// M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture.
 //
-// Leaving them in the tree as SKIPs rather than deleting them so the
-// [reference] tag is reserved for the real tests that will replace them.
-
+// Pre-cure: this case was a SKIP placeholder waiting on FIXTURE-REF, which
+// landed via PR #23 but only wired the fixture into test_integration.
+// Post-cure (this PR): exercises the FIXTURE-REF v1 manifest at the
+// align_per_track unit-level (not the full analyze_reference_mode pipeline
+// the integration tests hit), so an alignment-precision regression that
+// still passes the gap-detection integration cases shows up here.
+//
+// Tolerance constant kRefFixtureToleranceSamples mirrors the integration
+// test's value at tests/test_integration.cpp:53-55 (50 ms × 44100 Hz / 1000
+// = 2205 samples) per BACKLOG M-REF-ALIGN-UNIT exit criterion 2's
+// "consistency check" requirement. The two surfaces share the same physical
+// alignment-precision budget; a separate name on each side documents that
+// they are not coincidentally equal.
 TEST_CASE("Reference mode: per-track alignment to synthetic vinyl", "[reference]") {
-    SKIP("TODO(test-fixtures): FIXTURE-REF — synthetic vinyl rip with known "
-         "track boundaries is not yet in tests/fixtures/. Will assert that "
-         "align_per_track lands each track within ±N samples of truth.");
+    namespace fs = std::filesystem;
+
+    const fs::path fixture_dir(MWAAC_REF_FIXTURE_V1_DIR);
+    const fs::path vinyl_path = fixture_dir / "vinyl.wav";
+    const fs::path refs_dir = fixture_dir / "refs";
+    const fs::path manifest_path = fixture_dir / "manifest.txt";
+
+    REQUIRE(fs::exists(vinyl_path));
+    REQUIRE(fs::is_directory(refs_dir));
+    REQUIRE(fs::exists(manifest_path));
+
+    // Load vinyl at native rate (FIXTURE-REF v1 is mono PCM_16 @ 44100 Hz —
+    // see tests/fixtures/ref_v1/README.md).
+    auto vinyl_result = mwaac::load_audio_mono(vinyl_path, /*target_sample_rate=*/0);
+    REQUIRE(vinyl_result.has_value());
+    const auto& vinyl = vinyl_result.value();
+    REQUIRE(vinyl.sample_rate == 44100);
+
+    // Load reference tracks via the production loader at the same native
+    // rate so align_per_track sees both buffers at the same SR (no
+    // implicit resampling) and offsets come back in 44100-Hz samples
+    // directly comparable to the manifest's ground truth.
+    auto tracks_result =
+        mwaac::load_reference_tracks(refs_dir, vinyl.sample_rate);
+    REQUIRE(tracks_result.has_value());
+    const auto& tracks = tracks_result.value();
+    REQUIRE(tracks.size() == 3);
+
+    // Parse the flat KEY=VALUE manifest into a string→string map.
+    std::map<std::string, std::string> manifest;
+    {
+        std::ifstream in(manifest_path);
+        REQUIRE(in.is_open());
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            const auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            manifest.emplace(line.substr(0, eq), line.substr(eq + 1));
+        }
+    }
+    REQUIRE(manifest.count("num_tracks") == 1);
+    REQUIRE(std::stoul(manifest["num_tracks"]) == 3);
+    REQUIRE(manifest.count("sample_rate") == 1);
+    REQUIRE(std::stoi(manifest["sample_rate"]) == 44100);
+
+    // Tolerance constant. Mirrors test_integration.cpp:54-55. 50 ms at
+    // 44100 Hz native = 2205 samples. Named so an alignment regression
+    // that drifts the constant produces a single recognisable diff site.
+    constexpr int64_t kRefFixtureToleranceSamples = (50LL * 44100) / 1000;
+    static_assert(kRefFixtureToleranceSamples == 2205,
+                  "Tolerance constant out of sync with integration test");
+
+    auto offsets =
+        mwaac::align_per_track(vinyl, tracks, /*music_start_sample=*/0);
+    REQUIRE(offsets.size() == 3);
+
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::string key =
+            "track" + std::to_string(i + 1) + "_start_sample";
+        REQUIRE(manifest.count(key) == 1);
+        const int64_t truth_start =
+            static_cast<int64_t>(std::stoll(manifest[key]));
+        const int64_t actual_start = offsets[i].first;
+        const int64_t delta =
+            actual_start > truth_start ? actual_start - truth_start
+                                       : truth_start - actual_start;
+        INFO("Track " << (i + 1)
+                      << ": truth_start=" << truth_start
+                      << " actual_start=" << actual_start
+                      << " delta=" << delta
+                      << " (tolerance=" << kRefFixtureToleranceSamples << ")");
+        CHECK(delta <= kRefFixtureToleranceSamples);
+    }
 }
 
+// Mi-17 — un-SKIP natural-sort filename ordering + assert primary invariant.
+//
+// Pre-cure: this case was a SKIP placeholder. The BACKLOG mandated
+// `natural_less("Track 2.wav", "Track 10.wav") == true` as the minimum
+// assertion. natural_less itself was hardened against std::stoll throws
+// (see Mi-17 entry in BACKLOG.md and the docstring on natural_less in
+// reference_mode.hpp); the overflow-doesn't-throw axis is exercised by
+// the second TEST_CASE below.
 TEST_CASE("Reference mode: natural filename sort ordering", "[reference]") {
-    SKIP("TODO(test-fixtures): FIXTURE-REF — relies on filesystem fixture "
-         "that doesn't exist yet. Will verify 'Track 2.wav' < 'Track 10.wav' "
-         "at the public API level.");
+    using mwaac::natural_less;
+
+    // Primary invariant — numeric (not lex) ordering on digit runs.
+    // Lex compare would put "Track 10.wav" < "Track 2.wav" because '1' < '2';
+    // natural compare must give "Track 2.wav" < "Track 10.wav".
+    CHECK(natural_less("Track 2.wav", "Track 10.wav"));
+    CHECK_FALSE(natural_less("Track 10.wav", "Track 2.wav"));
+
+    // Same prefix, different decade boundaries.
+    CHECK(natural_less("Track 1.wav", "Track 2.wav"));
+    CHECK(natural_less("Track 9.wav", "Track 10.wav"));
+    CHECK(natural_less("Track 99.wav", "Track 100.wav"));
+
+    // Strict-weak: equal inputs are NOT strictly less than each other
+    // (irreflexive). std::sort relies on this.
+    CHECK_FALSE(natural_less("Track 5.wav", "Track 5.wav"));
+
+    // Trailing extensions tie-break correctly when prefixes match.
+    CHECK(natural_less("Track 1.aiff", "Track 1.wav"));
+}
+
+// Mi-17 — overflow does not throw / abort (separate TEST_CASE so the
+// std::stoll regression's failure mode — terminate the binary — would be
+// isolated to this case rather than masking the primary-invariant case
+// above).
+//
+// Pre-cure: std::stoll on the 25-char and 21-char digit runs below threw
+// std::out_of_range, propagated out of std::sort, and aborted the process.
+// Post-cure (Mi-17 length-then-lex compare on zero-stripped digit strings):
+// finite, deterministic strict-weak ordering for any digit length.
+TEST_CASE("natural_less: digit run > 18 characters does not throw",
+          "[reference]")
+{
+    using mwaac::natural_less;
+
+    // 25-digit runs, identical lengths — equivalent numeric compare via
+    // lex on equal-length zero-stripped digits.
+    //   1234567890123456789012345 < 1234567890123456789012346
+    CHECK(natural_less(
+        "Track 1234567890123456789012345.wav",
+        "Track 1234567890123456789012346.wav"));
+
+    // Different digit-run lengths, no leading zero — longer is
+    // numerically larger.
+    //   99999999999999999999 (20) < 100000000000000000000 (21)
+    CHECK(natural_less(
+        "Track 99999999999999999999.wav",
+        "Track 100000000000000000000.wav"));
+
+    // Mixed — short numeric on one side, pathological on the other.
+    //   5 < 12345678901234567890
+    CHECK(natural_less(
+        "Track 5.wav",
+        "Track 12345678901234567890.wav"));
+
+    // Strict-weak symmetry on the pathological inputs (a < b ⇒ !(b < a)).
+    CHECK_FALSE(natural_less(
+        "Track 1234567890123456789012346.wav",
+        "Track 1234567890123456789012345.wav"));
 }
 
 // C-4: pin the analysis->native conversion to round-to-nearest semantics.
