@@ -924,13 +924,19 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Tolerance constant is named (`kRefFixtureToleranceSamples`
         or similar) and matches PR #23's integration-test tolerance
         (consistency check).
-  - [ ] `tests/test_reference_mode.cpp:14` SKIP un-tagged; un-SKIP'd
-        case passes under the FIXTURE-REF v1 manifest. Mi-17
-        independently un-tags `:20`. Binary exit-code flip is C-4's
-        cure-signal, not this item's — see
+  - [ ] Binary exit-code flip on the `test_reference_mode` ctest
+        binary is C-4's cure-signal, not this item's — see
         `docs/known-failing-tests.md` for the cure-attribution split
-        across the binary-exit-code axis (C-4) and the SKIP-cluster
-        axis (M-REF-ALIGN-UNIT + Mi-17).
+        across the binary-exit-code axis (C-4 added a passing
+        TEST_CASE alongside the SKIPs; Catch2 returns 0 when at least
+        one case passes) and the SKIP-cluster axis (this item +
+        Mi-17, which collectively replace both SKIPs in
+        `tests/test_reference_mode.cpp` with real assertions). Mi-17
+        independently handles the `:20` un-SKIP (natural-sort
+        filename ordering); this item handles `:14` (per-track
+        alignment under the FIXTURE-REF v1 manifest, criterion 1
+        above). The two surfaces are orthogonal cures of the same
+        `known-failing-tests.md` entry along different axes.
 
 ---
 
