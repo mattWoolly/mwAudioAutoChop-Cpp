@@ -9,12 +9,29 @@ namespace mwaac {
 
 struct CorrelationResult {
     int64_t lag{0};         // Sample offset (positive = first ahead of second)
-    double peak_value{0.0}; // Normalized correlation at peak (0-1)
+    // peak_value range depends on the producing function:
+    //   cross_correlate_fft / cross_correlate_fast — Pearson NCC per-lag, peak in [-1, 1].
+    //   cross_correlate (naive) — globally normalized; peak magnitude not bounded
+    //     to [-1, 1] in general. See cross_correlate's docstring for the caveat.
+    double peak_value{0.0};
 };
 
-// FFT-based cross-correlation
-// Returns lag where signals align and normalized peak correlation value
-// Positive lag means 'reference' appears later in 'target' (target is ahead)
+// Naive O(N*M) cross-correlation — testing-only verification shim for
+// cross_correlate_fft. Production sites should use cross_correlate_fft
+// or cross_correlate_fast instead; this function exists to cross-check
+// the FFT implementation's lag selection (see "FFT correlation agrees
+// with naive implementation" in tests/test_correlation.cpp).
+//
+// Returns the lag where signals align. Positive lag means 'reference'
+// appears later in 'target' (target is ahead).
+//
+// NORMALIZATION CAVEAT: divides the centered cross product by a single
+// GLOBAL norm factor (sqrt of total ref energy * total tgt energy) at
+// every lag, NOT by per-lag slice energies. Unlike cross_correlate_fft
+// (Pearson NCC per-lag, peak in [-1, 1]), this function's peak_value is
+// not a per-lag correlation coefficient and is not guaranteed to lie in
+// [-1, 1] for arbitrary inputs. Callers using peak_value as a confidence
+// score are using the wrong function.
 CorrelationResult cross_correlate(
     std::span<const float> reference,
     std::span<const float> target
@@ -57,7 +74,9 @@ CorrelationResult cross_correlate_fast(
 //
 // Correlation is zero-mean on both sides and normalized per-lag by each
 // slice's own energy (standard Pearson NCC), so the peak value is in
-// [-1, 1] and directly comparable to the naive version.
+// [-1, 1]. Note: the naive cross_correlate above uses a different
+// (global, not per-lag) normalization — lag selection is comparable
+// across the two implementations; peak magnitudes are not.
 CorrelationResult cross_correlate_fft(
     std::span<const float> reference,
     std::span<const float> target

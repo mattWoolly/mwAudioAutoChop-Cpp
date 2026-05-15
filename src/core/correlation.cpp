@@ -55,8 +55,9 @@ CorrelationResult cross_correlate(
         return {0, 0.0};
     }
     
-    // Cross-correlation (naive O(n*m) - TODO: FFT optimization)
-    // We compute correlation for lags from -(ref.size-1) to (target.size-1)
+    // Naive O(n*m) walk over lags -(ref.size-1)..(target.size-1).
+    // FFT-based alternative is cross_correlate_fft; this naive form is
+    // retained as a testing-only verification shim — see header docstring.
     int64_t min_lag = -static_cast<int64_t>(ref_norm.size() - 1);
     int64_t max_lag = static_cast<int64_t>(tgt_norm.size() - 1);
     
