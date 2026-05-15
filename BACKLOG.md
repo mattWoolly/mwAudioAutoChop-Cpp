@@ -836,7 +836,7 @@ migration to `std::expected`-style storage happens in M-14.
         NaN exclusion). Pre-cure both content REQUIREs would fail
         (NaN ≠ 0.0f, isnan true). UBSan-clean.*
 
-### Mi-4 — Naive cross_correlate normalization documentation
+### Mi-4 — Naive cross_correlate normalization documentation — **RESOLVED in #45 (`c8db84b`)**
 
 - **Defect.** The naive impl uses a global norm factor, which is not Pearson
   NCC per-lag. The docstring doesn't say so.
@@ -846,10 +846,38 @@ migration to `std::expected`-style storage happens in M-14.
 - **Files touched.** `src/core/correlation.hpp`, `src/core/correlation.cpp`.
 - **Tests added.**
   - `cross_correlate and cross_correlate_fft agree on lag` (already in
-    test suite; just re-verify after comment).
+    test suite; just re-verify after comment) — actual TEST_CASE name
+    in source is `"FFT correlation agrees with naive implementation"`
+    at `tests/test_correlation.cpp:83-108`; cross-checks lag selection
+    via `REQUIRE(fft_result.lag == true_lag)` (`:101`) and
+    `REQUIRE(naive_result.lag == true_lag)` (`:102`). Re-verified
+    post-cure.
 - **Exit criteria.**
-  - [ ] Header docstring notes the normalization difference explicitly.
-  - [ ] Consider marking `[[deprecated]]` or `/* testing-only */`.
+  - [x] Header docstring notes the normalization difference explicitly.
+        New `NORMALIZATION CAVEAT` paragraph at
+        `src/core/correlation.hpp:28-34` explicitly contrasts naive's
+        single GLOBAL norm factor (`sqrt(total_ref_energy * total_tgt_energy)`,
+        applied uniformly at every lag) against `cross_correlate_fft`'s
+        per-lag Pearson NCC, and documents that the naive's `peak_value`
+        is not bounded to `[-1, 1]` for arbitrary inputs.
+  - [x] Consider marking `[[deprecated]]` or `/* testing-only */`. Chose
+        prose framing ("testing-only verification shim for cross_correlate_fft")
+        in the docstring at `src/core/correlation.hpp:19-23` rather than
+        `[[deprecated]]`. Rationale: `[[deprecated]]` would emit a warning
+        at the regression-guard test callsite (`tests/test_correlation.cpp:99`),
+        forcing either a `-Werror` break or a localized `#pragma`
+        suppression there with no semantic gain. The function is not
+        deprecated — it is a verification shim by design — so the prose-
+        framing branch of the "or" criterion is the correct cure shape.
+        Mi-4 audit (single-audit per Tier 5 governing prompt) caught two
+        same-file adjacent-axis findings the fix-agent's naive-side-only
+        sweep missed and folded into the merge: (1) `CorrelationResult.peak_value`'s
+        field comment had an unconditional `// (0-1)` range claim,
+        rewritten at `src/core/correlation.hpp:12-15` to enumerate per-impl
+        ranges; (2) `cross_correlate_fft`'s docstring at
+        `src/core/correlation.hpp:76-80` claimed peak is "directly comparable
+        to the naive version", scoped to lag selection only since peak
+        magnitudes use different normalizations.
 
 ### M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture
 
