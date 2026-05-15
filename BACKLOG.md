@@ -1313,6 +1313,56 @@ migration to `std::expected`-style storage happens in M-14.
         real assertion.
   - [ ] Combined with M-REF-ALIGN-UNIT, `test_reference_mode`'s exit
         status flips to `Passed`.
+
+### M-REAPER-EXPORT-SORT-THROW — std::stoll in `natural_less_filename` can throw — sibling defect of Mi-17
+
+- **Origin.** Surfaced during the M-REF-ALIGN-UNIT + Mi-17 paired-dispatch
+  pre-dispatch checklist (adjacent-entry sweep on `std::stoll` usage in
+  `src/`). Filed as a separate item rather than folded into Mi-17 because
+  Mi-17's BACKLOG framing is explicitly "Tier 9 (Cleanup / Nit) —
+  single-function hardening with a single new unit test"; folding would
+  expand Mi-17 from one-function to two-function and break that scope
+  contract. Per `feedback_tier_boundary_preservation.md`, in-tier sweep
+  findings on a different function file as their own item.
+- **Defect.** `src/modes/reaper_export.cpp:43-44` (inside the
+  file-static `natural_less_filename` comparator) calls
+  `std::stoll(ap[i].second)` and `std::stoll(bp[i].second)` on each
+  digit-run pair without bounding the digit count. Identical defect
+  shape as Mi-17 (`reference_mode.cpp:60-61`): a pathological filename
+  like `Track 12345678901234567890.wav` triggers `std::out_of_range`,
+  which propagates out of the `std::sort` callsite at
+  `reaper_export.cpp:72` (`std::sort(out.begin(), out.end(), natural_less_filename)`)
+  and aborts the program. The two functions are independent copies of
+  the same natural-sort logic — `natural_less_filename` was added to
+  `reaper_export.cpp` so the export module wouldn't depend on
+  reference-mode internals (see comment at `reaper_export.cpp:18-20`),
+  but the stoll-throw bug came along for the ride.
+- **Invariant established.** Same as Mi-17's: "the natural-sort
+  comparator produces a strict-weak-ordering total order on filenames
+  containing arbitrary-length digit runs, and never throws."
+- **Files touched.** `src/modes/reaper_export.cpp` (the
+  `natural_less_filename` body around `:43-44`), `tests/test_reaper_export.cpp`
+  if it exists, otherwise a new minimal test file or fold into an
+  existing reaper-export test.
+- **Cure options.** Same as Mi-17:
+  - (a) Bound digit-run length at 18 chars; lex-fall-back on the rest.
+  - (b) Use `std::from_chars` and check for `errc::result_out_of_range`.
+  - (c) Manual digit-by-digit compare (length-then-lex on zero-stripped
+    digit strings is functionally equivalent to numeric compare and never
+    throws).
+  Whichever cure Mi-17 lands on, mirror it here for consistency.
+- **Tier rationale.** Tier 9 (Cleanup / Nit) — single-function
+  hardening, single test. Same shape as Mi-17.
+- **Effort.** ≤ 20 lines of code + 1-2 unit-test cases. One PR, one
+  audit. No fixture or pipeline interaction. Prefer dispatch *after*
+  Mi-17 lands so cure-shape consistency can be enforced by direct
+  reference.
+- **Exit criteria.**
+  - [ ] `natural_less_filename` does not throw on any input.
+  - [ ] Test asserts the cure shape (digit run > 18 chars compares
+        without throw; ordering matches Mi-17's same-input result for
+        consistency).
+
 ### F-AUDIT2-1 — C-2 integration test exercises the actual guard end-to-end
 
 - **Defect.** The C-2 subprocess integration test invokes
