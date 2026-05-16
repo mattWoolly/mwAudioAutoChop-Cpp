@@ -1006,19 +1006,67 @@ migration to `std::expected`-style storage happens in M-14.
 
 - Duplicate of M-7 / same resolution.
 
-### NEW-BLIND-GAP — Blind mode returns only 1 split on clear 2-track fixture
+### NEW-BLIND-GAP — Blind mode returns only 1 split on clear 2-track fixture — **RESOLVED in #48 (`7c0bc4a`)**
 
-- **Defect.** Surfaced by Phase 0.5 at `test_integration.cpp:479` and `:762`.
-  Blind mode on a clear tone+3s-silence+tone fixture returns only 1 split.
+- **Defect.** Surfaced by Phase 0.5 at `test_integration.cpp:479` and `:762`
+  (post-PR-#23 line drift to `:525` and `:769`; gate identifies tests by
+  TEST_CASE name per `docs/known-failing-tests.md`). Blind mode on a clear
+  tone + 3s-silence + tone fixture returns only 1 split.
 - **Invariant established.** "Blind mode on a clean 2-track fixture with a
   silence ≥ min_gap_seconds returns ≥2 splits."
-- **Files touched.** Likely `src/modes/blind_mode.cpp`,
-  `src/core/music_detection.cpp`.
-- **Tests added.** Already present; fix is to make them pass.
+- **Files touched.** `src/modes/blind_mode.{hpp,cpp}` (parameter rename +
+  caller-side estimator). `src/core/music_detection.cpp` was a candidate per
+  the original mandate but was not touched: noise-floor estimation works
+  correctly; the cure was the score_gap caller passing the wrong reference
+  level.
+- **Tests added.** Already present; fix made them pass.
 - **Exit criteria.**
-  - [ ] Root cause traced (noise-floor estimator? gap detector? threshold?).
-  - [ ] Two integration tests (`clear silence detection`, `combined
-        workflow`) pass.
+  - [x] Root cause traced. Identified as a parameter-semantic mismatch
+        between `score_gap` (whose 5th parameter `noise_floor_rms` was
+        misnamed — the formula `1 - gap_rms / ref` only yields meaningful
+        confidence when `ref` is a SIGNAL reference level, not a noise
+        floor) and the caller `analyze_blind_mode` (which passed the
+        noise-floor estimate). On a fixture where silence dominates the
+        signal duration (~42% in the failing fixture), the 10th-percentile
+        noise-floor estimate equals the gap RMS by construction; the
+        formula degenerates to `1 - 1 = 0`; every detected gap is
+        rejected by the `confidence >= 0.6` gate. Empirical diagnostic
+        confirmed pre-cure: `tone1 RMS=0.495`, `gap RMS=0.000346`,
+        `noise_floor=0.000343`, `score_gap(noise_floor)=0`.
+        Counter-evidence that the parameter is semantically a signal
+        reference: `tests/test_blind_mode.cpp:21-32` ("Gap scoring based
+        on energy") passes 0.5 (the LOUD level of its samples) as the
+        5th argument and asserts `score > 0.9` — encoding through
+        assertion that the parameter is a signal reference level. The
+        caller in `analyze_blind_mode` had been passing the wrong thing.
+        Cure: rename `noise_floor_rms → signal_reference_rms` in the
+        score_gap signature with a 25-line docstring documenting the
+        formula's actual semantics + the previous bug; in
+        `analyze_blind_mode`, compute `signal_reference_rms` as the p90
+        of sorted frame RMS values (sits in the music region for any
+        fixture where music ≥ 10% of signal duration — true of all
+        realistic vinyl rips) and pass that to score_gap. Noise-floor
+        estimation, threshold computation, and detect_gaps unchanged.
+        Dispatched as two-audit per `feedback_audit_cardinality_two_axes.md`
+        (sharp-hook flagged on algorithm-semantic shift); both audits
+        returned CLEAN with merge.
+  - [x] Two integration tests pass — actual gating tests are
+        `Blind mode pipeline: gap detection` (`test_integration.cpp:492`,
+        previously-failing assertion at `:525`) and `Combined workflow:
+        reference then blind analysis` (`:712`, assertion at `:769`).
+        Note: original BACKLOG criterion text said "(`clear silence
+        detection`, `combined workflow`)" — `clear silence detection`
+        at `:528` uses soft `if`-conditional checks rather than hard
+        CHECKs, so it never failed the binary even pre-cure
+        (cross-doc reconciliation slip caught by audit-1 and tightened
+        in this paperwork commit). Both gating tests pass post-merge:
+        empirical CI baseline `7c0bc4a` reports
+        `test_integration: 11/11 cases / 73 assertions, all pass` on
+        every CI variant (Linux Debug/Release, macOS Debug/Release,
+        sanitizers). **First fully-green `test_integration` binary in
+        the remediation cycle.** `clear silence detection` (`:528`)
+        and `split point positions` (`:577`) also pass post-cure with
+        their soft conditions firing correctly.
 
 ### M-REF-RATE-VALIDATION — `analysis_to_native_sample` precondition checks compile out in Release
 

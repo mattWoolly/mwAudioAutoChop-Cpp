@@ -602,7 +602,69 @@ by construction.
 
 ### INV-BLIND-CLEAN-2TRACK — Blind mode finds ≥2 splits on a clear two-track fixture
 
-- **Status.** `pending` (NEW-BLIND-GAP).
+`analyze_blind_mode` on a clean 2-track synthetic vinyl rip with an
+inter-track silence ≥ `min_gap_seconds` returns ≥ 2 split points (one
+implicit at sample 0 plus one for each detected gap that passes the
+confidence threshold).
+
+- **Owner.** `analyze_blind_mode` and `score_gap` in
+  `src/modes/blind_mode.cpp`.
+- **Enforcement.**
+  - `Blind mode pipeline: gap detection` in `tests/test_integration.cpp:492`
+    (assertion at `:525`) — exercises a 2s-tone + 3s-silence + 2s-tone
+    fixture at 44100 Hz. Pre-cure the gap was rejected at the
+    confidence gate; post-cure the assertion `split_points.size() >= 2`
+    passes.
+  - `Combined workflow: reference then blind analysis` in
+    `tests/test_integration.cpp:712` (assertion at `:769`) — exercises
+    a 1s-tone + 3s-silence + 1s-tone fixture at 22050 Hz with the
+    reference-mode side-channel (`(void)`'d pending FIXTURE-REF
+    coverage). Post-cure passes.
+- **Status.** `holds` post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48).
+  Pre-cure the score_gap parameter `noise_floor_rms` was
+  passed the noise-floor estimate from `analyze_blind_mode`, but the
+  formula `1 - gap_rms / ref` only yields meaningful confidence when
+  `ref` is a SIGNAL reference level — on a fixture where silence
+  dominates the signal duration (~42% in the failing fixture), the
+  10th-percentile noise-floor estimate equals the gap RMS by
+  construction and the formula degenerates to 0, rejecting every
+  detected gap. Cure renamed the parameter to `signal_reference_rms`
+  and added a caller-side estimator (p90 of frame RMS — sits in the
+  music region for any fixture where music ≥ 10% of signal duration).
+  See `INV-SCORE-GAP-REFERENCE-IS-SIGNAL-LEVEL` below for the
+  parameter-contract invariant.
+
+### INV-SCORE-GAP-REFERENCE-IS-SIGNAL-LEVEL — `score_gap`'s reference parameter is a signal level, not a noise floor
+
+`score_gap`'s 5th parameter (`signal_reference_rms`) is semantically
+the typical loudness of the surrounding music — a reference level
+against which the gap's quietness is measured by the formula
+`1 - gap_rms / signal_reference_rms` (clamped to `[0, 1]`). Callers
+must NOT pass a noise-floor estimate or any other quiet-floor value:
+the formula degenerates to ~ 0 when `signal_reference_rms ≈ gap_rms`,
+so the parameter must be a LOUD reference (e.g. high percentile of
+frame RMS, or mean of frames above the gap-detection threshold).
+
+- **Owner.** `score_gap` in `src/modes/blind_mode.{hpp,cpp}`.
+- **Enforcement.**
+  - 25-line header docstring at `src/modes/blind_mode.hpp:43-69` documents
+    the formula, names the previous noise-floor naming bug, and gives
+    caller-side estimator guidance.
+  - `Gap scoring based on energy` in `tests/test_blind_mode.cpp:21-32`
+    encodes the contract through assertion: passes 0.5 (the LOUD
+    amplitude of the test samples) as the 5th argument and asserts
+    `score > 0.9`. A future caller passing the wrong value (e.g.
+    a noise floor) would be caught by this test only if the
+    pre-cure noise-floor naming were re-introduced; the docstring
+    is the primary structural defense.
+  - Production caller `analyze_blind_mode` in
+    `src/modes/blind_mode.cpp` computes `signal_reference_rms = p90`
+    of sorted frame RMS values and passes that explicitly.
+- **Status.** `holds` post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48).
+  Promoted from the cure to a documented INV per
+  `feedback_close_followups_before_next_epic.md`-style discipline:
+  audit-2 on PR #48 noted the contract was load-bearing (the entire
+  cure pivots on it) but had no INV; this entry pins it.
 
 ### INV-RESULT-NO-AMBIGUOUS-DEFAULT — No default construction leaves a result wrapper ambiguous
 

@@ -45,21 +45,7 @@ A test that passes on the PR but is on this list is progress — update this fil
 
 ## Active known-failing entries
 
-### `test_integration` — TEST_CASE `"Blind mode pipeline: gap detection"` (`[integration][blind]`)
-
-- **File.** `tests/test_integration.cpp` (currently line 446 for the TEST_CASE; failing assertion currently at line 479 on main / line 516 after PR #23's additions; drifts).
-- **Assertion.** `CHECK(analysis.split_points.size() >= 2)` — "≥1 gap => ≥2 tracks".
-- **Assertion intent.** A clean 2-track synthetic vinyl rip should produce ≥1 gap and therefore ≥2 split points. Comment in source explicitly says: "if fixture noise is genuinely too high, the fix is to regenerate with a lower noise floor — not to silently accept the error path."
-- **Why failing.** Blind-mode pipeline returns only 1 split on the current synthetic 2-track fixture. The defect is documented as **NEW-BLIND-GAP** in BACKLOG.md (Tier 6 — Algorithmic correctness / blind-mode tuning). The score-gap thresholding currently misclassifies the inter-track silence as below-threshold for some fixture configurations.
-- **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Not in the current Tier 1+2 queue. Will remain failing after Tier 1+2 lands.
-
-### `test_integration` — TEST_CASE `"Combined workflow: reference then blind analysis"` (`[integration][combined]`)
-
-- **File.** `tests/test_integration.cpp` (currently line 705 for the TEST_CASE; failing assertion currently at line 762 on main / line 799 after PR #23; drifts).
-- **Assertion.** `CHECK(blind_result.value().split_points.size() >= 2)` — same `≥2 split points` invariant as the gap-detection case.
-- **Assertion intent.** Different test case that also calls `analyze_reference_mode` for a side-channel sanity check (which is `(void)`'d pending FIXTURE-REF coverage of that path).
-- **Why failing.** Same defect as line 479 — NEW-BLIND-GAP. The two test cases exercise different fixture variants but both bottom out on the same blind-mode threshold flaw.
-- **Cured by.** **NEW-BLIND-GAP** (BACKLOG.md, Tier 6). Same as line 479. Will remain failing after Tier 1+2 lands.
+**(empty — no Active known-failing entries on `main` as of `7c0bc4a`. First fully-clean Active list of the remediation cycle.)**
 
 ## Informational — SKIP-to-PASS transitions (not "Resolved" because they were never failing)
 
@@ -69,9 +55,22 @@ PR #23 advances the following from `SKIP()` to passing assertions; they were nev
 - `tests/test_integration.cpp:345` — `"Reference mode pipeline: track positions within tolerance" [integration][reference]` — same.
 - `tests/test_integration.cpp:397` — `"Reference mode pipeline: lossless export verification" [integration][reference][lossless]` — same.
 
-Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per the rebase fix-agent's verification. Does **not** flip the `test_integration` binary's status — the binary is still `Failed` because of `:479`, `:691`, and `:762` (NEW-BLIND-GAP and NEW-WAVEEXT-WRITE).
+Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per the rebase fix-agent's verification. Did **not** flip the `test_integration` binary's status at the time — the binary remained `Failed` because of `:479` and `:762` (NEW-BLIND-GAP). Post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48), all `test_integration` assertions pass and the binary exits 0 on every CI variant.
 
 ## Resolved entries
+
+### `test_integration` — TEST_CASE `"Blind mode pipeline: gap detection"` (RESOLVED)
+
+- **File.** `tests/test_integration.cpp:492` for the TEST_CASE; failing assertion was at `:525` on main pre-cure.
+- **Assertion.** `CHECK(analysis.split_points.size() >= 2)` — "≥1 gap => ≥2 tracks".
+- **Cured by.** **NEW-BLIND-GAP**, PR #48 (merge `7c0bc4a`). Root cause was a parameter-semantic mismatch in `score_gap`: the 5th parameter `noise_floor_rms` was misnamed and `analyze_blind_mode` was passing the noise-floor estimate, but the formula `1 - gap_rms / ref` only yields meaningful confidence when `ref` is a SIGNAL reference level. On a fixture where silence dominates the signal duration (~42% in this fixture), the noise-floor estimate equals the gap RMS by construction and the formula degenerates to 0, rejecting every detected gap. Cure renamed the parameter to `signal_reference_rms` and added a caller-side estimator (p90 of frame RMS) in `analyze_blind_mode`. Empirical post-cure: `test_integration` passes 11/11 cases / 73 assertions on every CI variant.
+- **Cure-attribution catch (informational).** Original BACKLOG NEW-BLIND-GAP exit criterion 2 named the gating tests as "(`clear silence detection`, `combined workflow`)", but `clear silence detection` (`test_integration.cpp:528`) uses soft `if`-conditional checks rather than hard CHECKs and never failed the binary even pre-cure. The actual hard-gating test alongside `combined workflow` was `gap detection` (this entry). Cross-doc reconciliation slip caught by audit-1; tightened in the close-out paperwork commit.
+
+### `test_integration` — TEST_CASE `"Combined workflow: reference then blind analysis"` (RESOLVED)
+
+- **File.** `tests/test_integration.cpp:712` for the TEST_CASE; failing assertion was at `:769` on main pre-cure.
+- **Assertion.** `CHECK(blind_result.value().split_points.size() >= 2)` — same `≥2 split points` invariant as the gap-detection case.
+- **Cured by.** **NEW-BLIND-GAP**, PR #48 (merge `7c0bc4a`). Same defect as the gap-detection case above; both test cases bottomed out on the same `score_gap` parameter-semantic mismatch and both pass post-cure.
 
 ### `test_reference_mode` — standalone binary returns non-zero (RESOLVED)
 
@@ -100,13 +99,15 @@ Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per t
 
 ## Job-level expectations
 
+Post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48), the Active known-failing list is empty for the first time in the remediation cycle. All build/test/sanitizer jobs are expected to pass; only `clang-tidy` remains expected-red on style nits.
+
 | Job | Build | Tests | Comments |
 |---|---|---|---|
-| `build / ubuntu-latest / Release` | green | red on entries above | test_lossless now Passed (post-#27) |
-| `build / ubuntu-latest / Debug` | green | red on entries above | same |
-| `build / macos-latest / Release` | green | red on entries above | test_lossless now Passed (post-#27) |
-| `build / macos-latest / Debug` | green | red on entries above | same |
-| `sanitizers (asan+ubsan)` | green | red on entries above | ASan no longer trips on encode_float80 (post-#27) |
+| `build / ubuntu-latest / Release` | green | green (12/12 binaries pass) | test_integration fully green post-#48 |
+| `build / ubuntu-latest / Debug` | green | green (12/12 binaries pass) | same |
+| `build / macos-latest / Release` | green | green (12/12 binaries pass) | same |
+| `build / macos-latest / Debug` | green | green (12/12 binaries pass) | same |
+| `sanitizers (asan+ubsan)` | green | green (12/12 binaries pass) | ASan no longer trips on encode_float80 (post-#27); blind-mode confidence path UBSan-clean post-#48 |
 | `clang-tidy` | red on style nits | n/a (job stops at clang-tidy) | Out of Mi-18 scope per mandate; tracked under N-1..N-12 / Mi-18-FU-* |
 
 ## Update protocol
