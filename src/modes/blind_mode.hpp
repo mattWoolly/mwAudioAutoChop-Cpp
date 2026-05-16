@@ -40,14 +40,36 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
     float max_gap_seconds
 );
 
-// Score a gap candidate
-// Returns confidence 0-1 based on energy, flatness, etc.
+// Score a gap candidate.
+//
+// Returns confidence in [0, 1] based on how quiet the gap region is
+// relative to `signal_reference_rms` — a reference level representing
+// the typical loudness of the surrounding music. The formula is
+// `1 - gap_rms / signal_reference_rms` (clamped), so a gap that is
+// much quieter than the reference scores near 1; a gap whose RMS
+// equals the reference scores 0.
+//
+// NEW-BLIND-GAP: the parameter was previously named `noise_floor_rms`
+// and `analyze_blind_mode` passed the noise-floor estimate (10th
+// percentile of frame RMS). On a fixture where silence dominates the
+// signal — e.g. a 2-track rip with a long gap, where the gap RMS
+// itself becomes the 10th percentile — the noise floor estimate
+// equals the gap RMS, the formula degenerates to `1 - 1 = 0`, and
+// every detected gap is rejected by the `confidence >= 0.6` gate.
+// The cure renames the parameter to reflect its true semantics
+// (signal reference, not noise floor) and pushes the choice of
+// reference-level estimator out to the caller, where context is
+// available to compute a meaningful loud-reference value.
+//
+// Caller-side guidance: pick a reference level that approximates
+// the music's typical loudness — e.g. a high percentile (p90) of
+// frame RMS, or the mean RMS of frames above the detection threshold.
 float score_gap(
     std::span<const float> samples,
     size_t start_sample,
     size_t end_sample,
     int sample_rate,
-    float noise_floor_rms
+    float signal_reference_rms
 );
 
 } // namespace mwaac

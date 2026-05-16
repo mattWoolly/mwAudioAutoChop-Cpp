@@ -59,16 +59,16 @@ float score_gap(
     size_t start_sample,
     size_t end_sample,
     [[maybe_unused]] int sample_rate,
-    float noise_floor_rms)
+    float signal_reference_rms)
 {
     if (end_sample <= start_sample || samples.empty()) {
         return 0.0f;
     }
-    
+
     // Clamp to valid range
     start_sample = std::min(start_sample, samples.size());
     end_sample = std::min(end_sample, samples.size());
-    
+
     // Extract gap segment
     std::vector<float> gap_samples(samples.begin() + static_cast<std::ptrdiff_t>(start_sample),
                                     samples.begin() + static_cast<std::ptrdiff_t>(end_sample));
@@ -79,16 +79,16 @@ float score_gap(
         sum_sq += s * s;
     }
     float gap_rms = std::sqrt(sum_sq / static_cast<float>(gap_samples.size()));
-    
-    // Energy score: how far below noise floor (higher = better)
+
+    // Confidence: how much quieter the gap is than the signal reference.
+    // Reference must be a loud level (typical music loudness, e.g. p90 of
+    // frame RMS) — see header docstring for the NEW-BLIND-GAP rationale.
     float energy_score = 0.0f;
-    if (noise_floor_rms > 1e-10f) {
-        float ratio = gap_rms / noise_floor_rms;
+    if (signal_reference_rms > 1e-10f) {
+        float ratio = gap_rms / signal_reference_rms;
         energy_score = std::max(0.0f, 1.0f - ratio);
     }
-    
-    // Confidence is primarily energy-based for now
-    // Could add spectral flatness later
+
     return std::clamp(energy_score, 0.0f, 1.0f);
 }
 
@@ -132,19 +132,43 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     // Estimate noise floor
     verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
-    
+
     // Gap threshold: just above noise floor (6 dB)
     float threshold = noise_floor * 2.0f;
-    
+
+    // NEW-BLIND-GAP: signal reference level for score_gap, separate from
+    // noise floor. The previous implementation passed noise_floor itself
+    // to score_gap, but on a fixture where silence dominates the signal
+    // (e.g. a 2-track rip with a 3 s inter-track gap, which is ~42% of
+    // total duration), the 10th-percentile noise-floor estimator sits
+    // firmly inside the silence band, so noise_floor ≈ gap_rms and the
+    // score formula `1 - gap_rms / ref` degenerates to 0. Every detected
+    // gap was then rejected by the `confidence >= 0.6` gate (see header
+    // docstring on score_gap for the parameter-rename rationale).
+    //
+    // Cure: estimate a loud reference level from the upper RMS tail.
+    // p90 sits in the music region for any fixture where music occupies
+    // at least 10% of the signal (well within all realistic vinyl rips,
+    // which are dominated by music with only short gaps), giving the
+    // score_gap formula a meaningful denominator.
+    std::vector<float> sorted_rms(rms.begin(), rms.end());
+    std::sort(sorted_rms.begin(), sorted_rms.end());
+    const std::size_t p90_idx =
+        std::min(sorted_rms.size() * 9 / 10, sorted_rms.size() - 1);
+    const float signal_reference_rms = sorted_rms[p90_idx];
+
     if (g_verbose) {
         std::ostringstream oss;
         oss << std::scientific << std::setprecision(2) << noise_floor;
         std::ostringstream thresh_oss;
         thresh_oss << std::scientific << std::setprecision(2) << threshold;
+        std::ostringstream sig_oss;
+        sig_oss << std::scientific << std::setprecision(2) << signal_reference_rms;
         verbose("  Noise floor RMS: " + oss.str());
         verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor)");
+        verbose("  Signal reference RMS (p90): " + sig_oss.str());
     }
-    
+
     // Find gaps
     verbose("Detecting gaps...");
     auto gaps = detect_gaps(rms, threshold, hop_length, config.analysis_sr,
@@ -181,12 +205,14 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         int64_t track_start = static_cast<int64_t>(gap.second * static_cast<std::size_t>(hop_length));
         int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * static_cast<std::size_t>(hop_length));
 
-        // Score this gap
+        // Score this gap. NEW-BLIND-GAP: pass the signal reference level
+        // (p90 of RMS) rather than the noise floor — see the rationale
+        // block above the signal_reference_rms computation.
         float confidence = score_gap(audio.samples,
                                      gap.first * static_cast<std::size_t>(hop_length),
                                      gap.second * static_cast<std::size_t>(hop_length),
                                      config.analysis_sr,
-                                     noise_floor);
+                                     signal_reference_rms);
 
         if (g_verbose) {
             [[maybe_unused]] double gap_start_sec = static_cast<double>(gap.first * static_cast<std::size_t>(hop_length)) / static_cast<double>(config.analysis_sr);
