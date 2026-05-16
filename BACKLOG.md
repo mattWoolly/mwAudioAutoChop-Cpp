@@ -1367,7 +1367,7 @@ migration to `std::expected`-style storage happens in M-14.
         filed pre-dispatch as separate Tier 9 item M-REAPER-EXPORT-SORT-THROW
         in `e2893d6` to preserve Mi-17's explicit single-function scope.
 
-### M-REAPER-EXPORT-SORT-THROW — std::stoll in `natural_less_filename` can throw — sibling defect of Mi-17
+### M-REAPER-EXPORT-SORT-THROW — std::stoll in `natural_less_filename` can throw — sibling defect of Mi-17 — **RESOLVED in #47 (`88e5267`)**
 
 - **Origin.** Surfaced during the M-REF-ALIGN-UNIT + Mi-17 paired-dispatch
   pre-dispatch checklist (adjacent-entry sweep on `std::stoll` usage in
@@ -1411,10 +1411,39 @@ migration to `std::expected`-style storage happens in M-14.
   Mi-17 lands so cure-shape consistency can be enforced by direct
   reference.
 - **Exit criteria.**
-  - [ ] `natural_less_filename` does not throw on any input.
-  - [ ] Test asserts the cure shape (digit run > 18 chars compares
-        without throw; ordering matches Mi-17's same-input result for
-        consistency).
+  - [x] `natural_less_filename` does not throw on any input. Cure shape:
+        **delegation to `mwaac::natural_less`** rather than parallel
+        re-derivation. Body at `src/modes/reaper_export.cpp:32` is a
+        single line: `return natural_less(a.filename().string(), b.filename().string());`.
+        The duplicate algorithm body (30+ lines including the parts
+        lambda and the std::stoll for-loop) at pre-cure `:21-51` is
+        deleted; the function is now an explicit thin wrapper over
+        the Mi-17-hardened `mwaac::natural_less` (length-then-lex on
+        zero-stripped digit strings). `#include "modes/reference_mode.hpp"`
+        added at `:2` to bring the public Mi-17 symbol into scope.
+        natural_less_filename moved from anon-namespace to `mwaac::`
+        scope (declared at `src/modes/reaper_export.hpp:40-41`); std::sort
+        callsite at `:56` resolves the unqualified name via enclosing-
+        namespace lookup, production behavior unchanged on normal-
+        length filenames. Audit verified the delegation argument
+        shape (`.filename().string()`) matches the parallel natural_sort
+        callsite at `src/modes/reference_mode.cpp:37` exactly — zero
+        semantic drift.
+  - [x] Test asserts the cure shape. `tests/test_reaper_export.cpp` (new
+        file) with two TEST_CASEs at `:19-40` and `:42-73`. Primary
+        invariant case includes a path-prefix tie-break check
+        (`/refs/Track 2.wav` vs `/elsewhere/Track 2.wav` → tied,
+        not less) that discriminates the wrapper-layer `.filename().string()`
+        extraction from a broken `.string()` shape; overflow case
+        mirrors Mi-17's structure exactly (25-digit equal-length,
+        20-vs-21-digit length differential, mixed short-vs-pathological,
+        strict-weak symmetry on pathological inputs). 2 cases / 8
+        assertions, all pass on every CI variant. Cure-shape mirroring
+        achieved by direct delegation rather than parallel re-derivation,
+        which the audit verdict accepted as a stricter form of the
+        BACKLOG's "mirror Mi-17 here for consistency" mandate (no
+        algorithm-divergence risk over time; any future cure to
+        `mwaac::natural_less` automatically applies here).
 
 ### F-AUDIT2-1 — C-2 integration test exercises the actual guard end-to-end
 

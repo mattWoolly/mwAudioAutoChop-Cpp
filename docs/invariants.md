@@ -535,47 +535,56 @@ wrong. Documented in the header.
   comment + FFT-side comparability claim) the fix-agent's naive-side-
   only sweep missed; both folded into the merge.
 
-### INV-NATURAL-SORT-NEVER-THROWS — `natural_less` is total-order, never throws
+### INV-NATURAL-SORT-NEVER-THROWS — natural-sort comparators are total-order, never throw
 
 `mwaac::natural_less` produces a strict-weak-ordering total order on
 filenames containing arbitrary-length digit runs, and never throws on
-any input.
+any input. The path-taking wrapper `mwaac::natural_less_filename`
+delegates to `mwaac::natural_less` and inherits the invariant
+by construction.
 
-- **Owner.** `natural_less` in `src/modes/reference_mode.{hpp,cpp}`.
-  Exposed at `mwaac::` namespace scope (rather than file-static in an
-  anonymous namespace) so the unit test can assert ordering and
-  overflow behavior directly without going through the
-  `load_reference_tracks` filesystem path. Consistent with the
-  existing precedent of `analysis_to_native_sample` exposed in the
-  same header for the same testability reason.
+- **Owner.** `natural_less` in `src/modes/reference_mode.{hpp,cpp}`;
+  thin path-wrapper `natural_less_filename` in
+  `src/modes/reaper_export.{hpp,cpp}` delegates to it. Both are exposed
+  at `mwaac::` namespace scope (rather than file-static in an anonymous
+  namespace) so unit tests can assert ordering and overflow behavior
+  directly. Consistent with the existing precedent of
+  `analysis_to_native_sample` exposed in `reference_mode.hpp` for the
+  same testability reason.
 - **Enforcement.**
-  - Length-then-lex compare on zero-stripped digit strings inside the
-    digit-run branch at `src/modes/reference_mode.cpp:716-762`.
-    Mathematically equivalent to numeric compare for any in-range value
-    AND well-defined for digit runs of any length. Pre-cure
-    `std::stoll` calls deleted.
+  - **String surface (canonical).** Length-then-lex compare on
+    zero-stripped digit strings inside the digit-run branch at
+    `src/modes/reference_mode.cpp:716-762`. Mathematically equivalent
+    to numeric compare for any in-range value AND well-defined for
+    digit runs of any length. Pre-cure `std::stoll` calls deleted.
+  - **Path surface (delegation).** `mwaac::natural_less_filename` at
+    `src/modes/reaper_export.cpp:21-37` is a one-line delegation
+    `return natural_less(a.filename().string(), b.filename().string());`,
+    inheriting the no-throw guarantee from the canonical surface.
   - `Reference mode: natural filename sort ordering` at
-    `tests/test_reference_mode.cpp:120-141` asserts the primary numeric-
-    not-lex invariant (`natural_less("Track 2.wav", "Track 10.wav")`
-    plus decade-boundary cases plus strict-weak irreflexivity check).
-  - `natural_less: digit run > 18 characters does not throw` at
-    `tests/test_reference_mode.cpp:151-181` exercises the overflow
-    regime: equal-length 25-digit runs, different-length 20-vs-21-
-    digit runs (no leading zero, longer is numerically larger),
-    mixed short-vs-pathological inputs, plus strict-weak symmetry on
-    the pathological inputs to gate against half-cure regressions.
-- **Status.** `holds` post-Mi-17 merge `4d542d3` (PR #46). Pre-cure
-  `std::stoll` on each digit run threw `std::out_of_range` on runs > ~19
-  chars and propagated out of the `std::sort` callsite at the file-static
-  `natural_sort` (called by `load_reference_tracks`) to abort the
-  program. Cure shape: option (c) per Mi-17 BACKLOG (manual digit
-  comparison, never converts to integer).
-- **Sibling defect filed:** M-REAPER-EXPORT-SORT-THROW (Tier 9) —
-  `natural_less_filename` in `src/modes/reaper_export.cpp:43-44` has
-  the identical std::stoll throw shape. Pre-dispatch adjacent-entry
-  sweep finding from Mi-17, filed as separate item in commit `e2893d6`
-  to preserve Mi-17's explicit single-function scope; cure shape will
-  mirror Mi-17 (option (c)) when dispatched.
+    `tests/test_reference_mode.cpp:120-141` and `natural_less: digit
+    run > 18 characters does not throw` at `:151-181` exercise the
+    string surface directly (primary invariant + overflow regime).
+  - `Reaper export: natural filename sort ordering` at
+    `tests/test_reaper_export.cpp:19-40` and `Reaper export:
+    natural_less_filename does not throw on >18-char digit run` at
+    `:42-73` exercise the path-wrapper surface (primary invariant
+    with path-prefix tie-break check + overflow regime mirroring
+    Mi-17's structure).
+- **Status.** `holds` on both surfaces.
+  - String surface post-Mi-17 merge `4d542d3` (PR #46). Pre-cure
+    `std::stoll` on each digit run threw `std::out_of_range` on runs > ~19
+    chars and propagated out of the `std::sort` callsite at the file-
+    static `natural_sort` (called by `load_reference_tracks`) to abort
+    the program. Cure shape: option (c) per Mi-17 BACKLOG (manual
+    digit comparison, never converts to integer).
+  - Path surface post-M-REAPER-EXPORT-SORT-THROW merge `88e5267`
+    (PR #47). Pre-cure `natural_less_filename` carried its own copy
+    of the natural-sort algorithm with the identical std::stoll throw
+    shape, sibling of Mi-17. Cure shape: delegation to
+    `mwaac::natural_less`, which eliminates the duplicate-algorithm
+    divergence risk (any future cure or regression to `mwaac::natural_less`
+    automatically applies here).
 
 ### INV-INDEX-TYPE-DISJOINT — Sample- and frame-index types are not implicitly convertible
 
