@@ -1,4 +1,5 @@
 #include "modes/reaper_export.hpp"
+#include "modes/reference_mode.hpp"
 #include "core/verbose.hpp"
 #include <sndfile.h>
 #include <algorithm>
@@ -13,42 +14,25 @@
 
 namespace mwaac {
 
-namespace {
-
-// Natural-sort compare on filenames (kept local so ref_export doesn't
-// depend on the reference_mode internals). Splits into text/number runs
-// and compares numeric runs as integers so "Track 2.wav" < "Track 10.wav".
+// M-REAPER-EXPORT-SORT-THROW: see header for rationale. Pre-cure this
+// function carried its own copy of the natural-sort algorithm with a
+// std::stoll call that threw std::out_of_range on digit runs > ~19
+// chars and propagated out of the std::sort callsite at
+// list_reference_paths to abort the program — sibling defect of Mi-17
+// in reference_mode.cpp. Post-cure: delegates to mwaac::natural_less,
+// which Mi-17 hardened to length-then-lex compare on zero-stripped
+// digit strings (option (c)), so the two natural-sort sites share a
+// single hardened implementation. The original "kept local so
+// ref_export doesn't depend on reference_mode internals" rationale no
+// longer applies: natural_less is now part of reference_mode.hpp's
+// public surface (Mi-17 exposure decision), so depending on it is not
+// depending on internals.
 bool natural_less_filename(const std::filesystem::path& a,
                            const std::filesystem::path& b) {
-    const std::string as = a.filename().string();
-    const std::string bs = b.filename().string();
-
-    auto parts = [](const std::string& s) {
-        std::vector<std::pair<bool, std::string>> out;
-        std::string cur;
-        bool is_digit = false;
-        for (char c : s) {
-            bool d = std::isdigit(static_cast<unsigned char>(c));
-            if (!cur.empty() && d != is_digit) { out.push_back({is_digit, cur}); cur.clear(); }
-            cur += c;
-            is_digit = d;
-        }
-        if (!cur.empty()) out.push_back({is_digit, cur});
-        return out;
-    };
-
-    auto ap = parts(as), bp = parts(bs);
-    for (size_t i = 0; i < std::min(ap.size(), bp.size()); ++i) {
-        if (ap[i].first && bp[i].first) {
-            long long x = std::stoll(ap[i].second);
-            long long y = std::stoll(bp[i].second);
-            if (x != y) return x < y;
-        } else if (ap[i].second != bp[i].second) {
-            return ap[i].second < bp[i].second;
-        }
-    }
-    return ap.size() < bp.size();
+    return natural_less(a.filename().string(), b.filename().string());
 }
+
+namespace {
 
 bool is_audio_file(const std::filesystem::path& p) {
     static const std::vector<std::string> exts = {

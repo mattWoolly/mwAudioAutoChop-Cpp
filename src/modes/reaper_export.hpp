@@ -29,4 +29,15 @@ bool write_reaper_project(
     const std::vector<SplitPoint>& chops,
     int native_sample_rate);
 
+// M-REAPER-EXPORT-SORT-THROW: natural-sort comparator on filesystem paths
+// (compares by `path.filename().string()`). Thin wrapper that delegates
+// to `mwaac::natural_less` so the two natural-sort callsites in src/modes/
+// share a single hardened implementation; the duplicate-algorithm
+// risk that left this site std::stoll-throw-vulnerable when Mi-17
+// hardened `mwaac::natural_less` is gone. Exposed in the public header
+// (rather than kept file-static) so the unit test can assert the cure
+// shape without going through `write_reaper_project` end-to-end.
+[[nodiscard]] bool natural_less_filename(const std::filesystem::path& a,
+                                         const std::filesystem::path& b);
+
 } // namespace mwaac
