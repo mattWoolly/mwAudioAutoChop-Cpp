@@ -879,7 +879,7 @@ migration to `std::expected`-style storage happens in M-14.
         to the naive version", scoped to lag selection only since peak
         magnitudes use different normalizations.
 
-### M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture
+### M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture — **RESOLVED in #46 (`4d542d3`)**
 
 - **Origin.** Surfaced during the PR #23 (FIXTURE-REF) rebase audit.
   `tests/test_reference_mode.cpp:14` is a `SKIP()` whose comment says
@@ -919,12 +919,30 @@ migration to `std::expected`-style storage happens in M-14.
 - **Effort.** ≤ 30 lines of test code plus possible CMake plumbing.
   One PR, one audit, no fixture work needed (already landed).
 - **Exit criteria.**
-  - [ ] `test_reference_mode.cpp:14`'s SKIP replaced with a real
-        assertion against the fixture manifest.
-  - [ ] Tolerance constant is named (`kRefFixtureToleranceSamples`
+  - [x] `test_reference_mode.cpp:14`'s SKIP replaced with a real
+        assertion against the fixture manifest. Post-Mi-4 close-out the
+        SKIP sits at `:18` (line drift from C-4's added passing
+        TEST_CASE); this item replaces the body at `tests/test_reference_mode.cpp:28-108`
+        with an `align_per_track`-direct assertion that loads vinyl
+        and refs at native 44100 Hz via `mwaac::load_audio_mono` and
+        the production `load_reference_tracks` loader, parses the flat
+        KEY=VALUE manifest, and CHECKs each track's `start_sample`
+        against the manifest's `track<i>_start_sample` within the named
+        tolerance. Calls `align_per_track` directly (NOT the full
+        `analyze_reference_mode` pipeline) so an alignment-precision
+        regression that still passes the integration tests' gap-detection
+        path shows up here as a localized failure on this item's surface.
+  - [x] Tolerance constant is named (`kRefFixtureToleranceSamples`
         or similar) and matches PR #23's integration-test tolerance
-        (consistency check).
-  - [ ] Binary exit-code flip on the `test_reference_mode` ctest
+        (consistency check). Constant declared at
+        `tests/test_reference_mode.cpp:97` as
+        `constexpr int64_t kRefFixtureToleranceSamples = (50LL * 44100) / 1000;`
+        (= 2205 samples), matching `tests/test_integration.cpp:54-55` verbatim.
+        `static_assert(kRefFixtureToleranceSamples == 2205, ...)` at
+        `:98-99` pins the value at compile time so any silent drift
+        between the unit-level and integration-level tolerance constants
+        produces a build failure rather than a runtime divergence.
+  - [x] Binary exit-code flip on the `test_reference_mode` ctest
         binary is C-4's cure-signal, not this item's — see
         `docs/known-failing-tests.md` for the cure-attribution split
         across the binary-exit-code axis (C-4 added a passing
@@ -1267,7 +1285,7 @@ migration to `std::expected`-style storage happens in M-14.
   either reject in Debug or emit a documented bit pattern.
 - *Note.* AIFF sample rates 44.1 k–192 k all fit comfortably; this is a
   hardening item, not a correctness bug for the project's actual use case.
-### Mi-17 — std::stoll in natural_less can throw — bound digit count + un-SKIP natural-sort unit test
+### Mi-17 — std::stoll in natural_less can throw — bound digit count + un-SKIP natural-sort unit test — **RESOLVED in #46 (`4d542d3`)**
 
 - **Defect.** `natural_less` (in `src/modes/reference_mode.cpp` or its
   header) parses runs of digits with `std::stoll`, which throws on
@@ -1308,11 +1326,46 @@ migration to `std::expected`-style storage happens in M-14.
 - **Effort.** ≤ 20 lines of code + 2 unit-test cases. One PR, one
   audit. No fixture or pipeline interaction.
 - **Exit criteria.**
-  - [ ] `natural_less` does not throw on any input.
-  - [ ] `tests/test_reference_mode.cpp:20`'s SKIP replaced with a
-        real assertion.
-  - [ ] Combined with M-REF-ALIGN-UNIT, `test_reference_mode`'s exit
-        status flips to `Passed`.
+  - [x] `natural_less` does not throw on any input. Cure landed at
+        `src/modes/reference_mode.cpp:716-762` (definition moved out
+        of the file-static anonymous namespace and exposed at
+        `mwaac::natural_less` in `src/modes/reference_mode.hpp:84`).
+        Cure shape: option (c) — length-then-lex compare on
+        zero-stripped digit strings inside the digit-run branch.
+        Equivalent to numeric compare for any in-range value AND
+        well-defined for digit runs of any length. Audit verified the
+        strict-weak-ordering properties (irreflexivity, antisymmetry,
+        transitivity) and that the leading-zero-strip handles the
+        edge cases `"000"`, `"0"`, `"123"`, `"0123"` correctly without
+        narrowing the ordering. Pre-cure `std::stoll` calls at
+        `:60-61` (pre-resolution line numbers) deleted.
+  - [x] `tests/test_reference_mode.cpp:20`'s SKIP replaced with a
+        real assertion. Post-Mi-4 close-out the SKIP sat at `:24` (line
+        drift from C-4's added passing TEST_CASE); replaced with two
+        TEST_CASEs at `tests/test_reference_mode.cpp:120-141`
+        ("Reference mode: natural filename sort ordering" — primary
+        invariant including the BACKLOG-mandated
+        `natural_less("Track 2.wav", "Track 10.wav")` plus
+        decade-boundary cases and strict-weak irreflexivity check) and
+        `:151-181` ("natural_less: digit run > 18 characters does not
+        throw" — overflow regime: equal-length 25-digit, different-
+        length 20-vs-21-digit, mixed short-vs-pathological, plus
+        strict-weak symmetry on pathological inputs). Splitting the
+        primary-invariant and overflow axes into separate TEST_CASEs
+        means a future regression that brings back `std::stoll` aborts
+        only the overflow case rather than masking the primary one.
+  - [x] Combined with M-REF-ALIGN-UNIT, `test_reference_mode`'s exit
+        status flips to `Passed`. Empirical post-merge: 5 cases / 47
+        assertions, all pass on every CI variant (Linux Debug/Release,
+        macOS Debug/Release, sanitizers); 0 SKIPs remain. Binary
+        exit-code surface had already been cured by C-4 at PR #41
+        (1 pass + 2 skip → exit 0); this PR cures the SKIP-cluster
+        surface (5 pass + 0 skip → exit 0) per the cure-attribution
+        split documented in `docs/known-failing-tests.md` test_reference_mode
+        entry. Sibling defect at `src/modes/reaper_export.cpp:43-44`
+        (`natural_less_filename`, identical std::stoll throw shape)
+        filed pre-dispatch as separate Tier 9 item M-REAPER-EXPORT-SORT-THROW
+        in `e2893d6` to preserve Mi-17's explicit single-function scope.
 
 ### M-REAPER-EXPORT-SORT-THROW — std::stoll in `natural_less_filename` can throw — sibling defect of Mi-17
 

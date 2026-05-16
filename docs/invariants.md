@@ -30,13 +30,28 @@ within ±N native-rate samples of the manifest's
 (50 ms at 44 100 Hz, the worst-case envelope-frame quantum).
 
 - **Owner.** Fixture `tests/fixtures/ref_v1/` (FIXTURE-REF) +
-  `analyze_reference_mode` in `src/modes/reference_mode.cpp`.
-- **Enforcement.** `Reference mode pipeline: track positions within
-  tolerance` in `tests/test_integration.cpp` (and the structural pre-check
-  in `Reference mode pipeline: basic detection`).
+  `analyze_reference_mode` and `align_per_track` in
+  `src/modes/reference_mode.cpp`.
+- **Enforcement.**
+  - **Integration surface (full pipeline).** `Reference mode pipeline:
+    track positions within tolerance` in `tests/test_integration.cpp`
+    (and the structural pre-check in `Reference mode pipeline: basic
+    detection`).
+  - **Unit surface (algorithm only).** `Reference mode: per-track
+    alignment to synthetic vinyl` in `tests/test_reference_mode.cpp:28-108`
+    (added by M-REF-ALIGN-UNIT, PR #46) — calls `align_per_track`
+    directly (skipping the resampling and gap-detection stages of
+    `analyze_reference_mode`) so an alignment-precision regression
+    that still passes the integration tests' gap-detection path shows
+    up here as a localized failure on the alignment-algorithm surface.
+    `kRefFixtureToleranceSamples` is `static_assert`'d to match the
+    integration-test value verbatim so the two enforcement sites
+    cannot drift apart silently.
 - **Dependents.** FIXTURE-REF (closes), C-4 (tightens tolerance to one
-  native sample once rate-conversion truncation is fixed; `kRefFixtureToleranceSamples`
-  is the upper bound, the test continues to assert against it after C-4).
+  native sample once rate-conversion truncation is fixed —
+  `kRefFixtureToleranceSamples` is the upper bound, both tests continue
+  to assert against it after C-4), M-REF-ALIGN-UNIT (adds the unit-level
+  enforcement above; isolates the algorithm surface from the pipeline).
 
 ### INV-REF-2 — Reference-mode lossless byte identity
 
@@ -299,10 +314,26 @@ taxonomy is a strict superset of the previous load-specific values.
 Reference-mode boundaries are within one native-rate sample of the
 analysis-rate result.
 
-- **Status.** `pending` (C-4). Note INV-REF-1 currently tolerates 50 ms;
-  C-4 tightens the achievable accuracy and INV-RATECONV-ROUNDED is the
-  unit-level invariant that makes that possible. INV-REF-1 stays at the
-  envelope-frame floor.
+- **Owner.** `analysis_to_native_sample` in `src/modes/reference_mode.{hpp,cpp}`.
+- **Enforcement.** `Reference mode: native-rate boundary is rounded not truncated`
+  in `tests/test_reference_mode.cpp` (4 SECTIONs covering 44.1↔192 kHz
+  round-vs-truncate divergence, exact-integer ratios, exact half-boundary
+  rounding, and negative-input round-half-away-from-zero).
+- **Cure constant.** `kAnalysisToNativeRoundingTolerance = 1` (native
+  sample) at `src/modes/reference_mode.cpp:28`.
+- **Status.** `holds` post-C-4 merge `e519bf6`. Pre-cure `analysis_to_native_sample`
+  truncated toward zero (integer division) and could miss the nearest
+  native-rate sample by up to (analysis_sr − 1) / analysis_sr native
+  samples (~9 samples at 192 kHz native / 22050 Hz analysis). DRIFT-MODEL-RATE-TRUNCATION
+  (PR #42, merge `718330c`) wired the rounding helper into
+  `DriftModel::ref_to_vinyl_sample` at `src/core/drift_model.cpp:10,16,33`,
+  closing the same defect at the second site. INV-REF-1's 50 ms
+  envelope-frame floor remains the binding constraint at the integration
+  surface; INV-RATECONV-ROUNDED tightens the unit-level accuracy that
+  feeds into it.
+- **Latent risk filed:** M-REF-RATE-VALIDATION (Tier 6) tracks the
+  Release-mode `assert(native_sr > 0)` compile-out hazard surfaced by
+  C-4 audit-2 F3.
 
 ### INV-SPECTRAL-FLATNESS-DEFINED — `compute_spectral_flatness` either delivers or is removed
 
@@ -423,13 +454,51 @@ non-unique temp path).
 
 Empty vinyl returns empty offsets, no UB from `std::clamp(..., hi<lo)`.
 
-- **Status.** `pending` (M-9).
+- **Owner.** `align_per_track` in `src/modes/reference_mode.cpp:832`.
+- **Enforcement.**
+  - Function-entry guard at `src/modes/reference_mode.cpp:843-857`
+    (early-returns the empty offsets vector before entering the per-track
+    loop, pinning "empty vinyl ⇒ empty offsets, no per-track loop body
+    executed at all").
+  - `align_per_track: empty vinyl returns empty offsets, no UB` in
+    `tests/test_reference_mode.cpp` (constructs an empty vinyl and a
+    non-empty `tracks` vector to force the loop to be tempted; UBSan-
+    clean execution is the second cure-signal).
+- **Status.** `holds` post-M-9 merge `7969aec` (PR #43). Pre-cure the
+  per-track loop ended each iteration with
+  `std::clamp(chosen_pos, 0, vinyl.samples.size() - 1)`, which evaluates
+  to `std::clamp(x, 0, -1)` on empty vinyl — `hi < lo` is undefined
+  behavior per cppreference. Function-entry guard chosen over per-iter
+  in-loop guard because the early return shape cleanly distinguishes
+  "no vinyl at all" from "this track skipped" (the cure rationale is
+  documented in the cure comment block at `:843-857`).
+- **Adjacent risk filed:** M-WAVEFORM-CLAMP-UB (Tier 7) — `render_waveform`
+  has the same empty-container `std::clamp` UB pattern at
+  `src/tui/waveform.cpp:68-69`, reachable when called with `height == 1`.
+  Cross-tier finding from M-9 pre-dispatch sweep, filed in commit
+  `8f70230`.
 
 ### INV-ZCR-SHORT-FRAME — `compute_zero_crossing_rate` is 0 below 2 samples
 
 ZCR is defined as `0` for frames of length `< 2`.
 
-- **Status.** `pending` (M-10).
+- **Owner.** `compute_zero_crossing_rate` in `src/core/analysis.cpp`.
+- **Enforcement.**
+  - Per-frame in-loop guard at `src/core/analysis.cpp:73-76`
+    (`if (end - start < 2) { zcr[i] = 0.0f; continue; }`) — sits
+    adjacent to the offending divisor; cure rationale documented in the
+    inline comment block at `:60-72`.
+  - `compute_zero_crossing_rate: single-sample frame returns 0, not NaN`
+    in `tests/test_analysis.cpp:66-77` (three assertions: size,
+    exact-match `== 0.0f`, NaN exclusion). Pre-cure both content
+    REQUIREs would fail (`NaN != 0.0f`, isnan true).
+- **Status.** `holds` post-M-10 merge `6a8c805` (PR #44). Pre-cure the
+  per-frame loop body computed `(2 * zero_crossings) / (end - start - 1)`,
+  div-by-zero on `end - start == 1`. Cure choice (a) per-frame in-loop
+  guard chosen over (b) function-entry early-return per defense-in-depth:
+  (a) pins the invariant verbatim at per-frame granularity; (b) would
+  conflate frame-length with input-length and leave a latent gap if a
+  non-empty signal produced a degenerate trailing frame.
 
 ### INV-CC-NORMALIZATION — Naive cross-correlate is a verification shim
 
@@ -437,7 +506,76 @@ The naive `cross_correlate` is a verification shim for the FFT
 implementation; callers using its peak as a probability are using it
 wrong. Documented in the header.
 
-- **Status.** `pending` (Mi-4).
+- **Owner.** `cross_correlate` (naive) in
+  `src/core/correlation.{hpp,cpp}`.
+- **Enforcement.**
+  - Header docstring at `src/core/correlation.hpp:15-30` documents the
+    NORMALIZATION CAVEAT (single GLOBAL norm factor `sqrt(total_ref_energy *
+    total_tgt_energy)` applied uniformly at every lag, NOT per-lag slice
+    energies; peak not bounded to `[-1, 1]` for arbitrary inputs);
+    framed as "testing-only verification shim for cross_correlate_fft."
+  - Shared `CorrelationResult.peak_value` field comment at `:12-15`
+    enumerates per-impl ranges so the field-level documentation does
+    not contradict the function-level docstring.
+  - `cross_correlate_fft` docstring at `:76-80` scopes
+    naive↔FFT comparability to lag selection only (peak magnitudes
+    use different normalizations).
+  - `FFT correlation agrees with naive implementation` at
+    `tests/test_correlation.cpp:83-108` cross-checks the lag-selection
+    invariant (`REQUIRE(fft_result.lag == true_lag)` and
+    `REQUIRE(naive_result.lag == true_lag)`).
+- **Status.** `holds` post-Mi-4 merge `c8db84b` (PR #45). Pre-cure the
+  naive function's docstring claimed "FFT-based cross-correlation"
+  (literally wrong) and asserted `(0-1)` peak range (only true for the
+  FFT impl). Marker decision: prose framing instead of `[[deprecated]]`
+  — `[[deprecated]]` would emit a warning at the regression-guard test
+  callsite (`tests/test_correlation.cpp:99`) forcing either a `-Werror`
+  break or a localized `#pragma` suppression with no semantic gain.
+  Mi-4 audit caught two same-file adjacent-axis findings (struct field
+  comment + FFT-side comparability claim) the fix-agent's naive-side-
+  only sweep missed; both folded into the merge.
+
+### INV-NATURAL-SORT-NEVER-THROWS — `natural_less` is total-order, never throws
+
+`mwaac::natural_less` produces a strict-weak-ordering total order on
+filenames containing arbitrary-length digit runs, and never throws on
+any input.
+
+- **Owner.** `natural_less` in `src/modes/reference_mode.{hpp,cpp}`.
+  Exposed at `mwaac::` namespace scope (rather than file-static in an
+  anonymous namespace) so the unit test can assert ordering and
+  overflow behavior directly without going through the
+  `load_reference_tracks` filesystem path. Consistent with the
+  existing precedent of `analysis_to_native_sample` exposed in the
+  same header for the same testability reason.
+- **Enforcement.**
+  - Length-then-lex compare on zero-stripped digit strings inside the
+    digit-run branch at `src/modes/reference_mode.cpp:716-762`.
+    Mathematically equivalent to numeric compare for any in-range value
+    AND well-defined for digit runs of any length. Pre-cure
+    `std::stoll` calls deleted.
+  - `Reference mode: natural filename sort ordering` at
+    `tests/test_reference_mode.cpp:120-141` asserts the primary numeric-
+    not-lex invariant (`natural_less("Track 2.wav", "Track 10.wav")`
+    plus decade-boundary cases plus strict-weak irreflexivity check).
+  - `natural_less: digit run > 18 characters does not throw` at
+    `tests/test_reference_mode.cpp:151-181` exercises the overflow
+    regime: equal-length 25-digit runs, different-length 20-vs-21-
+    digit runs (no leading zero, longer is numerically larger),
+    mixed short-vs-pathological inputs, plus strict-weak symmetry on
+    the pathological inputs to gate against half-cure regressions.
+- **Status.** `holds` post-Mi-17 merge `4d542d3` (PR #46). Pre-cure
+  `std::stoll` on each digit run threw `std::out_of_range` on runs > ~19
+  chars and propagated out of the `std::sort` callsite at the file-static
+  `natural_sort` (called by `load_reference_tracks`) to abort the
+  program. Cure shape: option (c) per Mi-17 BACKLOG (manual digit
+  comparison, never converts to integer).
+- **Sibling defect filed:** M-REAPER-EXPORT-SORT-THROW (Tier 9) —
+  `natural_less_filename` in `src/modes/reaper_export.cpp:43-44` has
+  the identical std::stoll throw shape. Pre-dispatch adjacent-entry
+  sweep finding from Mi-17, filed as separate item in commit `e2893d6`
+  to preserve Mi-17's explicit single-function scope; cure shape will
+  mirror Mi-17 (option (c)) when dispatched.
 
 ### INV-INDEX-TYPE-DISJOINT — Sample- and frame-index types are not implicitly convertible
 
