@@ -64,11 +64,16 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
 // Caller-side guidance: pick a reference level that approximates
 // the music's typical loudness — e.g. a high percentile (p90) of
 // frame RMS, or the mean RMS of frames above the detection threshold.
+//
+// M-7: previously took a `[[maybe_unused]] int sample_rate` parameter
+// reserved for a future spectral-flatness scoring path. Spectral
+// flatness is now C-5's scope; the parameter was carrying no signal
+// and was removed per the cycle's "Public APIs do not carry dead
+// parameters" invariant (INV-NO-DEAD-PARAMS).
 float score_gap(
     std::span<const float> samples,
     size_t start_sample,
     size_t end_sample,
-    int sample_rate,
     float signal_reference_rms
 );
 
