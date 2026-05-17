@@ -57,9 +57,16 @@ std::vector<std::pair<int64_t, double>> align_per_track(
 // kept file-static) so the unit test can assert rounded vs truncated
 // outputs directly without going through the full reference-mode pipeline.
 //
-// Precondition: native_sr > 0 and analysis_sr > 0. Negative
-// `analysis_sample` is handled (round-half-away-from-zero), though the
-// production call sites in reference_mode.cpp pass only non-negative
+// Precondition: native_sr > 0 and analysis_sr > 0. M-REF-RATE-VALIDATION:
+// enforced symmetrically in Debug and Release builds via
+// MWAAC_ASSERT_PRECONDITION (which calls std::terminate() in Release where
+// a raw assert() would compile out under NDEBUG). A future caller passing
+// zero or negative `analysis_sr` would otherwise trigger integer
+// division-by-zero (UB) in Release builds; the macro turns that into a
+// documented abort.
+//
+// Negative `analysis_sample` is handled (round-half-away-from-zero), though
+// the production call sites in reference_mode.cpp pass only non-negative
 // indices.
 int64_t analysis_to_native_sample(int64_t analysis_sample,
                                   int native_sr,

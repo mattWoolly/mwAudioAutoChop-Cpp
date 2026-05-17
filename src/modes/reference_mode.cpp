@@ -795,8 +795,11 @@ int64_t analysis_to_native_sample(int64_t analysis_sample,
     static_assert(kAnalysisToNativeRoundingTolerance >= 1,
                   "C-4 invariant requires at least 1 native-rate sample of "
                   "rounding tolerance for round-half-away-from-zero conversion");
-    assert(native_sr > 0);
-    assert(analysis_sr > 0);
+    // M-REF-RATE-VALIDATION: MWAAC_ASSERT_PRECONDITION enforces these
+    // symmetrically in Debug and Release (raw assert() compiled out under
+    // NDEBUG, letting integer div-by-zero UB through in Release builds).
+    MWAAC_ASSERT_PRECONDITION(native_sr > 0);
+    MWAAC_ASSERT_PRECONDITION(analysis_sr > 0);
     const int64_t num     = static_cast<int64_t>(native_sr);
     const int64_t den     = static_cast<int64_t>(analysis_sr);
     const int64_t product = analysis_sample * num;
