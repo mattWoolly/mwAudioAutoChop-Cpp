@@ -605,9 +605,27 @@ by construction.
 
 ### INV-NO-DEAD-PARAMS — Public APIs do not carry dead parameters
 
-`score_gap` either uses `sample_rate` or removes it from the signature.
+Public function signatures do not carry `[[maybe_unused]]` parameters
+reserved for a future implementation that has not yet landed.
 
-- **Status.** `pending` (M-7, Mi-7).
+- **Owner.** Project-wide; specifically called out on `score_gap` in
+  `src/modes/blind_mode.{hpp,cpp}`.
+- **Enforcement.** Code review (the invariant is a documentation
+  contract rather than a build-time check). The current state is
+  verified by grep: no `[[maybe_unused]]` parameters remain on public
+  function declarations in `src/modes/` (one `[[maybe_unused]] float
+  window_seconds` remains in `src/core/music_detection.cpp:14` on
+  `estimate_noise_floor` but is documented as API-stability
+  scaffolding across noise-floor algorithm changes, not a placeholder
+  for unimplemented behavior — distinct from M-7's pattern).
+- **Status.** `holds` post-M-7 merge `02eef0c` (PR #50). Pre-cure
+  `score_gap` carried `[[maybe_unused]] int sample_rate` reserved for
+  a future spectral-flatness scoring path that belongs to C-5's scope.
+  Cure: removed the parameter rather than implementing the deferred
+  scoring (YAGNI; folding C-5 would have violated single-function
+  scope and tied M-7 to C-5's stub implementation). Mi-7 ("score_gap
+  drops sample_rate") was explicitly a duplicate of M-7 and is closed
+  by the same merge.
 
 ### INV-BLIND-SINGLE-TRACK — Blind mode returns a single-split result on a gap-free input
 

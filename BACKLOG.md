@@ -973,14 +973,28 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] `SampleIndex`/`FrameIndex` tagged int types, or at minimum
         unambiguous parameter names + a header comment stating units.
 
-### M-7 — score_gap ignores sample_rate parameter
+### M-7 — score_gap ignores sample_rate parameter — **RESOLVED in #50 (`02eef0c`)**
 
 - **Defect.** Parameter marked `[[maybe_unused]]`.
 - **Invariant established.** "Public APIs do not carry dead parameters."
 - **Files touched.** `src/modes/blind_mode.hpp`, `src/modes/blind_mode.cpp`,
   `tests/test_blind_mode.cpp` (signature update).
 - **Exit criteria.**
-  - [ ] Either use sample_rate (spectral-flatness scoring) or remove it.
+  - [x] Either use sample_rate (spectral-flatness scoring) or remove it.
+        Chose **remove** (YAGNI). Spectral flatness is C-5's scope
+        (`BACKLOG.md` Tier 2 — `compute_spectral_flatness` unsigned wrap
+        + stub implementation); folding C-5's hypothetical use into M-7
+        would have violated single-function scope discipline AND tied
+        M-7's cure to C-5's currently-stub implementation. If a future
+        caller needs spectral-flatness scoring, the parameter can be
+        re-added at that point with a meaningful implementation rather
+        than `[[maybe_unused]]` cruft. 6-LOC change across 3 files:
+        `src/modes/blind_mode.hpp:73-78` (declaration + 5-line M-7
+        commentary explaining the spectral-flatness deferral),
+        `src/modes/blind_mode.cpp:61` (definition), `:213-216`
+        (analyze_blind_mode callsite), `tests/test_blind_mode.cpp:29`
+        (test callsite). Subsumes Mi-7 ("Duplicate of M-7 / same
+        resolution" per the Mi-7 BACKLOG entry).
 
 ### M-8 — Blind mode returns error on single-track rips
 
@@ -1002,9 +1016,11 @@ migration to `std::expected`-style storage happens in M-14.
 - **Files touched.** Resolved by M-14.
 - **Exit criteria.** Closed as a duplicate of M-14 once M-14 lands.
 
-### Mi-7 — score_gap drops sample_rate
+### Mi-7 — score_gap drops sample_rate — **RESOLVED in #50 (`02eef0c`) via M-7**
 
-- Duplicate of M-7 / same resolution.
+- Duplicate of M-7 / same resolution. Cured in PR #50 alongside M-7
+  (removal of the `[[maybe_unused]] int sample_rate` parameter from
+  `score_gap`).
 
 ### NEW-BLIND-GAP — Blind mode returns only 1 split on clear 2-track fixture — **RESOLVED in #48 (`7c0bc4a`)**
 
