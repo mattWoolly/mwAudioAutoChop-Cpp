@@ -1,4 +1,5 @@
 #include "modes/blind_mode.hpp"
+#include "modes/blind_mode_indices.hpp"
 #include "core/audio_buffer.hpp"
 #include "core/analysis.hpp"
 #include "core/music_detection.hpp"
@@ -208,19 +209,33 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     }
     
     for (const auto& gap : gaps) {
-        int64_t track_start = static_cast<int64_t>(gap.second * static_cast<std::size_t>(hop_length));
-        int64_t gap_duration = static_cast<int64_t>((gap.second - gap.first) * static_cast<std::size_t>(hop_length));
+        // M-6: cross the frame-index/sample-index boundary through the
+        // typed bridge (modes/blind_mode_indices.hpp). detect_gaps
+        // returns std::pair<size_t,size_t> of frame indices; here we
+        // wrap them as FrameIdx and convert to SampleIdx exactly once
+        // per gap edge. Any future code that needs a SampleIdx from a
+        // FrameIdx must go through frame_to_sample; constructing a
+        // SampleIdx directly from gap.first without the hop_length
+        // multiplication is a static-assert failure in the header.
+        const detail::FrameIdx gap_start_frame{gap.first};
+        const detail::FrameIdx gap_end_frame{gap.second};
+        const detail::SampleIdx gap_start_sample =
+            detail::frame_to_sample(gap_start_frame, hop_length);
+        const detail::SampleIdx gap_end_sample =
+            detail::frame_to_sample(gap_end_frame, hop_length);
+        const int64_t track_start = gap_end_sample.value;
+        const int64_t gap_duration = gap_end_sample.value - gap_start_sample.value;
 
         // Score this gap. NEW-BLIND-GAP: pass the signal reference level
         // (p90 of RMS) rather than the noise floor — see the rationale
         // block above the signal_reference_rms computation.
         float confidence = score_gap(audio.samples,
-                                     gap.first * static_cast<std::size_t>(hop_length),
-                                     gap.second * static_cast<std::size_t>(hop_length),
+                                     static_cast<std::size_t>(gap_start_sample.value),
+                                     static_cast<std::size_t>(gap_end_sample.value),
                                      signal_reference_rms);
 
         if (g_verbose) {
-            [[maybe_unused]] double gap_start_sec = static_cast<double>(gap.first * static_cast<std::size_t>(hop_length)) / static_cast<double>(config.analysis_sr);
+            [[maybe_unused]] double gap_start_sec = static_cast<double>(gap_start_sample.value) / static_cast<double>(config.analysis_sr);
             double gap_duration_sec = static_cast<double>(gap_duration) / static_cast<double>(config.analysis_sr);
             std::ostringstream conf_oss;
             conf_oss << std::fixed << std::setprecision(3) << confidence;
