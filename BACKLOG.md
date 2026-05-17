@@ -996,17 +996,55 @@ migration to `std::expected`-style storage happens in M-14.
         (test callsite). Subsumes Mi-7 ("Duplicate of M-7 / same
         resolution" per the Mi-7 BACKLOG entry).
 
-### M-8 — Blind mode returns error on single-track rips
+### M-8 — Blind mode returns error on single-track rips — **RESOLVED in #51 (`5c533da`)**
 
 - **Defect.** `NoGapsFound` is a legitimate outcome, not an error.
 - **Invariant established.** "Blind mode returns a single-split result on a
   gap-free input, with confidence reflecting the absence of evidence."
-- **Files touched.** `src/modes/blind_mode.cpp`, `src/main.cpp`
-  (handling tweak).
+- **Files touched.** `src/modes/blind_mode.cpp` (early-return removal +
+  cure-rationale comment), `src/modes/blind_mode.hpp` (`NoGapsFound`
+  enum value removal), `src/main.cpp` (switch arm removal),
+  `tests/test_blind_mode.cpp` (new TEST_CASE + temp-WAV helper),
+  `CMakeLists.txt` (test_blind_mode gains mwaac_sndfile link).
 - **Tests added.**
-  - `analyze_blind_mode: single-track input returns 1 split` (new).
+  - `analyze_blind_mode: single-track (gap-free) input returns 1 split`
+    in `tests/test_blind_mode.cpp:69-141`. **Fixture-choice critical:**
+    a 1-second tone at 22050 Hz (NOT 5 seconds) — must be shorter than
+    `min_gap_seconds = 2.0` to force `detect_gaps` to drop the candidate
+    via the gap-length check. Audit-1 caught the original 5 s variant
+    passing via the score-rejection path rather than the M-8 cure path
+    (gap_rms == signal_reference_rms → score 0 → below 0.6 threshold);
+    that test would have passed equally well with the M-8 fix reverted.
+    Empirical regression-guard check: with cure reverted via
+    `git checkout main -- src/modes/blind_mode.{cpp,hpp}`, the test
+    FAILS with `result.error() == BlindError::NoGapsFound`; with cure
+    restored, 16 assertions all pass. Second-axis guard: assertion that
+    `metadata["num_gaps_found"] == 0.0` catches the regression if a
+    future fixture change accidentally falls into the score-rejection
+    path.
 - **Exit criteria.**
-  - [ ] No error return on empty `gaps`.
+  - [x] No error return on empty `gaps`. Cure shape: minimum-blast
+        deletion of the early-return short-circuit at
+        `src/modes/blind_mode.cpp:182-185` pre-cure. Function now falls
+        through into the existing single-split construction (first-track-
+        at-zero SplitPoint + zero-iteration gaps for-loop + post-loop
+        end_sample fill-in), yielding a 1-split result with confidence
+        1.0 spanning the entire input. `BlindError::NoGapsFound` enum
+        value removed; switch in `src/main.cpp:264-273` now exhaustive
+        on 2-value enum (compiler-verified, no `-Wswitch` warning).
+        Verbose log line kept (downgraded WARNING → INFO).
+        Confidence-value interpretation (1.0 = "single-track assertion
+        is well-supported by absence of gap evidence") documented in
+        cure-comment at blind_mode.cpp:182-191 and in the new
+        INV-BLIND-SINGLE-TRACK INV doc entry per audit-1 finding 6.
+        Audit-1 surfaced a CONCERNS verdict on the original test
+        fixture (5 s tone) that was test-passes-via-wrong-path — fix
+        landed in follow-up commit `7ba40dc` per audit's prescribed
+        repair. Adjacent-entry sweep flagged
+        `ReferenceError::NoTracksFound` as structurally similar but
+        likely a true user-config error; filed as M-REF-NO-TRACKS-OUTCOME
+        (Tier 6, commit `e8261d8`) for investigation rather than
+        folding into M-8.
 
 ### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error
 

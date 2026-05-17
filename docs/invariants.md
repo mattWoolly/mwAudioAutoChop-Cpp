@@ -629,7 +629,46 @@ reserved for a future implementation that has not yet landed.
 
 ### INV-BLIND-SINGLE-TRACK — Blind mode returns a single-split result on a gap-free input
 
-- **Status.** `pending` (M-8).
+`analyze_blind_mode` on an input that produces zero gap candidates
+(either because `detect_gaps` finds no contiguous below-threshold
+region or because every candidate region is outside the
+[min_gap_seconds, max_gap_seconds] window) returns a successful
+`AnalysisResult` containing a single SplitPoint that spans the entire
+input (start_sample = 0, end_sample = samples.size() - 1), with
+`confidence = 1.0` and `metadata["num_gaps_found"] = 0`. A gap-free
+input is a legitimate outcome, not an error.
+
+- **Owner.** `analyze_blind_mode` in `src/modes/blind_mode.cpp` —
+  specifically the gap-empty fall-through path (no early-return on
+  `gaps.empty()`).
+- **Enforcement.**
+  - Cure-rationale comment block at `src/modes/blind_mode.cpp:182-191`
+    documents the gap-empty fall-through behavior.
+  - `analyze_blind_mode: single-track (gap-free) input returns 1 split`
+    at `tests/test_blind_mode.cpp:69-141` exercises the cure path with
+    a 1-second tone fixture (chosen specifically because
+    1 s < min_gap_seconds=2 s forces `detect_gaps` to drop the
+    candidate). Asserts the 1-split result shape (start_sample 0,
+    end_sample samples.size()-1, source "blind", confidence 1.0) AND
+    `metadata["num_gaps_found"] == 0.0` (second-axis guard against
+    the M-8 audit-1 catch — a longer-tone fixture would pass through
+    the score-rejection path rather than the cure path, masking
+    whether the cure works).
+- **Status.** `holds` post-M-8 merge `5c533da` (PR #51). Pre-cure the
+  function returned `BlindError::NoGapsFound` on empty gaps; the CLI
+  surfaced this as an "Analysis failed" exit. Confidence-value
+  interpretation: 1.0 means "single-track assertion is well-supported
+  by absence of gap evidence" — there is no gap evidence contradicting
+  the structural claim, so the assertion is maximally certain at the
+  structural level. (Alternative interpretation "0.5 = no evidence
+  either way" was considered and rejected: blind mode's confidence
+  values are about the structural claim's support, not about how much
+  uncertainty exists in the underlying audio.)
+- **Adjacent structural-sibling filed:** M-REF-NO-TRACKS-OUTCOME
+  (Tier 6, commit `e8261d8`) tracks `ReferenceError::NoTracksFound`
+  for investigation. Structurally similar enum-value-as-error pattern
+  but likely a true user-config error (vs. M-8's algorithm-finds-
+  nothing); cure shape pending investigation outcome.
 
 ### INV-BLIND-CLEAN-2TRACK — Blind mode finds ≥2 splits on a clear two-track fixture
 
