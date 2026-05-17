@@ -58,7 +58,6 @@ float score_gap(
     std::span<const float> samples,
     size_t start_sample,
     size_t end_sample,
-    [[maybe_unused]] int sample_rate,
     float signal_reference_rms)
 {
     if (end_sample <= start_sample || samples.empty()) {
@@ -211,7 +210,6 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         float confidence = score_gap(audio.samples,
                                      gap.first * static_cast<std::size_t>(hop_length),
                                      gap.second * static_cast<std::size_t>(hop_length),
-                                     config.analysis_sr,
                                      signal_reference_rms);
 
         if (g_verbose) {

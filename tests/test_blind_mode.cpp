@@ -26,7 +26,7 @@ TEST_CASE("Gap scoring based on energy", "[blind]") {
     }
     
     // Score the quiet region
-    float score = mwaac::score_gap(samples, 2000, 4000, 44100, 0.5f);
+    float score = mwaac::score_gap(samples, 2000, 4000, 0.5f);
     
     REQUIRE(score > 0.9f);  // Should be high confidence (very quiet)
 }
