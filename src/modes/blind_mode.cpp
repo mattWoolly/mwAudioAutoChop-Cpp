@@ -179,11 +179,18 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         verbose("  Candidate gaps found: " + std::to_string(gaps.size()));
     }
     
+    // M-8: a gap-free input is a legitimate outcome (no inter-track
+    // silences detected), not an error. The function continues into the
+    // single-split construction below with `gaps.empty()`; the implicit
+    // "first track starts at 0" SplitPoint is built and the for-loop
+    // over gaps simply iterates zero times, yielding a single-split
+    // result that covers the entire input with confidence 1.0 (the
+    // single-track assertion is well-supported by the absence of any
+    // gap evidence). See INV-BLIND-SINGLE-TRACK in docs/invariants.md.
     if (gaps.empty()) {
-        verbose("WARNING: No gaps detected");
-        return BlindError::NoGapsFound;
+        verbose("INFO: No gaps detected — returning single-split result for the full input");
     }
-    
+
     // Convert gaps to split points
     // Each gap boundary marks the START of a new track
     std::vector<SplitPoint> split_points;

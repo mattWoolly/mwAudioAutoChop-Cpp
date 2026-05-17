@@ -267,9 +267,9 @@ int main(int argc, char* argv[]) {
                 case mwaac::BlindError::AnalysisFailed:
                     std::cerr << "Analysis failed\n";
                     break;
-                case mwaac::BlindError::NoGapsFound:
-                    std::cerr << "No gaps found in audio\n";
-                    break;
+                // M-8: NoGapsFound was removed from BlindError;
+                // analyze_blind_mode returns a single-split result on
+                // gap-free input rather than this error path.
             }
             return 1;
         }

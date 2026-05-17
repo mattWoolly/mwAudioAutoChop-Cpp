@@ -1,5 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include "modes/blind_mode.hpp"
+#include <sndfile.h>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <variant>
 #include <vector>
 
 TEST_CASE("Gap detection finds gaps in RMS data", "[blind]") {
@@ -36,6 +41,109 @@ TEST_CASE("Blind mode API compiles", "[blind]") {
     mwaac::BlindModeConfig config;
     config.min_gap_seconds = 2.0f;
     config.max_gap_seconds = 30.0f;
-    
+
     REQUIRE(config.min_gap_seconds == 2.0f);
+}
+
+namespace {
+
+// Minimal mono PCM_FLOAT WAV writer for the M-8 test. Reuses
+// libsndfile so the produced file is loadable by load_audio_mono
+// (which is what analyze_blind_mode calls internally).
+bool write_temp_wav(const std::filesystem::path& path,
+                    const std::vector<float>& samples,
+                    int sample_rate) {
+    SF_INFO info = {};
+    info.samplerate = sample_rate;
+    info.channels = 1;
+    info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
+    SNDFILE* sf = sf_open(path.string().c_str(), SFM_WRITE, &info);
+    if (!sf) return false;
+    sf_count_t written = sf_write_float(sf, samples.data(),
+                                        static_cast<sf_count_t>(samples.size()));
+    sf_close(sf);
+    return written == static_cast<sf_count_t>(samples.size());
+}
+
+} // namespace
+
+// M-8: a gap-free input is a legitimate outcome (no inter-track silences),
+// not an error. Pre-cure analyze_blind_mode returned BlindError::NoGapsFound
+// on an input with no detected gaps; the CLI surfaced this as an error
+// exit. Post-cure: the function returns a single-split result spanning the
+// entire input with confidence 1.0, and the NoGapsFound enum value is
+// removed (callers no longer need to special-case it). See
+// INV-BLIND-SINGLE-TRACK.
+//
+// FIXTURE CHOICE — exercises the gaps.empty() cure path specifically:
+// a 1-second tone at 22050 Hz produces 77 RMS frames (50 ms frame, 12.5 ms
+// hop). On a constant-amplitude tone the noise-floor estimator (p10 of
+// frame RMS) degenerates to the tone's own RMS — the gap-detection
+// threshold sits at 2x noise_floor and every frame is registered as
+// "below threshold" — so detect_gaps would otherwise produce one giant
+// "gap" spanning the whole signal. But the gap length (77 frames ≈ 1.0 s)
+// is below min_gap_seconds (2.0 s, = 160 frames at this hop), so
+// detect_gaps DROPS the candidate and returns an empty vector. That is
+// the only path that hits the M-8 cure (`gaps.empty()` no-error branch);
+// any longer tone would still produce a candidate gap that the
+// confidence-rejection path swallows, masking whether the cure itself
+// works. Without this care, the test would pass equally well with the
+// M-8 fix reverted (audit-1 finding 1, 2026-05-16).
+TEST_CASE("analyze_blind_mode: single-track (gap-free) input returns 1 split",
+          "[blind][m-8]")
+{
+    namespace fs = std::filesystem;
+
+    // 1-second tone. See FIXTURE CHOICE comment above for why 1 s
+    // specifically (must be < min_gap_seconds to force the
+    // gaps.empty() cure path).
+    const int sr = 22050;
+    const int duration_samples = sr * 1;
+    std::vector<float> samples(static_cast<std::size_t>(duration_samples));
+    const double pi = 3.14159265358979323846;
+    for (int i = 0; i < duration_samples; ++i) {
+        samples[static_cast<std::size_t>(i)] =
+            static_cast<float>(0.7 * std::sin(
+                2.0 * pi * 440.0 * static_cast<double>(i)
+                / static_cast<double>(sr)));
+    }
+
+    fs::path tmp_dir = fs::temp_directory_path() / "mwaac_blind_m8";
+    fs::create_directories(tmp_dir);
+    fs::path tmp_path = tmp_dir / "no_gaps.wav";
+    REQUIRE(write_temp_wav(tmp_path, samples, sr));
+
+    mwaac::BlindModeConfig config;
+    config.min_gap_seconds = 2.0f;  // > 1 s tone duration — forces detect_gaps to drop the candidate.
+    config.max_gap_seconds = 5.0f;
+    config.analysis_sr = sr;
+
+    auto result = mwaac::analyze_blind_mode(tmp_path, config);
+
+    // Pre-cure: result.has_value() == false; result.error() ==
+    // BlindError::NoGapsFound. Post-cure: result.has_value() == true with
+    // a single split spanning the input.
+    REQUIRE(result.has_value());
+    const auto& analysis = result.value();
+    CHECK(analysis.mode == "blind");
+    REQUIRE(analysis.split_points.size() == 1);
+    CHECK(analysis.split_points[0].start_sample == 0);
+    CHECK(analysis.split_points[0].end_sample ==
+          static_cast<int64_t>(samples.size()) - 1);
+    CHECK(analysis.split_points[0].source == "blind");
+    CHECK(analysis.split_points[0].confidence == 1.0);
+
+    // Second-axis regression guard: metadata records 0 gaps for the
+    // gap-empty path. If a future change re-introduces the score-
+    // rejection branch and the test fixture happens to fall into it,
+    // num_gaps_found would be 1 (not 0) and this CHECK would fail —
+    // catching the regression that audit-1 caught on the 5 s variant.
+    auto num_gaps_it = analysis.metadata.find("num_gaps_found");
+    REQUIRE(num_gaps_it != analysis.metadata.end());
+    REQUIRE(std::holds_alternative<double>(num_gaps_it->second));
+    CHECK(std::get<double>(num_gaps_it->second) == 0.0);
+
+    std::error_code ec;
+    fs::remove(tmp_path, ec);
+    fs::remove(tmp_dir, ec);
 }
