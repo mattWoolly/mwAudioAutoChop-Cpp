@@ -1,4 +1,21 @@
 #include <catch2/catch_test_macros.hpp>
+
+// M-REF-RATE-VALIDATION: death-test scaffolding (fork-based). Mirrors the
+// C-2 pattern at tests/test_audio_file.cpp:14-21,748-770. Duplicating
+// rather than extracting per `feedback_tier_boundary_preservation.md` —
+// the third instance of this scaffolding will be the case for the
+// F-AUDIT2-DT extraction item; second instance documents the pattern.
+#if defined(__unix__) || defined(__APPLE__)
+#  include <csignal>
+#  include <fcntl.h>
+#  include <sys/types.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#  define MWAAC_HAVE_FORK 1
+#else
+#  define MWAAC_HAVE_FORK 0
+#endif
+
 #include "modes/reference_mode.hpp"
 #include "core/audio_buffer.hpp"
 
@@ -262,4 +279,112 @@ TEST_CASE("align_per_track: empty vinyl returns empty offsets, no UB",
 
     auto offsets = mwaac::align_per_track(vinyl, tracks, /*music_start=*/0);
     REQUIRE(offsets.empty());
+}
+
+// M-REF-RATE-VALIDATION: precondition checks on analysis_to_native_sample
+// must fire in Release builds, not just Debug. Pre-cure the function used
+// raw `assert(native_sr > 0)` and `assert(analysis_sr > 0)` which compile
+// out under NDEBUG, leaving a future caller passing zero or negative
+// rates to trigger integer division-by-zero UB in Release. Post-cure both
+// preconditions use MWAAC_ASSERT_PRECONDITION (terminate() in Release,
+// assert() in Debug — both raise SIGABRT through the libc abort path).
+// Production callers are safe by construction (rates derived from
+// AudioBuffer::sample_rate and the analysis_sr default), but the helper
+// is in the public header and the asymmetric Debug/Release contract was
+// itself the defect.
+//
+// Each precondition gets its own TEST_CASE so failure isolation is
+// per-precondition. Mirrors the C-2 death-test pattern at
+// tests/test_audio_file.cpp:773-832.
+
+#if MWAAC_HAVE_FORK
+namespace {
+
+// Silence the child's stdout/stderr so libc abort chatter and Catch2's
+// inherited signal handlers don't contaminate the parent's output, and
+// reset SIGABRT to SIG_DFL so abort() takes the process down via the
+// default handler (giving the parent a clean WIFSIGNALED status).
+inline void prepare_child_for_death_test() {
+    int devnull = ::open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+        ::dup2(devnull, STDOUT_FILENO);
+        ::dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) {
+            ::close(devnull);
+        }
+    }
+    std::signal(SIGABRT, SIG_DFL);
+    std::signal(SIGSEGV, SIG_DFL);
+}
+
+} // namespace
+#endif
+
+TEST_CASE("analysis_to_native_sample: native_sr == 0 terminates the process",
+          "[reference][m-ref-rate-validation]")
+{
+#if MWAAC_HAVE_FORK
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        prepare_child_for_death_test();
+        // Trigger the precondition violation. noexcept signature means
+        // a throw would also terminate, but MWAAC_ASSERT_PRECONDITION
+        // takes that path directly via std::terminate → abort.
+        volatile int64_t sink =
+            mwaac::analysis_to_native_sample(1, /*native_sr=*/0, /*analysis_sr=*/44100);
+        (void)sink;
+        _exit(0);  // If the precondition didn't fire, parent flags this as failure.
+    }
+    int status = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    REQUIRE(waited == pid);
+    REQUIRE(WIFSIGNALED(status));
+#else
+    SKIP("Death test requires fork(); platform does not support it.");
+#endif
+}
+
+TEST_CASE("analysis_to_native_sample: analysis_sr == 0 terminates the process",
+          "[reference][m-ref-rate-validation]")
+{
+#if MWAAC_HAVE_FORK
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        prepare_child_for_death_test();
+        volatile int64_t sink =
+            mwaac::analysis_to_native_sample(1, /*native_sr=*/44100, /*analysis_sr=*/0);
+        (void)sink;
+        _exit(0);
+    }
+    int status = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    REQUIRE(waited == pid);
+    REQUIRE(WIFSIGNALED(status));
+#else
+    SKIP("Death test requires fork(); platform does not support it.");
+#endif
+}
+
+TEST_CASE("analysis_to_native_sample: native_sr < 0 terminates the process",
+          "[reference][m-ref-rate-validation]")
+{
+#if MWAAC_HAVE_FORK
+    pid_t pid = fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        prepare_child_for_death_test();
+        volatile int64_t sink =
+            mwaac::analysis_to_native_sample(1, /*native_sr=*/-1, /*analysis_sr=*/44100);
+        (void)sink;
+        _exit(0);
+    }
+    int status = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    REQUIRE(waited == pid);
+    REQUIRE(WIFSIGNALED(status));
+#else
+    SKIP("Death test requires fork(); platform does not support it.");
+#endif
 }
