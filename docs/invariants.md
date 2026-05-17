@@ -601,7 +601,53 @@ by construction.
 
 ### INV-INDEX-TYPE-DISJOINT — Sample- and frame-index types are not implicitly convertible
 
-- **Status.** `pending` (M-6).
+`mwaac::detail::SampleIdx` and `mwaac::detail::FrameIdx` (declared in
+`src/modes/blind_mode_indices.hpp`) are opaque phantom-typed structs
+with explicit-only constructors, no implicit conversions, no
+arithmetic, no comparison. The only supported FrameIdx → SampleIdx
+conversion is the `frame_to_sample(f, hop_length)` bridge in the same
+header. Six `static_assert`s in the header pin the contract: any
+future change that strips `explicit` (or otherwise relaxes the type
+discipline) fails the build at a named static_assert rather than
+silently regressing the cure.
+
+- **Owner.** `src/modes/blind_mode_indices.hpp` (the types + bridge);
+  `src/modes/blind_mode.cpp` (`analyze_blind_mode`'s gap-iteration
+  loop uses the bridge at the conversion sites).
+- **Enforcement.**
+  - 6 in-header `static_assert`s at `src/modes/blind_mode_indices.hpp:80-97`
+    verify the types reject mutual construction, raw-int construction,
+    and raw-int decay.
+  - `M-6: SampleIdx/FrameIdx reject mixing and implicit conversion` at
+    `tests/test_blind_mode.cpp:152-181` mirrors the in-header
+    static_asserts as `STATIC_REQUIRE`s from outside the TU, so a
+    regression that strips `explicit` shows up as a recognisable
+    test-source failure (not just an internal-header build error).
+  - `M-6: frame_to_sample bridge multiplies by hop_length` at
+    `tests/test_blind_mode.cpp:183-205` exercises the runtime bridge
+    on representative inputs (frames 0, 1, 100, 397 at hop 551) plus
+    a constexpr-evaluation `STATIC_REQUIRE`.
+- **Status.** `holds` (scoped to blind_mode internals) post-M-6 merge
+  `76899fc` (PR #52). Scope is explicitly internal — the public
+  blind_mode.hpp API is unchanged; only the bridge inside
+  `analyze_blind_mode` uses the typed forms. Public APIs across the
+  rest of the codebase remain untagged size_t / int64_t per the
+  user-authorized "scoped" cure choice (presented as 3-option
+  AskUserQuestion 2026-05-17; user chose scoped over project-wide).
+- **Adjacent-entry siblings filed (audit-2 catch):** M-6's typed
+  bridge cures the frame×hop_length untagged-arithmetic pattern at the
+  one site in blind_mode.cpp. Audit-2 independent grep surfaced the
+  same shape at two other sites in different TUs, filed as separate
+  Tier 6 items in commit `214151e`:
+  - **M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE** — `src/core/music_detection.cpp:75`
+    (`static_cast<int64_t>(i) * hop_length` in `detect_music_start`).
+  - **M-REF-FRAME-SAMPLE-BRIDGE** — `src/modes/reference_mode.cpp:332`
+    and `:253` (envelope-frame × frame_size in two reference-mode
+    sites; `:253` is inside `[[maybe_unused]]` measure_fade_in_samples
+    — latent).
+  Both pending dispatch; cure shape will mirror M-6's typed bridge,
+  with a design decision deferred to the dispatch PR about whether to
+  hoist the bridge from `modes/` to a shared `core/` header.
 
 ### INV-NO-DEAD-PARAMS — Public APIs do not carry dead parameters
 

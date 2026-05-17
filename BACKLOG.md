@@ -960,18 +960,45 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 6 — API hygiene
 
-### M-6 — score_gap units are ambiguous
+### M-6 — score_gap units are ambiguous — **RESOLVED in #52 (`76899fc`)**
 
 - **Defect.** `blind_mode.cpp:57–93` takes sample indices; `detect_gaps`
   returns frame indices. Call sites multiply by hop_length to bridge.
 - **Invariant established.** "Sample-index and frame-index types are not
   implicitly convertible."
-- **Files touched.** `src/modes/blind_mode.hpp`,
-  `src/modes/blind_mode.cpp`, `tests/test_blind_mode.cpp`.
-- **Tests added.** Compile-time tests that mixing units fails.
+- **Files touched.** `src/modes/blind_mode_indices.hpp` (NEW — internal
+  header with phantom-typed `mwaac::detail::SampleIdx` and `FrameIdx` +
+  `frame_to_sample` bridge + 6 static_assert contracts),
+  `src/modes/blind_mode.cpp` (analyze_blind_mode gap-iteration loop
+  uses the typed bridge at the conversion sites),
+  `tests/test_blind_mode.cpp` (2 new TEST_CASEs: STATIC_REQUIREs
+  mirroring the in-header static_asserts + runtime bridge correctness).
+  Public `src/modes/blind_mode.hpp` is INTENTIONALLY unchanged — the
+  user-authorized cure shape ("Tagged types (scoped)") explicitly
+  scoped the cure to blind-mode internals, so the public API stays
+  byte-identical to pre-cure.
+- **Tests added.** Compile-time tests that mixing units fails:
+  six `static_assert`s in `src/modes/blind_mode_indices.hpp:80-97`
+  mirrored at TU boundary by two `STATIC_REQUIRE` blocks in
+  `tests/test_blind_mode.cpp:152-181` + a runtime bridge-correctness
+  TEST_CASE at `:183-205`. Audit-1 verified the static_asserts fire
+  recognisably if `explicit` is stripped from the ctors.
 - **Exit criteria.**
-  - [ ] `SampleIndex`/`FrameIndex` tagged int types, or at minimum
+  - [x] `SampleIndex`/`FrameIndex` tagged int types, or at minimum
         unambiguous parameter names + a header comment stating units.
+        Cure shape: **tagged int types (scoped)** per user-authorized
+        choice (presented as 3-option AskUserQuestion 2026-05-17; user
+        chose "Tagged types (scoped)" over the full project-wide
+        option and the minimum-blast naming-only option). Compromise
+        position: compile-time safety where it matters
+        (`gap.first/gap.second * hop_length` bridge inside
+        `analyze_blind_mode`) without project-wide API churn.
+        Audit-1 CLEAN, audit-2 CONCERNS — but the audit-2 CONCERN was
+        on the close-out paperwork side (file sibling items in
+        adjacent files before declaring Tier 6 done), not on M-6's PR
+        shape. Sibling items filed pre-merge as
+        M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE and M-REF-FRAME-SAMPLE-BRIDGE
+        in commit `214151e`.
 
 ### M-7 — score_gap ignores sample_rate parameter — **RESOLVED in #50 (`02eef0c`)**
 
