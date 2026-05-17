@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "modes/blind_mode.hpp"
-#include "modes/blind_mode_indices.hpp"  // M-6 — scoped typed-index bridge
+#include "core/frame_sample_bridge.hpp"  // M-6 / M-MUSIC-DETECT — typed-index bridge (hoisted to core/)
 #include <sndfile.h>
 #include <cmath>
 #include <cstdint>
@@ -151,7 +151,7 @@ TEST_CASE("analyze_blind_mode: single-track (gap-free) input returns 1 split",
 }
 
 // M-6: compile-time contracts on the scoped typed-index bridge.
-// The static_asserts inside blind_mode_indices.hpp already enforce
+// The static_asserts inside core/frame_sample_bridge.hpp already enforce
 // these contracts at every TU that includes the header, but pinning
 // them in a TEST_CASE means a future regression that strips the
 // `explicit` qualifier (or otherwise allows mixing) shows up as a
