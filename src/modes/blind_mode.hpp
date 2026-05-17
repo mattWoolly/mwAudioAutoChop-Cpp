@@ -19,8 +19,11 @@ struct BlindModeConfig {
 
 enum class BlindError {
     LoadFailed,
-    AnalysisFailed,
-    NoGapsFound
+    AnalysisFailed
+    // M-8: NoGapsFound was removed. A gap-free input is a legitimate
+    // outcome (returns a single-split result spanning the full input),
+    // not an error. See `analyze_blind_mode` body for the gap-empty
+    // handling and INV-BLIND-SINGLE-TRACK in docs/invariants.md.
 };
 
 // Analyze vinyl without reference tracks
