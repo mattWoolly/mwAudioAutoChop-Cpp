@@ -7,8 +7,11 @@
 // This header is shared between callers in `core/` (currently
 // `music_detection.cpp`) and callers in `modes/` (currently
 // `blind_mode.cpp`). It lives in `core/` rather than `modes/` because
-// `core/` cannot include from `modes/` without inverting the project's
-// layering. It is NOT included from any PUBLIC header (`blind_mode.hpp`,
+// the project's intended include-graph layering puts `core/` below
+// `modes/` (one vestigial exception exists at `src/core/drift_model.cpp:2`
+// which includes `modes/reference_mode.hpp`; that include appears
+// unused and is filed for cleanup, not cited as precedent). It is
+// NOT included from any PUBLIC header (`blind_mode.hpp`,
 // `music_detection.hpp` keep their raw `size_t` / `int64_t` parameter
 // types unchanged) — adoption is internal to each TU that crosses the
 // frame↔sample boundary.

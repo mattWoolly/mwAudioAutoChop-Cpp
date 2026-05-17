@@ -210,7 +210,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     
     for (const auto& gap : gaps) {
         // M-6: cross the frame-index/sample-index boundary through the
-        // typed bridge (modes/blind_mode_indices.hpp). detect_gaps
+        // typed bridge (core/frame_sample_bridge.hpp). detect_gaps
         // returns std::pair<size_t,size_t> of frame indices; here we
         // wrap them as FrameIdx and convert to SampleIdx exactly once
         // per gap edge. Any future code that needs a SampleIdx from a
