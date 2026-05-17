@@ -1,5 +1,5 @@
 #include "modes/blind_mode.hpp"
-#include "modes/blind_mode_indices.hpp"
+#include "core/frame_sample_bridge.hpp"  // M-6 / M-MUSIC-DETECT (hoisted from modes/)
 #include "core/audio_buffer.hpp"
 #include "core/analysis.hpp"
 #include "core/music_detection.hpp"

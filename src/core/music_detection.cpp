@@ -1,5 +1,6 @@
 #include "music_detection.hpp"
 #include "analysis.hpp"
+#include "frame_sample_bridge.hpp"  // M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE
 #include <algorithm>
 #include <limits>
 #include <cmath>
@@ -72,10 +73,20 @@ int64_t detect_music_start(
         }
         
         if (all_music) {
-            return static_cast<int64_t>(i) * hop_length;
+            // M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE: cross the frame-index
+            // → sample-index boundary through the typed bridge in
+            // core/frame_sample_bridge.hpp. Pre-cure this was raw
+            // `static_cast<int64_t>(i) * hop_length` — same untagged-
+            // arithmetic shape M-6 cured in blind_mode. The bridge
+            // guarantees `i` is treated as a frame index (not, say,
+            // a same-typed loop iterator like `j` from the inner
+            // for-loop, which would compile under the raw form but
+            // produce wrong-by-(j-i) sample offsets).
+            return detail::frame_to_sample(
+                detail::FrameIdx{i}, hop_length).value;
         }
     }
-    
+
     return 0;  // No sustained music found
 }
 

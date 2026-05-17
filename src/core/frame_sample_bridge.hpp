@@ -1,34 +1,45 @@
 #pragma once
 //
-// M-6: scoped phantom-typed sample/frame index types for blind mode.
+// M-6 / M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE: phantom-typed sample/frame
+// index types for the frame×hop_length bridge sites in `src/core/` and
+// `src/modes/`.
 //
-// This header is INTERNAL to the blind-mode TU (blind_mode.cpp) and its
-// unit tests (test_blind_mode.cpp). It is NOT included from
-// `modes/blind_mode.hpp` and is NOT part of any public API surface; the
-// public functions (analyze_blind_mode, detect_gaps, score_gap) keep
-// their raw `size_t` / `int64_t` parameter types unchanged so callers
-// outside the blind-mode TU need not adopt the typed bridge.
+// This header is shared between callers in `core/` (currently
+// `music_detection.cpp`) and callers in `modes/` (currently
+// `blind_mode.cpp`). It lives in `core/` rather than `modes/` because
+// `core/` cannot include from `modes/` without inverting the project's
+// layering. It is NOT included from any PUBLIC header (`blind_mode.hpp`,
+// `music_detection.hpp` keep their raw `size_t` / `int64_t` parameter
+// types unchanged) — adoption is internal to each TU that crosses the
+// frame↔sample boundary.
 //
-// Why it exists. detect_gaps returns frame indices; score_gap takes
-// sample indices; the bridge between them is a multiplication by
-// hop_length at the analyze_blind_mode call site. Pre-M-6 those two
-// indexing systems were both `size_t` and the conversion was an
-// untagged arithmetic expression — any future change that accidentally
-// passed `gap.first` (a frame index) where a sample index was expected
-// (or vice versa) would compile silently and produce wrong-by-a-factor-
-// of-hop_length sample offsets. M-6 introduces `SampleIdx` and
-// `FrameIdx` as opaque structs with no implicit conversions, no
+// History.
+//  - M-6 (PR #52) introduced the types and bridge scoped to blind-mode
+//    internals at `src/modes/blind_mode_indices.hpp`. The user-authorized
+//    "scoped" cure choice deliberately limited M-6 to one TU pending
+//    sibling sweep results.
+//  - M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE (PR #53) hoisted the header
+//    from `modes/` to `core/` to enable adoption from
+//    `core/music_detection.cpp` without the architectural inversion.
+//    Bridge types unchanged; only the include path moved.
+//
+// Why it exists. Multiple callers in the codebase convert frame indices
+// to sample positions via multiplication by a per-frame hop length (or
+// frame size). The two indexing systems were both raw `size_t` /
+// `int64_t` and the conversion was an untagged arithmetic expression
+// — any change that accidentally passed a frame variable where a sample
+// variable was expected (or vice versa) would compile silently and
+// produce wrong-by-a-factor offsets. The phantom-typed `SampleIdx` and
+// `FrameIdx` are opaque structs with no implicit conversions, no
 // arithmetic, no comparisons; the ONLY way to cross between them is
 // the `frame_to_sample` bridge below.
 //
-// Why scoped (not project-wide). The sample-vs-frame confusion only
-// arises at this one bridge site in the codebase. A project-wide
-// SampleIndex / FrameIndex API would require updating ~20+ callsites
-// across all modes for a localized concern; the BACKLOG M-6 entry
-// explicitly allows the "or at minimum" minimum-blast option, and the
-// user-authorized middle-ground for this dispatch is "tagged types
-// scoped to blind_mode internals" — compile-time safety where it
-// matters, no project-wide API churn.
+// Scope. The bridge currently serves the RMS-frame ↔ sample boundary
+// (blind_mode and music_detection share the same hop_length semantics).
+// A SECOND bridge for envelope-frame ↔ sample (different unit definition,
+// different hop) is filed as M-REF-FRAME-SAMPLE-BRIDGE; it will likely
+// introduce parameterized types (EnvFrameIdx<…>) rather than reuse
+// FrameIdx directly, since the units differ.
 //
 // Compile-time tests at the bottom of this header verify the types
 // reject implicit construction, mutual conversion, and raw-int

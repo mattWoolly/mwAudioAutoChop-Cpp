@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "modes/blind_mode.hpp"
-#include "modes/blind_mode_indices.hpp"  // M-6 — scoped typed-index bridge
+#include "core/frame_sample_bridge.hpp"  // M-6 / M-MUSIC-DETECT — typed-index bridge (hoisted to core/)
 #include <sndfile.h>
 #include <cmath>
 #include <cstdint>
