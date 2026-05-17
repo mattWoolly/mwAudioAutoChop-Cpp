@@ -1008,6 +1008,49 @@ migration to `std::expected`-style storage happens in M-14.
 - **Exit criteria.**
   - [ ] No error return on empty `gaps`.
 
+### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error
+
+- **Origin.** Surfaced during M-8 audit-1 (PR #51 audit-agent finding 5,
+  2026-05-16). Adjacent-entry sweep on the BlindError enum after M-8
+  removed `NoGapsFound` flagged the structurally similar
+  `ReferenceError::NoTracksFound` at `src/modes/reference_mode.hpp:24`.
+- **Defect (provisional — needs investigation).** `load_reference_tracks`
+  at `src/modes/reference_mode.cpp:805-807` returns
+  `ReferenceError::NoTracksFound` when the reference directory contains
+  no audio files. Unlike blind-mode's `NoGapsFound` (which M-8 cured
+  because the algorithm "correctly finding zero gaps" is a legitimate
+  outcome, not an error), `NoTracksFound` is most likely a true
+  user-config error — the user pointed `analyze_reference_mode` at the
+  wrong directory or one with non-audio files. **The structural
+  similarity to NoGapsFound does not by itself imply M-8-style cure
+  applies.** Investigation needed.
+- **Possible outcomes.**
+  - (a) Confirmed true user-config error → no cure needed; close as
+    INVESTIGATE-only. Document the difference between "algorithm-
+    finds-nothing-legitimately" (NoGapsFound class) and
+    "user-misconfigured-input" (NoTracksFound class) in the cycle
+    rationale so future enum-value sweeps don't conflate them.
+  - (b) Confirmed legitimate outcome path exists (e.g., a streaming
+    reference workflow where the directory is filled in over time) →
+    cure shape mirrors M-8 (build a degenerate single-track AnalysisResult,
+    drop the enum value).
+  - (c) Hybrid — keep NoTracksFound as a true error but consider
+    whether `analyze_reference_mode`'s public API should distinguish
+    "wrong directory" from "empty directory" (currently both map to
+    NoTracksFound; a richer error type might serve callers better).
+- **Tier rationale.** Tier 6 (API hygiene). Same tier as M-8 because
+  the surface is enum-value-as-error-vs-outcome classification, even
+  though the cure shape is unknown until investigation completes.
+- **Effort.** Investigation: ≤ 30 minutes (read call paths, decide
+  semantics). Cure (if any): bounded by the outcome above; option (a)
+  is paperwork-only.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` — the
+  finding surfaced during M-8 audit on a different function in the
+  same enum-classification axis but a separate file. Filing as its own
+  Tier 6 item rather than folding into M-8 preserves single-function
+  scope and allows the investigation to proceed without rushing the
+  M-8 merge.
+
 ### M-11 — LoadResult default-constructed state is ambiguous
 
 - **Defect.** Default ctor sets error but also default-constructs the value.
