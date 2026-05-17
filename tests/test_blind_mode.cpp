@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include "modes/blind_mode.hpp"
+#include "modes/blind_mode_indices.hpp"  // M-6 — scoped typed-index bridge
 #include <sndfile.h>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -146,4 +148,59 @@ TEST_CASE("analyze_blind_mode: single-track (gap-free) input returns 1 split",
     std::error_code ec;
     fs::remove(tmp_path, ec);
     fs::remove(tmp_dir, ec);
+}
+
+// M-6: compile-time contracts on the scoped typed-index bridge.
+// The static_asserts inside blind_mode_indices.hpp already enforce
+// these contracts at every TU that includes the header, but pinning
+// them in a TEST_CASE means a future regression that strips the
+// `explicit` qualifier (or otherwise allows mixing) shows up as a
+// recognisable test-source failure, not just a build error in an
+// internal header.
+TEST_CASE("M-6: SampleIdx/FrameIdx reject mixing and implicit conversion",
+          "[blind][m-6]")
+{
+    using mwaac::detail::SampleIdx;
+    using mwaac::detail::FrameIdx;
+
+    // No implicit construction in either direction.
+    STATIC_REQUIRE(!std::is_constructible_v<SampleIdx, FrameIdx>);
+    STATIC_REQUIRE(!std::is_constructible_v<FrameIdx, SampleIdx>);
+
+    // No implicit conversion from raw integers (must use explicit ctor).
+    STATIC_REQUIRE(!std::is_convertible_v<std::int64_t, SampleIdx>);
+    STATIC_REQUIRE(!std::is_convertible_v<std::size_t, FrameIdx>);
+
+    // No implicit decay to raw integers (must access .value explicitly).
+    STATIC_REQUIRE(!std::is_convertible_v<SampleIdx, std::int64_t>);
+    STATIC_REQUIRE(!std::is_convertible_v<FrameIdx, std::size_t>);
+
+    // Explicit construction works (sanity check — the explicit ctor
+    // should not be removed by accident).
+    STATIC_REQUIRE(std::is_constructible_v<SampleIdx, std::int64_t>);
+    STATIC_REQUIRE(std::is_constructible_v<FrameIdx, std::size_t>);
+}
+
+TEST_CASE("M-6: frame_to_sample bridge multiplies by hop_length",
+          "[blind][m-6]")
+{
+    using mwaac::detail::SampleIdx;
+    using mwaac::detail::FrameIdx;
+    using mwaac::detail::frame_to_sample;
+
+    // The bridge is the ONLY supported FrameIdx → SampleIdx conversion
+    // path. These runtime assertions verify the multiplication is
+    // correct on representative inputs; the typed-bridge guarantee
+    // (that no other conversion compiles) is in the static_asserts
+    // above and in the header itself.
+    const int hop_length = 551;  // matches analyze_blind_mode's hop at 44100 Hz
+
+    CHECK(frame_to_sample(FrameIdx{0}, hop_length).value == 0);
+    CHECK(frame_to_sample(FrameIdx{1}, hop_length).value == 551);
+    CHECK(frame_to_sample(FrameIdx{100}, hop_length).value == 55100);
+    CHECK(frame_to_sample(FrameIdx{397}, hop_length).value == 218747);
+
+    // Compile-time evaluable: frame_to_sample is constexpr.
+    constexpr SampleIdx s = frame_to_sample(FrameIdx{42}, 551);
+    STATIC_REQUIRE(s.value == 23142);
 }
