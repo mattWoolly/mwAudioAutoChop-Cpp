@@ -331,9 +331,22 @@ analysis-rate result.
   envelope-frame floor remains the binding constraint at the integration
   surface; INV-RATECONV-ROUNDED tightens the unit-level accuracy that
   feeds into it.
-- **Latent risk filed:** M-REF-RATE-VALIDATION (Tier 6) tracks the
-  Release-mode `assert(native_sr > 0)` compile-out hazard surfaced by
-  C-4 audit-2 F3.
+- **Precondition contract (post-M-REF-RATE-VALIDATION).**
+  `analysis_to_native_sample`'s precondition checks (`native_sr > 0`
+  and `analysis_sr > 0`) are enforced symmetrically in Debug and
+  Release builds via `MWAAC_ASSERT_PRECONDITION`
+  (`src/core/audio_file.hpp:46-53`). Pre-cure the raw `assert(...)`
+  calls compiled out under NDEBUG, leaving a future caller passing
+  zero or negative rates to trigger integer division-by-zero (UB) in
+  Release. Production callers in `analyze_reference_mode` derive
+  these from libsndfile-validated `AudioBuffer::sample_rate` and the
+  analysis_sr default (22050), so current paths are safe by
+  construction; the cure pins the contract for future callers. Three
+  death-test TEST_CASEs at `tests/test_reference_mode.cpp` (file end)
+  exercise the `native_sr == 0`, `analysis_sr == 0`, and `native_sr < 0`
+  paths under both Debug and Release CI lanes. Audit empirically
+  verified the Release path fires. Holds post-M-REF-RATE-VALIDATION
+  merge `3e20e26` (PR #49).
 
 ### INV-SPECTRAL-FLATNESS-DEFINED — `compute_spectral_flatness` either delivers or is removed
 

@@ -1068,7 +1068,7 @@ migration to `std::expected`-style storage happens in M-14.
         and `split point positions` (`:577`) also pass post-cure with
         their soft conditions firing correctly.
 
-### M-REF-RATE-VALIDATION — `analysis_to_native_sample` precondition checks compile out in Release
+### M-REF-RATE-VALIDATION — `analysis_to_native_sample` precondition checks compile out in Release — **RESOLVED in #49 (`3e20e26`)**
 
 - **Origin.** Surfaced as audit-2 finding F3 during C-4 dispatch
   (2026-05-04). Latent — not yet exercised in production. Filed
@@ -1123,11 +1123,39 @@ migration to `std::expected`-style storage happens in M-14.
   orthogonal to the conversion semantics.
 - **Effort.** ≤ 15 lines of code + 1 unit test. One PR, one audit.
 - **Exit criteria.**
-  - [ ] `analysis_to_native_sample`'s precondition checks fire in
-        Release builds, not just Debug.
-  - [ ] New unit test exercises the invalid-rate path and asserts
-        the documented behaviour (abort, optional-empty, or whichever
-        cure is chosen).
+  - [x] `analysis_to_native_sample`'s precondition checks fire in
+        Release builds, not just Debug. Cure: replaced
+        `assert(native_sr > 0); assert(analysis_sr > 0);` at
+        `src/modes/reference_mode.cpp:801-802` with
+        `MWAAC_ASSERT_PRECONDITION(...)` from
+        `src/core/audio_file.hpp:46-53` (Release-effective —
+        `std::terminate()` with `[[unlikely]]`; Debug — `assert((cond))`).
+        Cure option (a)-variant chosen: matches the project's existing
+        precondition convention (introduced by C-2), reuses the
+        `[[unlikely]]` hint, preserves the function's `noexcept`
+        signature (std::terminate is noexcept-compatible). Header
+        docstring at `src/modes/reference_mode.hpp:60-69` updated to
+        explain the asymmetric-assert defect, name the macro, and
+        reaffirm the noexcept-with-terminate contract.
+        Audit-1 ran both Debug and Release variants empirically and
+        confirmed the cure path fires under both modes.
+  - [x] New unit tests exercise the invalid-rate paths. Three new
+        death-test TEST_CASEs at `tests/test_reference_mode.cpp` (file
+        end after the M-9 case): one each for `native_sr == 0`,
+        `analysis_sr == 0`, `native_sr < 0`. Per-precondition
+        TEST_CASEs (not SECTIONs) so a regression that re-introduces
+        raw `assert()` on only one precondition fails with isolated
+        attribution. Fork-based scaffolding (`#if defined(__unix__) ||
+        defined(__APPLE__)` + `prepare_child_for_death_test`) duplicated
+        from `tests/test_audio_file.cpp:14-21,748-770` per
+        `feedback_tier_boundary_preservation.md` — second instance
+        documents the pattern; F-AUDIT2-DT (BACKLOG.md) remains the
+        proper home for shared-harness extraction when a third use
+        surfaces. Audit-noted asymmetry: no `analysis_sr < 0` case;
+        acceptable because both parameters take the same macro at
+        adjacent source lines and `native_sr < 0` exercises the
+        negative-rate code path. 8 cases / 56 assertions total in
+        test_reference_mode post-cure; all pass on every CI variant.
   - [ ] Header-side comment in `src/modes/reference_mode.hpp`
         documents the precondition-enforcement guarantee
         (Debug + Release symmetric).
