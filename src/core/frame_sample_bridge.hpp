@@ -160,6 +160,13 @@ static_assert(!std::is_constructible_v<EnvFrameIdx, SampleIdx>,
               "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must not "
               "be constructible from SampleIdx — the inverse direction is "
               "not supported.");
+static_assert(!std::is_constructible_v<SampleIdx, EnvFrameIdx>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: SampleIdx must not be "
+              "constructible from EnvFrameIdx — use env_frame_to_sample(f, "
+              "frame_size) instead. Mirrors the FrameIdx/SampleIdx pair at "
+              "the top of the contract block; M-6 audit precedent kept both "
+              "directions explicit to make the set-shape symmetry visible "
+              "to readers (audit-2 of PR #54 set-shape NIT).");
 static_assert(!std::is_convertible_v<std::size_t, EnvFrameIdx>,
               "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must "
               "require explicit construction from size_t to prevent "

@@ -1182,43 +1182,182 @@ migration to `std::expected`-style storage happens in M-14.
         `FrameIdx` namespace as M-6 (bridge identity preserved across
         the hoist).
 
-### M-REF-FRAME-SAMPLE-BRIDGE — adjacent frame×frame_size untyped multiplications in reference_mode envelope path
+### M-REF-FRAME-SAMPLE-BRIDGE — adjacent frame×frame_size untyped multiplications in reference_mode envelope path — **RESOLVED in #54 (`a09af8f`)**
 
 - **Origin.** Surfaced during M-6 audit-2 (PR #52 audit-agent findings
   2-3, 2026-05-17). Same-shape sibling of M-6 in a different mode.
-- **Defect.** Two sites in `src/modes/reference_mode.cpp` perform
-  envelope-frame × frame_size multiplications with untagged operands:
-  - `:332` — `return window_start + r.lag * frame_size;` inside the
-    envelope-refinement helper. `r.lag` is an envelope-frame lag
-    (FrameIdx-class), `frame_size` is samples-per-envelope-frame
-    (SampleIdx-class multiplier).
-  - `:253` — `return fade_end_frame * frame_size;` inside
-    `[[maybe_unused]] measure_fade_in_samples` (currently dead code
-    but the same shape; latent in case the function gets revived).
+- **Defect.** Originally filed at two sites (`:253`, `:332` per pre-PR
+  line numbers); cure scope was expanded to four sites in PR #54 after
+  audit-1 noted same-shape inner-loop base computations adjacent to
+  the originally-filed return statements (without the expansion, the
+  function would have been half-cured — return guarded, loop-base
+  unguarded). All four sites have the same defect shape as M-6's
+  `gap * hop_length`: a future edit could swap a frame variable for a
+  same-typed sample variable and produce wrong-by-a-factor offsets.
+- **Cure shape (user-authorized).** Sibling struct `EnvFrameIdx`
+  alongside `FrameIdx` in `src/core/frame_sample_bridge.hpp`, with its
+  own `env_frame_to_sample(EnvFrameIdx, int64_t frame_size)` bridge.
+  Mutually disjoint from FrameIdx (5 negative + 1 positive
+  static_asserts mirror the M-6 set; close-out NIT added a 7th — the
+  matching `!std::is_constructible_v<SampleIdx, EnvFrameIdx>` — for
+  set-shape symmetry with the FrameIdx/SampleIdx pair). Chosen over
+  "Templatized FrameIdx<Tag>" (more churn for marginal API uniformity)
+  and "Reuse FrameIdx" (would silently allow cross-mode mixing) via
+  AskUserQuestion 2026-05-17. The `int64_t frame_size` parameter (vs
+  `int hop_length` on the FrameIdx bridge) matches the reference_mode
+  local type (`std::max<int64_t>(1, sample_rate * frame_ms / 1000.0)`),
+  avoiding a narrowing cast at the bridge boundary.
+- **Invariant established.** INV-INDEX-TYPE-DISJOINT extended to cover
+  both bridges — see `docs/invariants.md`. "Sample-, frame-, and
+  envelope-frame-index types are not implicitly convertible to each
+  other or to raw integers; the only supported conversions are the
+  two bridges (`frame_to_sample`, `env_frame_to_sample`)."
+- **Files touched.** `src/core/frame_sample_bridge.hpp` (new
+  EnvFrameIdx struct + env_frame_to_sample bridge + 7 contract
+  static_asserts; docstring rewritten to introduce the second bridge
+  as a peer of the first), `src/modes/reference_mode.cpp` (include +
+  4 cure sites; see Bridge-adoption sites below),
+  `tests/test_reference_mode.cpp` (2 new TEST_CASEs mirroring the
+  M-6 / M-MUSIC-DETECT pattern).
+- **Bridge-adoption sites in `src/modes/reference_mode.cpp`** (pre-PR
+  line numbers; post-cure shifted slightly by include + comment
+  additions):
+  - `:200` — `measure_fade_in_samples` rms loop inner-base: hoisted
+    `f * frame_size` out of inner loop as a bridge-routed `base`
+    (also a micro-opt — pre-cure the multiplication recurred every
+    inner-loop iteration via `samples[f * frame_size + i]`).
+  - `:253` — `measure_fade_in_samples` return: envelope-frame fade
+    end → sample offset via bridge.
+  - `:272` — `compute_rms_envelope` rms loop inner-base: routes
+    existing `base = f * frame_size` through bridge.
+  - `:332` — `envelope_refine_start` return: correlation-lag →
+    sample offset via bridge. Includes cast-safety comment
+    documenting why `static_cast<std::size_t>(r.lag)` is safe —
+    `cross_correlate_fft`'s loop at `src/core/correlation.cpp:340`
+    guarantees a non-negative lag in
+    `[0, vinyl_env.size()-ref_env.size()]`, and the early-return
+    guard above ensures `vinyl_env > ref_env`.
+- **Adjacent-site sweep.** `:659-660` (`skip_leading_silence`) reviewed
+  and judged out-of-scope: `i` is a head-iteration count (0..3)
+  bounded by the literal `< 4` loop bound, not an envelope-vector
+  index, and `frame_size` there is a function-local 50 ms stride
+  distinct from the envelope frame_size. Routing through the envelope
+  bridge would conflate iteration-count and frame-index semantics.
+  Audit-1 axis-4 independently confirmed this exclusion is correct.
+- **Cross-tier finding from audit-2.** `src/core/analysis.cpp:26`
+  (`compute_rms_energy`) and `:57` (`compute_zero_crossing_rate`)
+  have the same `i * static_cast<std::size_t>(hop_length)` shape
+  producing a sample-domain offset. Same defect class as M-MUSIC-DETECT
+  but in `analysis.cpp` rather than `music_detection.cpp`. Filed as
+  **M-ANALYSIS-FRAME-SAMPLE-BRIDGE** (separate Tier 6 item) per
+  `feedback_tier_boundary_preservation.md` — does NOT fold into PR #54.
+- **Tests added.**
+  - `tests/test_reference_mode.cpp` "M-REF-FRAME-SAMPLE-BRIDGE:
+    EnvFrameIdx contract is disjoint from FrameIdx" — STATIC_REQUIREs
+    mirror the in-header static_asserts at the reference-mode TU
+    boundary (mirrors the M-6 / M-MUSIC-DETECT pattern). Audit-1
+    verified the test is 1:1 with the in-header contracts; audit-2
+    verified mutual-disjointness holds in all three spot-test
+    directions (`frame_to_sample(EnvFrameIdx{...}, ...)`,
+    `env_frame_to_sample(FrameIdx{...}, ...)`, and
+    `SampleIdx{EnvFrameIdx{...}}` all fail to compile).
+  - `tests/test_reference_mode.cpp` "M-REF-FRAME-SAMPLE-BRIDGE:
+    env_frame_to_sample multiplies by frame_size" — exercises the
+    bridge at representative envelope frame_sizes (50 ms and 100 ms
+    at sr=44100) + constexpr-evaluation STATIC_REQUIRE.
+- **Audit-cardinality.** Two-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook axis said
+  single-audit (pure adoption pattern, established cure family) but
+  blast-radius axis flagged multi-axis on header API expansion (new
+  EnvFrameIdx type + new bridge function + 7 new static_asserts).
+  Audit-1 CONCERNS — paperwork-only (exit-criterion scope-expansion
+  and INV stale references, both folded into this close-out commit).
+  Audit-2 CONCERNS — 1 NIT (symmetric SampleIdx-from-EnvFrameIdx
+  assert, added in this close-out commit) + 1 cross-tier finding
+  (M-ANALYSIS-FRAME-SAMPLE-BRIDGE, filed as separate Tier 6 item).
+  Both audits confirmed cure correctness clean.
+- **Tier rationale.** Tier 6 (API hygiene). Same shape, same tier as
+  M-6 / M-MUSIC-DETECT.
+- **Exit criteria.**
+  - [x] `envelope_refine_start:332` adopts the typed bridge so the
+        envelope-frame → sample multiplication is no longer untagged.
+        Implementation: `window_start + detail::env_frame_to_sample(
+        detail::EnvFrameIdx{static_cast<std::size_t>(r.lag)},
+        frame_size).value`.
+  - [x] `measure_fade_in_samples:253` adopts the typed bridge.
+        Implementation: `detail::env_frame_to_sample(
+        detail::EnvFrameIdx{static_cast<std::size_t>(fade_end_frame)},
+        frame_size).value`.
+  - [x] `measure_fade_in_samples:200` rms-loop inner-base adopts the
+        typed bridge (scope-expansion: same-shape sibling adjacent
+        to `:253`; audit-1 axis-1 confirmed appropriate).
+  - [x] `compute_rms_envelope:272` rms-loop inner-base adopts the
+        typed bridge (scope-expansion: same-shape sibling adjacent
+        to `:332`'s envelope domain).
+  - [x] Compile-time test mirrors the M-6 `static_assert` style on
+        `EnvFrameIdx` — see `tests/test_reference_mode.cpp`'s
+        "M-REF-FRAME-SAMPLE-BRIDGE: EnvFrameIdx contract is disjoint
+        from FrameIdx" TEST_CASE.
+
+### M-ANALYSIS-FRAME-SAMPLE-BRIDGE — untyped frame×hop_length in compute_rms_energy and compute_zero_crossing_rate
+
+- **Origin.** Surfaced during M-REF-FRAME-SAMPLE-BRIDGE audit-2 (PR #54
+  audit-agent, 2026-05-17). Independent grep across `src/` for the
+  bridge-class defect pattern (untagged `frame_index * stride` →
+  sample-domain offset) after M-REF landed flagged two structurally
+  similar sites in `src/core/analysis.cpp` that weren't on the M-6
+  audit-2 sweep's radar.
+- **Defect.** Two sites in `src/core/analysis.cpp` perform the same
+  `frame_index * hop_length` → sample-offset untagged arithmetic that
+  M-6 / M-MUSIC-DETECT cured at the blind_mode and music_detection
+  sites:
+  - `:26` — `size_t start = i * static_cast<std::size_t>(hop_length);`
+    inside `compute_rms_energy`'s frame loop. `i` is a frame index
+    into the (then-empty) `rms` vector; `hop_length` is the frame
+    stride; the result is a sample-domain offset into `samples`.
+  - `:57` — same shape inside `compute_zero_crossing_rate`'s frame
+    loop. Same defect class.
   Both have the same shape as M-6's `gap * hop_length` defect: a
   future edit could swap a frame variable for a same-typed sample
-  variable and produce wrong-by-a-factor offsets.
-- **Invariant established.** Same as M-6: typed-bridge at the
-  frame-to-sample crossing.
-- **Files touched.** `src/modes/reference_mode.cpp` (both sites),
-  possibly `src/core/frame_sample_bridge.hpp` (the scoped bridge header
-  was hoisted from `modes/` to `core/` by M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE
-  in PR #53, `0806db3` — so include-path for reference_mode is settled:
-  `#include "core/frame_sample_bridge.hpp"`). The reference-mode
-  envelope frames are semantically distinct from blind-mode's RMS
-  frames (different hop sizes, different units of "frame"), so the
-  bridge types may need parameterization (or this item may want its
-  own `RefEnvFrameIdx` / `SampleIdx` pair).
-- **Tests added.** Compile-time + runtime; M-6 style.
-- **Tier rationale.** Tier 6 (API hygiene). Same shape, same tier.
-- **Effort.** ≤ 30 lines of code + 1-2 unit-test cases. One PR, one
-  audit. Dispatch after M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE so the
-  bridge-location decision (modes/ vs core/) is settled.
+  variable and produce wrong-by-a-factor offsets. The defect is
+  particularly significant here because `compute_rms_energy` is the
+  upstream of every other site already cured by the bridge family
+  (`analyze_blind_mode`, `detect_music_start`, `estimate_noise_floor`,
+  `compute_rms_envelope`); a regression here would cascade through
+  the entire analysis pipeline.
+- **Invariant established.** Same as M-6 / M-MUSIC-DETECT: "frame-
+  indexed and sample-indexed quantities are not implicitly
+  convertible at the bridge site." Both sites use the same RMS-frame
+  semantics as the existing FrameIdx (50 ms frame, 12.5 ms hop at
+  analysis_sr — see `src/modes/blind_mode.cpp:116-117` for the canonical
+  setting), so the existing `FrameIdx` and `frame_to_sample` apply
+  directly. No new types needed.
+- **Files touched.** `src/core/analysis.cpp` (cure both `:26` and
+  `:57` via existing `frame_to_sample` bridge), include of
+  `core/frame_sample_bridge.hpp`. `tests/test_analysis.cpp` (one new
+  TEST_CASE block: STATIC_REQUIRE the FrameIdx contract from the
+  analysis TU + smoke-test that the cure preserves arithmetic).
+- **Tests added.** Compile-time + runtime: mirror the M-MUSIC-DETECT
+  pattern at `tests/test_music_detection.cpp:56-112`.
+- **Tier rationale.** Tier 6 (API hygiene). Same shape, same tier as
+  M-6 / M-MUSIC-DETECT / M-REF-FRAME-SAMPLE-BRIDGE.
+- **Effort.** ≤ 25 LOC (pure adoption of existing bridge — no new
+  types, no new bridge function) + 1-2 unit-test cases. One PR, one
+  audit (single-audit defensible: pure adoption of an established
+  bridge with no new API surface, unlike M-REF which added EnvFrameIdx).
+  But blast-radius may still flag two-audit on the
+  cascade-through-pipeline observation above; decide at dispatch.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` — the
+  finding surfaced during M-REF-FRAME-SAMPLE-BRIDGE audit on different
+  files in the same defect class. Filing as own Tier 6 item rather
+  than folding into M-REF preserves single-PR scope and lets the
+  M-REF merge proceed on the original two-mode scope.
 - **Exit criteria.**
-  - [ ] Both `:332` and `:253` adopt the typed bridge (or the latent
-        `:253` site is deleted if `measure_fade_in_samples` is
-        confirmed truly dead).
-  - [ ] Compile-time test mirrors the M-6 `static_assert` style.
+  - [ ] `compute_rms_energy:26` adopts the typed bridge so the
+        frame-to-sample multiplication is no longer untagged.
+  - [ ] `compute_zero_crossing_rate:57` adopts the typed bridge.
+  - [ ] Compile-time test mirrors the M-6 `static_assert` style at
+        the analysis TU boundary.
 
 ### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error
 
