@@ -626,10 +626,14 @@ silently regressing the cure.
   gap-iteration loop uses the FrameIdx bridge at the conversion
   sites); `src/core/music_detection.cpp` (`detect_music_start`'s
   frame-to-sample return path uses the FrameIdx bridge — adopted in
-  PR #53); `src/modes/reference_mode.cpp` (`measure_fade_in_samples`
-  loop-base and return, `compute_rms_envelope` loop-base, and
-  `envelope_refine_start` return all use the EnvFrameIdx bridge —
-  adopted in PR #54).
+  PR #53); `src/core/analysis.cpp` (`compute_rms_energy` and
+  `compute_zero_crossing_rate` frame-loop sample-base computations
+  use the FrameIdx bridge — adopted in PR #55, root of the cure
+  family since `compute_rms_energy` is upstream of every other
+  RMS-frame consumer); `src/modes/reference_mode.cpp`
+  (`measure_fade_in_samples` loop-base and return,
+  `compute_rms_envelope` loop-base, and `envelope_refine_start`
+  return all use the EnvFrameIdx bridge — adopted in PR #54).
 - **Enforcement.**
   - 13 in-header `static_assert`s in
     `src/core/frame_sample_bridge.hpp` (6 on the FrameIdx/SampleIdx
@@ -668,9 +672,23 @@ silently regressing the cure.
     in `tests/test_reference_mode.cpp` exercises the runtime
     EnvFrameIdx bridge at representative envelope frame_sizes (50 ms
     and 100 ms at sr=44100) + constexpr-evaluation `STATIC_REQUIRE`.
+  - `M-ANALYSIS-FRAME-SAMPLE-BRIDGE: SampleIdx/FrameIdx contract holds in analysis TU`
+    in `tests/test_analysis.cpp` mirrors the FrameIdx in-header
+    static_asserts from the analysis TU. The analysis TU is the
+    upstream of every RMS-frame consumer in the codebase, so the
+    contract fires recognisably from the root of the bridge family.
+  - `M-ANALYSIS-FRAME-SAMPLE-BRIDGE: compute_rms_energy frame stride is hop_length`
+    in `tests/test_analysis.cpp` exercises behavior preservation
+    using a polarity-flip square-wave fixture aligned to hop_length;
+    every frame's RMS == 1.0 when the bridge computes the correct
+    frame-aligned sample base. (Behavior-preservation verification,
+    not a regression-guard against revert — the contract block above
+    is the regression-guard; this matches the established
+    M-MUSIC-DETECT smoke-test pattern.)
 - **Status.** `holds` (scoped to blind_mode + music_detection +
-  reference_mode internals) post-M-REF-FRAME-SAMPLE-BRIDGE merge
-  `a09af8f` (PR #54). Scope is explicitly internal — public APIs of
+  reference_mode + analysis internals; cure family is at fixed point
+  for the frame→sample axis in `src/`) post-M-ANALYSIS-FRAME-SAMPLE-BRIDGE
+  merge `48263d1` (PR #55). Scope is explicitly internal — public APIs of
   `blind_mode.hpp`, `music_detection.hpp`, and `reference_mode.hpp`
   are unchanged; only the frame-to-sample crossings inside the
   curated functions use the typed forms. Public APIs across the rest
@@ -702,9 +720,21 @@ silently regressing the cure.
   - **M-ANALYSIS-FRAME-SAMPLE-BRIDGE** — `src/core/analysis.cpp:26`
     (`compute_rms_energy`) and `:57` (`compute_zero_crossing_rate`)
     have the `size_t start = i * static_cast<std::size_t>(hop_length)`
-    shape producing sample offsets. Filed by audit-2 of PR #54; same
-    defect class as M-MUSIC-DETECT in a different `core/` TU. Still
-    pending.
+    shape producing sample offsets. Filed by audit-2 of PR #54;
+    same defect class as M-MUSIC-DETECT in the analysis TU that is
+    upstream of every other RMS-frame consumer. **RESOLVED in PR #55
+    `48263d1`** — pure adoption of the existing FrameIdx +
+    frame_to_sample bridge (no new types). Closes the cure family
+    at its root.
+  - **M-CORRELATION-FRAME-SAMPLE-BRIDGE** — `src/core/correlation.cpp:145`
+    (`size_t start = i * static_cast<std::size_t>(factor)` in
+    `downsample`). Filed by audit-1 of PR #55 (audit-2 of PR #55
+    classified as not-a-match — inter-lattice sample-to-sample
+    mapping rather than frame×stride). **INVESTIGATE-only filing**;
+    the two-audit disagreement is itself the artifact that warrants
+    user judgment on the cure-vs-not-cure decision. See
+    M-CORRELATION-FRAME-SAMPLE-BRIDGE BACKLOG entry for both
+    framings.
 
 ### INV-NO-DEAD-PARAMS — Public APIs do not carry dead parameters
 

@@ -1299,7 +1299,7 @@ migration to `std::expected`-style storage happens in M-14.
         "M-REF-FRAME-SAMPLE-BRIDGE: EnvFrameIdx contract is disjoint
         from FrameIdx" TEST_CASE.
 
-### M-ANALYSIS-FRAME-SAMPLE-BRIDGE — untyped frame×hop_length in compute_rms_energy and compute_zero_crossing_rate
+### M-ANALYSIS-FRAME-SAMPLE-BRIDGE — untyped frame×hop_length in compute_rms_energy and compute_zero_crossing_rate — **RESOLVED in #55 (`48263d1`)**
 
 - **Origin.** Surfaced during M-REF-FRAME-SAMPLE-BRIDGE audit-2 (PR #54
   audit-agent, 2026-05-17). Independent grep across `src/` for the
@@ -1352,12 +1352,116 @@ migration to `std::expected`-style storage happens in M-14.
   files in the same defect class. Filing as own Tier 6 item rather
   than folding into M-REF preserves single-PR scope and lets the
   M-REF merge proceed on the original two-mode scope.
+- **Audit-cardinality.** Two-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook said
+  single-audit (pure adoption of established bridge, no new API
+  surface) but blast-radius axis flagged multi-axis on the upstream-
+  cascade observation (compute_rms_energy is upstream of every site
+  already cured by the bridge family). Audit-1 CONCERNS: 1 MEDIUM
+  finding (correlation.cpp:145 same-class candidate — see
+  M-CORRELATION-FRAME-SAMPLE-BRIDGE filed below) + 1 LOW
+  (smoke-test cure-attribution framing, accepted as established
+  family pattern) + 1 NIT (trailing newline missing on
+  test_analysis.cpp — fixed in this close-out). Audit-2 CLEAN with
+  one meta-observation: the bridge family has reached fixed-point on
+  the frame→sample axis after 4 PRs (this is the first PR in the
+  family where audit-2's exhaustive sibling sweep returned ZERO new
+  same-class sites, modulo audit-1's disputed correlation.cpp:145
+  classification — see below).
+- **Bridge family fixed-point.** After 4 PRs (M-6, M-MUSIC-DETECT,
+  M-REF-FRAME-SAMPLE-BRIDGE, M-ANALYSIS), every untagged
+  `frame_index × stride` → sample-domain offset site in `src/` is
+  now either bridge-routed or explicitly reviewed and excluded with
+  documented rationale (the single
+  `skip_leading_silence:659-660` site). The dispatch tail length (4
+  PRs) was a function of pre-dispatch grep incompleteness, not
+  genuine code growth — audit-2 promoted that observation to
+  `feedback_dispatch_grep_for_typed_bridge_family.md`.
 - **Exit criteria.**
-  - [ ] `compute_rms_energy:26` adopts the typed bridge so the
+  - [x] `compute_rms_energy:26` adopts the typed bridge so the
         frame-to-sample multiplication is no longer untagged.
-  - [ ] `compute_zero_crossing_rate:57` adopts the typed bridge.
-  - [ ] Compile-time test mirrors the M-6 `static_assert` style at
-        the analysis TU boundary.
+        Implementation at `src/core/analysis.cpp:25-37` —
+        `const size_t start = static_cast<std::size_t>(
+        detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value);`.
+        Same FrameIdx + frame_to_sample as M-MUSIC-DETECT; RMS-frame
+        semantics shared across the family.
+  - [x] `compute_zero_crossing_rate:57` adopts the typed bridge.
+        Implementation at `src/core/analysis.cpp:60-66` (line shifted
+        post-cure by the new comment block).
+  - [x] Compile-time test mirrors the M-6 `static_assert` style at
+        the analysis TU boundary —
+        `tests/test_analysis.cpp` "M-ANALYSIS-FRAME-SAMPLE-BRIDGE:
+        SampleIdx/FrameIdx contract holds in analysis TU" pins 6
+        STATIC_REQUIREs from the analysis TU (mirror of
+        test_blind_mode and test_music_detection contract blocks).
+        Complemented by the bridge-correctness smoke test
+        ("compute_rms_energy frame stride is hop_length") using a
+        polarity-flip square-wave fixture aligned to hop_length;
+        audit-1 noted (and the in-test comment acknowledges) the
+        smoke test is behavior-preservation verification, not a
+        regression-guard against revert (the contract block IS the
+        regression-guard via failed-compile-on-strip-explicit). Same
+        established pattern as M-MUSIC-DETECT's divisibility smoke
+        test.
+
+### M-CORRELATION-FRAME-SAMPLE-BRIDGE — disputed: `i * factor` in downsample (inter-lattice vs frame×stride classification)
+
+- **Origin.** Surfaced during M-ANALYSIS-FRAME-SAMPLE-BRIDGE audit-1
+  (PR #55, 2026-05-18). `src/core/correlation.cpp:135-153` —
+  `downsample` helper performs `size_t start = i * static_cast<std::size_t>(factor);`
+  where `i` iterates `[0, output_size)` and `factor` is the
+  downsampling ratio.
+- **Defect classification — disputed by the two audits.**
+  - **Audit-1 framing (same-defect-class, file for cure).** `i` is a
+    frame-index into a vector where each element represents a
+    `factor`-sized block of input samples (an
+    "averaged-block index"); `factor` is the per-element stride;
+    `start` is a sample-domain offset into `samples`. Structurally
+    identical to `compute_rms_energy`'s pre-cure shape — the only
+    difference is `result[i]` stores a mean (downsampled value)
+    rather than an RMS (energy value). A future edit could
+    accidentally swap `i` for `output_size`, or refactor to take a
+    frame_size from elsewhere, and the type discipline would catch
+    the bug.
+  - **Audit-2 framing (not-a-match, don't file).** Both `samples`
+    and `result` are sample-domain (a sample-lattice signal at two
+    different rates). The conversion `start = i * factor` is an
+    inter-lattice mapping from output-lattice sample-positions to
+    input-lattice sample-positions, not a frame→sample crossing.
+    In DSP terms, downsampling preserves the "sample stream" nature
+    of the signal; calling `i` a "frame index" is a structural-shape
+    abstraction not a semantic-role match.
+- **Orchestrator gate-eval.** Both framings defensible on close
+  reading. Audit-2's lattice analogy is structurally sound; audit-1's
+  "could be confused with other size_t variables" argument is the
+  exact rationale that motivated the original M-6 cure. Filing as
+  INVESTIGATE-only — the cure-vs-not-cure decision benefits from
+  user judgment. Preliminary lean toward audit-2's classification
+  (downsample's output IS semantically a sample stream, just at a
+  lower rate); but if the user lands on audit-1's framing the cure
+  shape would be either (a) a new `DownsampleFrameIdx` sibling type
+  (~25 LOC, mirrors EnvFrameIdx pattern), or (b) reuse `FrameIdx`
+  if the user accepts that downsample frames are "RMS-frame-like
+  enough" (~5 LOC, no new type).
+- **Possible outcomes.**
+  - (a) Confirmed not-a-match → close as INVESTIGATE-only paperwork.
+    Document the inter-lattice vs frame×stride distinction in the
+    cycle rationale so future bridge-family sweeps don't refire on
+    this kind of site.
+  - (b) Confirmed same-class → cure shape decision per orchestrator
+    gate-eval above.
+- **Tier rationale.** Tier 6 (API hygiene) if (b); INVESTIGATE-only
+  close if (a). Same tier as M-ANALYSIS regardless of outcome.
+- **Effort.** Investigation: ~15 minutes (read downsample call paths,
+  decide semantics). Cure (if (b)): bounded by cure-shape choice
+  above; option (a) close is paperwork-only.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
+  the finding surfaced during M-ANALYSIS audit-1 on a different file
+  in a structurally-similar shape. Filing as its own Tier 6 item
+  rather than expanding M-ANALYSIS scope (which the cure family had
+  already declared at fixed-point per audit-2) preserves the option
+  while not blocking M-ANALYSIS merge on an unresolved classification
+  question.
 
 ### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error — **RESOLVED INVESTIGATE-ONLY 2026-05-18**
 
