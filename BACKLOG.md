@@ -968,7 +968,13 @@ migration to `std::expected`-style storage happens in M-14.
   implicitly convertible."
 - **Files touched.** `src/modes/blind_mode_indices.hpp` (NEW — internal
   header with phantom-typed `mwaac::detail::SampleIdx` and `FrameIdx` +
-  `frame_to_sample` bridge + 6 static_assert contracts),
+  `frame_to_sample` bridge + 6 static_assert contracts; **subsequently
+  hoisted to `src/core/frame_sample_bridge.hpp` in M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE
+  (PR #53, `0806db3`)** as the bridge gained a second consumer in
+  `src/core/music_detection.cpp` — rename-only, types and contracts
+  byte-identical, only docstring updated to acknowledge the shared
+  scope. M-6's PR landed the original at the `modes/` path; the
+  rename followed immediately in the next cycle item),
   `src/modes/blind_mode.cpp` (analyze_blind_mode gap-iteration loop
   uses the typed bridge at the conversion sites),
   `tests/test_blind_mode.cpp` (2 new TEST_CASEs: STATIC_REQUIREs
@@ -978,8 +984,10 @@ migration to `std::expected`-style storage happens in M-14.
   scoped the cure to blind-mode internals, so the public API stays
   byte-identical to pre-cure.
 - **Tests added.** Compile-time tests that mixing units fails:
-  six `static_assert`s in `src/modes/blind_mode_indices.hpp:80-97`
-  mirrored at TU boundary by two `STATIC_REQUIRE` blocks in
+  six `static_assert`s, originally at `src/modes/blind_mode_indices.hpp:80-97`
+  in M-6's PR and now at `src/core/frame_sample_bridge.hpp:94-111`
+  post-M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE hoist (PR #53), mirrored at
+  TU boundary by two `STATIC_REQUIRE` blocks in
   `tests/test_blind_mode.cpp:152-181` + a runtime bridge-correctness
   TEST_CASE at `:183-205`. Audit-1 verified the static_asserts fire
   recognisably if `explicit` is stripped from the ctors.
@@ -1073,53 +1081,106 @@ migration to `std::expected`-style storage happens in M-14.
         (Tier 6, commit `e8261d8`) for investigation rather than
         folding into M-8.
 
-### M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE — adjacent frame×hop_length untyped multiplication in detect_music_start
+### M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE — adjacent frame×hop_length untyped multiplication in detect_music_start — **RESOLVED in #53 (`0806db3`)**
 
 - **Origin.** Surfaced during M-6 audit-2 (PR #52 audit-agent finding 1,
   2026-05-17). Independent grep for `* hop_length` patterns across
   `src/` after M-6's typed bridge landed flagged the structurally
   similar untagged multiplication at `src/core/music_detection.cpp:75`.
 - **Defect.** `detect_music_start` at `src/core/music_detection.cpp:75`
-  reads `return static_cast<int64_t>(i) * hop_length;` where `i` is the
+  read `return static_cast<int64_t>(i) * hop_length;` where `i` is the
   loop iterator into `is_music` (frame-indexed) and `hop_length` is the
   frame stride. Same shape as the M-6 defect on `gap.first * hop_length`
   in `analyze_blind_mode`: a future edit could silently swap `i` for a
   same-typed but semantically-different frame variable (e.g.
   `min_music_frames` or `frame_length`) and produce wrong-by-a-factor
-  sample offsets. The typed-bridge cure from M-6
-  (`src/modes/blind_mode_indices.hpp` —
-  `mwaac::detail::frame_to_sample`) would close the gap with no new
-  scaffolding required.
-- **Invariant established.** Same as M-6's: "frame-indexed and
-  sample-indexed quantities are not implicitly convertible at the
-  bridge site."
-- **Files touched.** `src/core/music_detection.cpp` (cure-site),
-  possibly `src/modes/blind_mode_indices.hpp` (if the bridge needs to
-  move out of `modes/` to `core/` to be reachable from
-  `core/music_detection.cpp`). Decision: probably leave the bridge in
-  `modes/` and have `music_detection.cpp` include
-  `modes/blind_mode_indices.hpp` directly, OR introduce a separate
-  `core/frame_sample_bridge.hpp` and have both consumers include from
-  core. Decide in the PR.
-- **Tests added.** Compile-time + runtime: same style as M-6's
-  `tests/test_blind_mode.cpp:152-205` block, adapted to whatever test
-  file covers `detect_music_start` (currently it's exercised
-  indirectly via `tests/test_blind_mode.cpp`'s integration tests —
-  may need a new `tests/test_music_detection.cpp` block or a small
-  bridge-test addition).
-- **Tier rationale.** Tier 6 (API hygiene). Same shape, same tier as
-  M-6. Filed as separate item per
-  `feedback_tier_boundary_preservation.md` — different file, would
-  expand M-6's authorized single-function scope. Effort: ≤ 15 LOC if
-  reusing the M-6 bridge.
-- **Effort.** ≤ 30 lines of code + 1-2 unit-test cases. One PR, one
-  audit (likely single-audit since the bridge already exists; this
-  is pure adoption).
+  sample offsets.
+- **Invariant established.** Extends M-6's INV-INDEX-TYPE-DISJOINT scope
+  from one TU to two — the same typed bridge now guards the frame-to-
+  sample crossing in both `analyze_blind_mode` and `detect_music_start`.
+- **Files touched.** `src/core/frame_sample_bridge.hpp` (RENAMED from
+  `src/modes/blind_mode_indices.hpp` via `git mv` — pure architectural
+  hoist; types and contracts byte-identical, only docstring updated to
+  acknowledge the shared-scope use; bridge now lives in `core/` so it
+  is reachable from both `core/music_detection.cpp` and
+  `modes/blind_mode.cpp` without the architectural inversion of `core/`
+  including from `modes/`). `src/core/music_detection.cpp` (cure-site:
+  `detect_music_start` now goes through
+  `detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value`
+  at the single frame-to-sample crossing in the function).
+  `src/modes/blind_mode.cpp` + `tests/test_blind_mode.cpp` (include-path
+  + comment updates for the rename; behavioural code unchanged).
+  `tests/test_music_detection.cpp` (2 new TEST_CASEs — `STATIC_REQUIRE`
+  contract block mirroring the in-header static_asserts at the
+  music-detection TU boundary, plus a smoke-test that the returned
+  sample-index is divisible by hop_length to catch a hypothetical
+  regression that returned the frame index `i` directly without the
+  multiplication).
+- **Tests added.** See `tests/test_music_detection.cpp:56-72` (contract
+  block) and `:74-112` (smoke-test). The contract block mirrors the
+  pattern from `tests/test_blind_mode.cpp:152-181` so a future
+  regression that strips `explicit` from the index ctors fires
+  recognisably in both test files (not just at the internal-header
+  build error).
+- **Bridge-location decision.** Pre-PR the BACKLOG entry left open
+  whether to leave the bridge in `modes/` and have `core/` include
+  from `modes/` (an architectural inversion against the intended
+  `core/ ← modes/` layering — see existing vestigial inversion at
+  `src/core/drift_model.cpp:2`) or to hoist the bridge to `core/` so
+  both TUs include downward. Resolved by hoist; the bridge is shared
+  vocabulary by definition (both TUs operate on the same RMS-frame ×
+  hop_length semantics), so the natural layer is the lowest TU that
+  uses it. The header docstring (post-audit-1 finding 3) is softened
+  from "cannot include from modes/" to "the project's intended
+  include-graph layering puts core/ below modes/" to avoid overstating
+  the technical constraint while still steering reviewers correctly.
+- **Audit-cardinality.** Two-audit per
+  `feedback_audit_cardinality_two_axes.md`: sharp-hook axis said
+  single-audit (pure adoption of an existing bridge; CI alone catches
+  multiplication-correctness regressions) but blast-radius axis flagged
+  multi-axis because the rename touches every TU that included
+  `blind_mode_indices.hpp` AND the docstring asserts cross-tier
+  intent. Belt-and-braces paid off: audit-1 CONCERNS surfaced 5
+  findings, of which finding 1 (in-PR stale comment references at
+  `blind_mode.cpp:213` and `test_blind_mode.cpp:154` to the old path)
+  and finding 3 (overstated "cannot include" docstring claim) were
+  fixed in commit `c0a0d70` pre-merge. Audit-2 CLEAN.
+- **Audit-2 deferred findings (carried into this close-out).**
+  - Finding 2 — stale `src/modes/blind_mode_indices.hpp` path references
+    in `BACKLOG.md` M-6 entry (lines 969, 981) and
+    `docs/invariants.md` INV-INDEX-TYPE-DISJOINT (lines 605, 614, 618).
+    Fixed in this close-out commit alongside line-number updates
+    (static_asserts moved from `:80-97` in the old file to `:94-111`
+    in the hoisted file).
+  - Finding 4 — verify PR numbers in the post-hoist `frame_sample_bridge.hpp`
+    History section reference the right PRs (`M-6 (PR #52)` and
+    `M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE (PR #53)`). Verified against
+    merge log: PR #52 → `76899fc`, PR #53 → `0806db3`. Both correct.
+  - Finding 5 — smoke-test in `test_music_detection.cpp:74-112`
+    technically duplicates the existing "Music start detection finds
+    loud region" TEST_CASE's coverage of `detect_music_start`'s
+    return-value correctness; the divisibility-by-hop_length axis is
+    novel (catches frame-index-returned-as-sample-index specifically)
+    but the broader sample-magnitude assertions overlap. Acknowledged
+    as redundancy-with-purpose — the divisibility check is the
+    targeted regression-guard for the bridge contract; surrounding
+    sample-magnitude assertions document the intended test fixture
+    and would surface a fixture-drift bug in either case. Net-positive
+    despite the overlap.
 - **Exit criteria.**
-  - [ ] `detect_music_start:75` adopts the typed bridge so the
+  - [x] `detect_music_start:75` adopts the typed bridge so the
         frame-to-sample multiplication is no longer untagged.
-  - [ ] Compile-time test mirrors the M-6 `static_assert` style on
-        whatever bridge namespace is used.
+        Implementation at `src/core/music_detection.cpp:75-87` —
+        `return detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value;`.
+        Bridge identity preserved across the hoist (rename-only on
+        the types, no semantic change).
+  - [x] Compile-time test mirrors the M-6 `static_assert` style on
+        whatever bridge namespace is used. `tests/test_music_detection.cpp:56-72`
+        mirrors the same six `STATIC_REQUIRE`s the M-6 TEST_CASE pins
+        from the blind-mode TU, so the contract is enforced from
+        every TU that adopts the bridge — same `mwaac::detail::SampleIdx`/
+        `FrameIdx` namespace as M-6 (bridge identity preserved across
+        the hoist).
 
 ### M-REF-FRAME-SAMPLE-BRIDGE — adjacent frame×frame_size untyped multiplications in reference_mode envelope path
 
@@ -1140,13 +1201,14 @@ migration to `std::expected`-style storage happens in M-14.
 - **Invariant established.** Same as M-6: typed-bridge at the
   frame-to-sample crossing.
 - **Files touched.** `src/modes/reference_mode.cpp` (both sites),
-  possibly the scoped bridge header (see M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE's
-  note about whether to keep the bridge in `modes/blind_mode_indices.hpp`
-  or hoist to `core/`). The reference-mode envelope frames are
-  semantically distinct from blind-mode's RMS frames (different hop
-  sizes, different units of "frame"), so the bridge types may need
-  parameterization (or this item may want its own `RefEnvFrameIdx` /
-  `SampleIdx` pair).
+  possibly `src/core/frame_sample_bridge.hpp` (the scoped bridge header
+  was hoisted from `modes/` to `core/` by M-MUSIC-DETECT-FRAME-SAMPLE-BRIDGE
+  in PR #53, `0806db3` — so include-path for reference_mode is settled:
+  `#include "core/frame_sample_bridge.hpp"`). The reference-mode
+  envelope frames are semantically distinct from blind-mode's RMS
+  frames (different hop sizes, different units of "frame"), so the
+  bridge types may need parameterization (or this item may want its
+  own `RefEnvFrameIdx` / `SampleIdx` pair).
 - **Tests added.** Compile-time + runtime; M-6 style.
 - **Tier rationale.** Tier 6 (API hygiene). Same shape, same tier.
 - **Effort.** ≤ 30 lines of code + 1-2 unit-test cases. One PR, one
