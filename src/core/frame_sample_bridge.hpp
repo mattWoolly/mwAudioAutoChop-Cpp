@@ -37,12 +37,16 @@
 // arithmetic, no comparisons; the ONLY way to cross between them is
 // the `frame_to_sample` bridge below.
 //
-// Scope. The bridge currently serves the RMS-frame ↔ sample boundary
-// (blind_mode and music_detection share the same hop_length semantics).
-// A SECOND bridge for envelope-frame ↔ sample (different unit definition,
-// different hop) is filed as M-REF-FRAME-SAMPLE-BRIDGE; it will likely
-// introduce parameterized types (EnvFrameIdx<…>) rather than reuse
-// FrameIdx directly, since the units differ.
+// Scope. The bridge originally served only the RMS-frame ↔ sample
+// boundary (blind_mode and music_detection share the same hop_length
+// semantics — 50 ms frame, 12.5 ms hop at analysis_sr). A SECOND bridge
+// for envelope-frame ↔ sample (different unit definition: 50–100 ms
+// frame_size with no overlap) was added by M-REF-FRAME-SAMPLE-BRIDGE
+// for the reference-mode envelope path. The two bridges live side by
+// side in this header but use type-disjoint index structs (FrameIdx vs
+// EnvFrameIdx) so that passing an RMS frame index where an envelope
+// frame index is expected (or vice versa) fails to compile, even
+// though both wrap std::size_t internally.
 //
 // Compile-time tests at the bottom of this header verify the types
 // reject implicit construction, mutual conversion, and raw-int
@@ -70,6 +74,19 @@ struct SampleIdx {
     explicit constexpr SampleIdx(std::int64_t v) noexcept : value(v) {}
 };
 
+// Envelope frame index — index into the envelope vector produced by
+// compute_rms_envelope (50–100 ms frame size, NO overlap; the stride
+// IS the frame size). Type-disjoint from FrameIdx because the unit
+// semantics differ: RMS-frame hop is 12.5 ms at analysis_sr, envelope
+// frame is 50–100 ms with no overlap, so the multiplier varies between
+// the two. Mixing them (passing an EnvFrameIdx where a FrameIdx is
+// expected, or vice versa) would compile under a shared-type design
+// but yield wrong-by-a-factor sample offsets at runtime.
+struct EnvFrameIdx {
+    std::size_t value;
+    explicit constexpr EnvFrameIdx(std::size_t v) noexcept : value(v) {}
+};
+
 // The bridge: convert a frame index to a sample index via the frame
 // hop length. This is the ONLY supported FrameIdx → SampleIdx
 // conversion path; constructing a SampleIdx from a FrameIdx by any
@@ -82,6 +99,20 @@ struct SampleIdx {
 {
     return SampleIdx{static_cast<std::int64_t>(f.value) *
                      static_cast<std::int64_t>(hop_length)};
+}
+
+// Envelope bridge: convert an envelope-frame index to a sample index
+// via the envelope frame size (samples-per-envelope-frame). This is
+// the ONLY supported EnvFrameIdx → SampleIdx conversion path; same
+// rationale as frame_to_sample for FrameIdx. The frame_size parameter
+// is int64_t (not int) because reference_mode computes it from
+// `sample_rate * frame_ms / 1000.0` and stores it as int64_t — keeping
+// the bridge parameter type aligned with the caller's local type
+// avoids a narrowing cast at the bridge boundary.
+[[nodiscard]] inline constexpr SampleIdx env_frame_to_sample(
+    EnvFrameIdx f, std::int64_t frame_size) noexcept
+{
+    return SampleIdx{static_cast<std::int64_t>(f.value) * frame_size};
 }
 
 // Compile-time contract tests. Verify the types are NOT implicitly
@@ -109,5 +140,37 @@ static_assert(!std::is_convertible_v<SampleIdx, std::int64_t>,
 static_assert(!std::is_convertible_v<FrameIdx, std::size_t>,
               "M-6 invariant: FrameIdx must require explicit .value access "
               "to extract the raw int (no implicit decay).");
+
+// Mirror contracts for EnvFrameIdx (M-REF-FRAME-SAMPLE-BRIDGE). The
+// envelope and RMS bridges share the SampleIdx output type by design
+// (a sample index is a sample index regardless of which frame type
+// produced it) — but the two frame types must be mutually disjoint so
+// that wiring `env_frame_to_sample(FrameIdx{...}, frame_size)` (or the
+// inverse) fails to compile rather than silently producing
+// wrong-by-a-factor sample offsets.
+static_assert(!std::is_constructible_v<EnvFrameIdx, FrameIdx>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must not "
+              "be constructible from FrameIdx — envelope frames use a "
+              "different stride than RMS frames.");
+static_assert(!std::is_constructible_v<FrameIdx, EnvFrameIdx>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: FrameIdx must not be "
+              "constructible from EnvFrameIdx — envelope frames use a "
+              "different stride than RMS frames.");
+static_assert(!std::is_constructible_v<EnvFrameIdx, SampleIdx>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must not "
+              "be constructible from SampleIdx — the inverse direction is "
+              "not supported.");
+static_assert(!std::is_convertible_v<std::size_t, EnvFrameIdx>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must "
+              "require explicit construction from size_t to prevent "
+              "untagged-int leakage.");
+static_assert(!std::is_convertible_v<EnvFrameIdx, std::size_t>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: EnvFrameIdx must "
+              "require explicit .value access to extract the raw int "
+              "(no implicit decay).");
+static_assert(std::is_constructible_v<EnvFrameIdx, std::size_t>,
+              "M-REF-FRAME-SAMPLE-BRIDGE invariant: the explicit "
+              "EnvFrameIdx(size_t) ctor must remain usable for adoption "
+              "at call sites.");
 
 } // namespace mwaac::detail

@@ -2,6 +2,7 @@
 #include "core/audio_buffer.hpp"
 #include "core/audio_file.hpp"
 #include "core/correlation.hpp"
+#include "core/frame_sample_bridge.hpp"  // M-REF-FRAME-SAMPLE-BRIDGE
 #include "core/music_detection.hpp"
 #include "core/verbose.hpp"
 #include <algorithm>
@@ -192,12 +193,19 @@ std::vector<EndDecision> compute_track_ends(
         static_cast<int64_t>(max_search_seconds * 10));
     if (n_frames < 20) return 0;
 
-    // Compute 100 ms-frame RMS values
+    // Compute 100 ms-frame RMS values. M-REF-FRAME-SAMPLE-BRIDGE: the
+    // envelope-frame → sample-base crossing (`f * frame_size`) goes
+    // through the typed bridge so a future edit that accidentally
+    // multiplied by `n_frames` or `fade_end_frame` (same int64_t type,
+    // different semantics) fails at the bridge boundary rather than
+    // silently producing wrong-by-a-factor offsets.
     std::vector<double> rms(static_cast<std::size_t>(n_frames));
     for (int64_t f = 0; f < n_frames; ++f) {
         double ss = 0.0;
+        const int64_t base = detail::env_frame_to_sample(
+            detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
         for (int64_t i = 0; i < frame_size; ++i) {
-            double s = static_cast<double>(samples[static_cast<std::size_t>(f * frame_size + i)]);
+            double s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
             ss += s * s;
         }
         rms[static_cast<std::size_t>(f)] = std::sqrt(ss / static_cast<double>(frame_size));
@@ -250,7 +258,14 @@ std::vector<EndDecision> compute_track_ends(
         if (pre_rms > steady_rms * 0.316) return 0;  // within 10 dB of steady
     }
 
-    return fade_end_frame * frame_size;
+    // M-REF-FRAME-SAMPLE-BRIDGE: envelope-frame → sample crossing
+    // through the typed bridge. `fade_end_frame` is an envelope-frame
+    // index into the locally-computed `rms` vector (100 ms frames at
+    // sample_rate); wrapping as EnvFrameIdx pins that semantics at the
+    // bridge boundary.
+    return detail::env_frame_to_sample(
+        detail::EnvFrameIdx{static_cast<std::size_t>(fade_end_frame)},
+        frame_size).value;
 }
 
 // Compute the RMS envelope of a signal at fixed-duration frames. Returns
@@ -269,7 +284,12 @@ std::vector<float> compute_rms_envelope(
     std::vector<float> env(static_cast<size_t>(n_frames));
     for (int64_t f = 0; f < n_frames; ++f) {
         double ss = 0.0;
-        int64_t base = f * frame_size;
+        // M-REF-FRAME-SAMPLE-BRIDGE: same envelope-frame → sample
+        // crossing pattern as `measure_fade_in_samples` above; routed
+        // through the typed bridge so the two halves of the envelope
+        // computation share one statement of intent.
+        int64_t base = detail::env_frame_to_sample(
+            detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
         for (int64_t i = 0; i < frame_size; ++i) {
             double s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
             ss += s * s;
@@ -328,8 +348,24 @@ int64_t envelope_refine_start(
 
     // Envelope-frame lag -> sample position. The envelope starts at sample 0
     // of the window, so frame `r.lag` is at sample `r.lag * frame_size`
-    // from window_start.
-    return window_start + r.lag * frame_size;
+    // from window_start. M-REF-FRAME-SAMPLE-BRIDGE: route through the
+    // typed bridge — `r.lag` comes from `cross_correlate_fft` as a
+    // *lag in envelope frames* (not RMS frames; the envelope vectors
+    // were built by `compute_rms_envelope` above with the same
+    // frame_size), and the typed bridge prevents a future edit from
+    // accidentally passing a sample-domain lag here.
+    //
+    // Cast safety: `r.lag` is signed int64_t in CorrelationResult, but
+    // `cross_correlate_fft`'s loop `for (size_t lag = 0; lag <= max_lag; ++lag)`
+    // (see `src/core/correlation.cpp:340`) restricts the returned lag
+    // to the non-negative range `0..(M-N)` where M=vinyl_env.size(),
+    // N=ref_env.size(). The early-return guard above
+    // (`if (ref_env.size() < 2 || vinyl_env.size() < ref_env.size() + 1) return -1;`)
+    // ensures vinyl_env > ref_env, so the cast to size_t cannot
+    // round-trip a negative value.
+    return window_start + detail::env_frame_to_sample(
+        detail::EnvFrameIdx{static_cast<std::size_t>(r.lag)},
+        frame_size).value;
 }
 
 // Count the number of leading samples that are essentially digital silence.
