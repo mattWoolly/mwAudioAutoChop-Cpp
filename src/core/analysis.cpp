@@ -1,4 +1,5 @@
 #include "analysis.hpp"
+#include "frame_sample_bridge.hpp"  // M-ANALYSIS-FRAME-SAMPLE-BRIDGE
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -23,7 +24,17 @@ std::vector<float> compute_rms_energy(
     std::vector<float> rms(num_frames);
 
     for (size_t i = 0; i < num_frames; ++i) {
-        size_t start = i * static_cast<std::size_t>(hop_length);
+        // M-ANALYSIS-FRAME-SAMPLE-BRIDGE: frame-index `i` → sample-index
+        // `start` via the typed bridge. `compute_rms_energy` is the
+        // upstream of every site already cured by the FrameIdx /
+        // frame_to_sample family (analyze_blind_mode, detect_music_start,
+        // estimate_noise_floor, compute_rms_envelope), so the type
+        // discipline here closes the family at its root rather than only
+        // at the leaves. Same RMS-frame semantics (12.5 ms hop at
+        // analysis_sr) as the M-MUSIC-DETECT cure site; the existing
+        // FrameIdx bridge applies directly.
+        const size_t start = static_cast<std::size_t>(
+            detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value);
         size_t end = std::min(start + static_cast<std::size_t>(frame_length), samples.size());
 
         float sum_sq = 0.0f;
@@ -54,7 +65,12 @@ std::vector<float> compute_zero_crossing_rate(
     std::vector<float> zcr(num_frames);
 
     for (size_t i = 0; i < num_frames; ++i) {
-        size_t start = i * static_cast<std::size_t>(hop_length);
+        // M-ANALYSIS-FRAME-SAMPLE-BRIDGE: same frame-index → sample-index
+        // crossing as `compute_rms_energy` above; routed through the
+        // typed bridge so the two halves of analysis.cpp share one
+        // statement of intent.
+        const size_t start = static_cast<std::size_t>(
+            detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value);
         size_t end = std::min(start + static_cast<std::size_t>(frame_length), samples.size());
 
         // M-10: per-frame degenerate-length guard. The normalization below
