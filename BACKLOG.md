@@ -1359,14 +1359,14 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Compile-time test mirrors the M-6 `static_assert` style at
         the analysis TU boundary.
 
-### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error
+### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error — **RESOLVED INVESTIGATE-ONLY 2026-05-18**
 
 - **Origin.** Surfaced during M-8 audit-1 (PR #51 audit-agent finding 5,
   2026-05-16). Adjacent-entry sweep on the BlindError enum after M-8
   removed `NoGapsFound` flagged the structurally similar
   `ReferenceError::NoTracksFound` at `src/modes/reference_mode.hpp:24`.
 - **Defect (provisional — needs investigation).** `load_reference_tracks`
-  at `src/modes/reference_mode.cpp:805-807` returns
+  at `src/modes/reference_mode.cpp:846-862` returns
   `ReferenceError::NoTracksFound` when the reference directory contains
   no audio files. Unlike blind-mode's `NoGapsFound` (which M-8 cured
   because the algorithm "correctly finding zero gaps" is a legitimate
@@ -1375,32 +1375,53 @@ migration to `std::expected`-style storage happens in M-14.
   wrong directory or one with non-audio files. **The structural
   similarity to NoGapsFound does not by itself imply M-8-style cure
   applies.** Investigation needed.
-- **Possible outcomes.**
-  - (a) Confirmed true user-config error → no cure needed; close as
-    INVESTIGATE-only. Document the difference between "algorithm-
-    finds-nothing-legitimately" (NoGapsFound class) and
-    "user-misconfigured-input" (NoTracksFound class) in the cycle
-    rationale so future enum-value sweeps don't conflate them.
-  - (b) Confirmed legitimate outcome path exists (e.g., a streaming
-    reference workflow where the directory is filled in over time) →
-    cure shape mirrors M-8 (build a degenerate single-track AnalysisResult,
-    drop the enum value).
-  - (c) Hybrid — keep NoTracksFound as a true error but consider
-    whether `analyze_reference_mode`'s public API should distinguish
-    "wrong directory" from "empty directory" (currently both map to
-    NoTracksFound; a richer error type might serve callers better).
+- **Investigation outcome (2026-05-18).** **Option (a) confirmed —
+  `NoTracksFound` is a true input-validation failure; no code cure
+  needed.** Reasoning:
+  - **Algorithm-vs-input distinction.** `NoGapsFound` (M-8) was raised
+    after `compute_rms_energy`, `estimate_noise_floor`, and
+    `detect_gaps` all successfully executed on a valid audio input
+    and produced a meaningful zero-gap result — a legitimate
+    algorithmic outcome that the M-8 cure converted to a degenerate
+    single-split result. `NoTracksFound` is raised at
+    `src/modes/reference_mode.cpp:861-862` BEFORE any alignment
+    algorithm runs, when the reference directory contains zero audio
+    files. There is no algorithm to run; there is no degenerate
+    `AnalysisResult` to build because reference-mode alignment is
+    *defined as* "align vinyl regions to reference tracks" and there
+    are no reference tracks.
+  - **Hybrid option (c) already addressed.** Audit's option (c)
+    proposed distinguishing "wrong directory" from "empty directory";
+    in fact the enum already does this. `src/modes/reference_mode.cpp:850-852`
+    returns `ReferenceError::ReferenceLoadFailed` when the path is
+    not a directory; `:861-862` returns `NoTracksFound` only when
+    the directory exists but is empty (or contains only non-audio
+    files). The two cases give distinct error codes — option (c) is
+    a no-op.
+  - **Streaming reference workflow** (option (b) hypothetical) does
+    not exist in the codebase. There is no async / poll-for-files /
+    watcher pattern around `analyze_reference_mode`; the call at
+    `src/main.cpp:127` is synchronous one-shot.
+  - **Generalization for future enum sweeps.** The "algorithm-finds-
+    nothing-legitimately" vs "user-misconfigured-input" distinction
+    is the real axis. NoGapsFound was the former; NoTracksFound is
+    the latter. Future enum-value adjacent sweeps after an M-8-style
+    cure should classify each candidate along this axis rather than
+    cure all "no Foo found" enum values reflexively. (Recorded in
+    this BACKLOG entry's resolution, not promoted to a feedback
+    memory — single example so far; promote if a second instance
+    fires.)
+- **Files touched.** None (paperwork-only close). Original audit
+  finding was the right thing to file as an investigation item;
+  investigation concluded no code change is appropriate.
 - **Tier rationale.** Tier 6 (API hygiene). Same tier as M-8 because
-  the surface is enum-value-as-error-vs-outcome classification, even
-  though the cure shape is unknown until investigation completes.
-- **Effort.** Investigation: ≤ 30 minutes (read call paths, decide
-  semantics). Cure (if any): bounded by the outcome above; option (a)
-  is paperwork-only.
+  the surface is enum-value-as-error-vs-outcome classification.
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md` — the
   finding surfaced during M-8 audit on a different function in the
   same enum-classification axis but a separate file. Filing as its own
-  Tier 6 item rather than folding into M-8 preserves single-function
-  scope and allows the investigation to proceed without rushing the
-  M-8 merge.
+  Tier 6 item rather than folding into M-8 preserved single-function
+  scope and let the investigation proceed without rushing the M-8
+  merge — pattern confirmed productive.
 
 ### M-11 — LoadResult default-constructed state is ambiguous
 
