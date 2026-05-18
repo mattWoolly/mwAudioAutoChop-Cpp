@@ -18,6 +18,7 @@
 
 #include "modes/reference_mode.hpp"
 #include "core/audio_buffer.hpp"
+#include "core/frame_sample_bridge.hpp"  // M-REF-FRAME-SAMPLE-BRIDGE
 
 #include <cstdint>
 #include <cstdlib>
@@ -25,6 +26,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // M-REF-ALIGN-UNIT — un-SKIP per-track alignment unit test against landed fixture.
@@ -387,4 +389,72 @@ TEST_CASE("analysis_to_native_sample: native_sr < 0 terminates the process",
 #else
     SKIP("Death test requires fork(); platform does not support it.");
 #endif
+}
+
+// M-REF-FRAME-SAMPLE-BRIDGE: compile-time contracts on the EnvFrameIdx
+// envelope-frame bridge. Mirrors the pattern test_blind_mode.cpp uses
+// for the M-6 FrameIdx contract and test_music_detection.cpp uses for
+// the M-MUSIC-DETECT contract — pin the in-header static_asserts at the
+// reference-mode TU boundary so a future regression that strips
+// `explicit` from EnvFrameIdx (or relaxes its mutual disjointness with
+// FrameIdx / SampleIdx) shows up as a recognisable test-source failure,
+// not just an internal-header build error.
+TEST_CASE("M-REF-FRAME-SAMPLE-BRIDGE: EnvFrameIdx contract is disjoint from FrameIdx",
+          "[reference][m-ref-frame-sample-bridge]")
+{
+    using mwaac::detail::SampleIdx;
+    using mwaac::detail::FrameIdx;
+    using mwaac::detail::EnvFrameIdx;
+
+    // EnvFrameIdx is mutually disjoint from FrameIdx — the entire point
+    // of having two frame types: an RMS-frame index (FrameIdx, 12.5 ms
+    // hop) cannot be silently passed as an envelope-frame index
+    // (EnvFrameIdx, 50–100 ms frame_size) or vice versa.
+    STATIC_REQUIRE(!std::is_constructible_v<EnvFrameIdx, FrameIdx>);
+    STATIC_REQUIRE(!std::is_constructible_v<FrameIdx, EnvFrameIdx>);
+
+    // EnvFrameIdx does not collapse into a SampleIdx (the inverse
+    // direction of the bridge is not supported — sample indices do not
+    // round-trip to envelope-frame indices because the division would
+    // truncate, defeating the round-trip).
+    STATIC_REQUIRE(!std::is_constructible_v<EnvFrameIdx, SampleIdx>);
+
+    // No implicit conversion from raw size_t — every construction must
+    // be at a call site that says `EnvFrameIdx{...}` explicitly.
+    STATIC_REQUIRE(!std::is_convertible_v<std::size_t, EnvFrameIdx>);
+    // No implicit decay to raw size_t — every read of the underlying
+    // index goes through `.value` explicitly.
+    STATIC_REQUIRE(!std::is_convertible_v<EnvFrameIdx, std::size_t>);
+
+    // Explicit construction from size_t works (sanity check — the
+    // explicit ctor should not be removed by accident).
+    STATIC_REQUIRE(std::is_constructible_v<EnvFrameIdx, std::size_t>);
+}
+
+TEST_CASE("M-REF-FRAME-SAMPLE-BRIDGE: env_frame_to_sample multiplies by frame_size",
+          "[reference][m-ref-frame-sample-bridge]")
+{
+    using mwaac::detail::SampleIdx;
+    using mwaac::detail::EnvFrameIdx;
+    using mwaac::detail::env_frame_to_sample;
+
+    // Representative envelope frame_sizes from the actual call sites:
+    //   - measure_fade_in_samples uses 100 ms: sr=44100 → 4410.
+    //   - compute_rms_envelope / envelope_refine_start use 50 ms:
+    //     sr=44100 → 2205.
+    const std::int64_t fs_100ms_at_44100 = 4410;
+    const std::int64_t fs_50ms_at_44100 = 2205;
+
+    CHECK(env_frame_to_sample(EnvFrameIdx{0}, fs_100ms_at_44100).value == 0);
+    CHECK(env_frame_to_sample(EnvFrameIdx{1}, fs_100ms_at_44100).value == 4410);
+    CHECK(env_frame_to_sample(EnvFrameIdx{10}, fs_100ms_at_44100).value == 44100);
+    CHECK(env_frame_to_sample(EnvFrameIdx{200}, fs_100ms_at_44100).value == 882000);
+
+    CHECK(env_frame_to_sample(EnvFrameIdx{0}, fs_50ms_at_44100).value == 0);
+    CHECK(env_frame_to_sample(EnvFrameIdx{1}, fs_50ms_at_44100).value == 2205);
+    CHECK(env_frame_to_sample(EnvFrameIdx{200}, fs_50ms_at_44100).value == 441000);
+
+    // Compile-time evaluable: env_frame_to_sample is constexpr.
+    constexpr SampleIdx s = env_frame_to_sample(EnvFrameIdx{42}, 2205);
+    STATIC_REQUIRE(s.value == 92610);
 }
