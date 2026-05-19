@@ -31,8 +31,15 @@ struct AppState {
     ExportStatus export_status;
 };
 
-// Run the interactive TUI application
-// Returns 0 on success, non-zero on error
+// Run the interactive TUI application.
+//
+// Returns 0 on any normal exit from the event loop — user-initiated
+// quit ('q'/'Q'), Ctrl-C signal handled by the FTXUI screen loop, or
+// terminal disconnect. There is no "non-quit exit" failure mode that
+// returns non-zero from the loop path; initialization failure (e.g.
+// `ScreenInteractive::Fullscreen()` cannot acquire a terminal)
+// propagates as a thrown exception rather than a non-zero return,
+// per Mi-10 cure shape ("exit code matches doc").
 int run_tui(AppState& state);
 
 } // namespace mwaac::tui
