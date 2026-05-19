@@ -50,10 +50,19 @@ std::vector<std::string> render_waveform(
     int64_t cursor_pos,
     const std::vector<MarkerInfo>& markers)
 {
-    if (peaks.empty() || height <= 0) {
+    // M-WAVEFORM-CLAMP-UB: the pre-cure guard `height <= 0` admits
+    // `height == 1`, which produces `waveform_height == height - 1 == 0`
+    // below and then invokes `std::clamp(min_row, 0, waveform_height - 1)`
+    // with `hi = -1 < lo = 0` — undefined behavior per cppreference.
+    // The fail-fast cure is to require `height >= 2` at the input
+    // boundary (the function reserves one row for track numbers + at
+    // least one row for the waveform, so `height < 2` has no usable
+    // waveform rows to draw anyway). Returns empty for the degenerate
+    // input rather than tripping UB inside the loop.
+    if (peaks.empty() || height < 2) {
         return {};
     }
-    
+
     std::vector<std::string> rows(static_cast<size_t>(height + 1), std::string());
     int half_height = height / 2;
     int waveform_height = height - 1;  // Reserve one row for track numbers
