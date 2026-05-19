@@ -966,7 +966,33 @@ enum value) under the post-M-14 unified taxonomy.
 
 ### INV-RUN-TUI-EXIT-CODE — `run_tui` returns `0` on normal exit
 
-- **Status.** `pending` (Mi-10).
+`run_tui` returns 0 on any normal exit from the event loop —
+user-initiated quit ('q'/'Q'), Ctrl-C signal handled by the FTXUI
+screen loop, or terminal disconnect. Pre-cure (Mi-10) returned
+`quit ? 0 : 1` — the `quit` sentinel was set only by the 'q'/'Q'
+handler, so Ctrl-C and any other non-Q exit path returned 1,
+inverting the documented contract.
+
+- **Owner.** `run_tui` in `src/tui/app.cpp`.
+- **Enforcement.**
+  - `src/tui/app.cpp:271` (post-cure) returns `0` unconditionally;
+    the `quit` sentinel was removed (one-set/one-read; only reader
+    was the inverted return). `screen.Exit()` in the 'q'/'Q' handler
+    at `:154-163` remains the actual quit mechanism.
+  - `src/tui/app.hpp:35-46` docstring rewritten to make the contract
+    explicit, with the audit-1 catch about FTXUI's no-throw semantics
+    softened from "propagates as a thrown exception" to "best-effort
+    with no throwing failure modes ... vacuously satisfied" (verified
+    against the vendored FTXUI source — zero `throw` in
+    screen_interactive.cpp).
+- **Status.** `holds` post-Mi-10 merge `f359e19` (PR #57).
+- **Test gap acknowledgment.** No behavioral test exists for the
+  exit-code contract. `run_tui` blocks on terminal input via
+  `screen.Loop()` which cannot be invoked from a unit test without
+  a headless TUI state-mutator harness — that harness work is filed
+  under Mi-8 and Mi-9. Cure is verification-by-code-review; the
+  invariant becomes test-enforceable when the Mi-8/Mi-9 harness
+  lands.
 
 ### INV-THIRD-PARTY-ATTRIBUTION — Vendored third-party files carry attribution
 

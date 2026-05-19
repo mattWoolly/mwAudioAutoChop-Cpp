@@ -1764,15 +1764,44 @@ migration to `std::expected`-style storage happens in M-14.
 - **Exit criteria.**
   - [ ] Post-handler normalization helper.
 
-### Mi-10 — run_tui exit-code documentation
+### Mi-10 — run_tui exit-code documentation — **RESOLVED in #57 (`f359e19`)**
 
-- **Defect.** `tui/app.cpp:271` inverted return value on non-quit exit.
-- **Invariant established.** "run_tui returns 0 on normal exit (Q, Ctrl-C);
-  non-zero only on initialization failure."
-- **Files touched.** `src/tui/app.cpp`.
+- **Defect.** `tui/app.cpp:271` returned `quit ? 0 : 1`. The `quit`
+  sentinel was set only by the 'q'/'Q' handler at `:154-158`, so
+  Ctrl-C and any other non-Q exit path returned 1, inverting the
+  documented contract.
+- **Invariant established.** "run_tui returns 0 on normal exit
+  (Q, Ctrl-C); non-zero only on initialization failure." Per
+  Mi-10 audit-1 (PR #57), the "non-zero only on init failure"
+  clause is vacuously satisfied — FTXUI's `Fullscreen()` and
+  `Loop()` are best-effort with no throwing failure modes
+  (verified against vendored FTXUI source, zero `throw` in
+  screen_interactive.cpp), so initialization failure manifests
+  as a degraded loop rather than a non-zero return.
+- **Files touched.** `src/tui/app.cpp` (cure: `:271` returns 0
+  unconditionally; `quit` sentinel removed; cure-rationale comments
+  added to the Q-handler and the return statement),
+  `src/tui/app.hpp` (docstring rewritten to make the contract
+  explicit — audit-1 catch softened the FTXUI throw-path claim).
+- **Audit-cardinality.** Single-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook clear
+  (trivial 2-LOC behavioral cure + docstring), blast-radius small
+  (2 file edits). Audit-1 CONCERNS (docstring overspecified FTXUI
+  throw semantics; cure itself CLEAN) — fixed in-PR before merge.
+- **Tests added.** None. `run_tui` blocks on terminal input via
+  `screen.Loop()` which cannot be invoked from a unit test without
+  the headless TUI state-mutator harness Mi-8 / Mi-9 will need.
+  Cure is verification-by-code-review; INV-RUN-TUI-EXIT-CODE
+  becomes test-enforceable when the Mi-8/Mi-9 harness lands.
+  Documented explicitly in INV doc and in this BACKLOG entry.
 - **Exit criteria.**
-  - [ ] Header docstring restated.
-  - [ ] Exit code matches doc.
+  - [x] Header docstring restated. See `src/tui/app.hpp:35-46`
+        post-cure — contract is now explicit about both the
+        always-0 return and the FTXUI no-throw initialization
+        semantics.
+  - [x] Exit code matches doc. `src/tui/app.cpp:271` returns 0
+        unconditionally; documented intent and actual behavior
+        aligned.
 
 ### M-WAVEFORM-CLAMP-UB — `render_waveform` `std::clamp` UB on `height == 1` input — **RESOLVED in #56 (`3650fe2`)**
 
