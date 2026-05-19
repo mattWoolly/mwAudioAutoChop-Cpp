@@ -31,8 +31,19 @@ struct AppState {
     ExportStatus export_status;
 };
 
-// Run the interactive TUI application
-// Returns 0 on success, non-zero on error
+// Run the interactive TUI application.
+//
+// Returns 0 on any normal exit from the event loop — user-initiated
+// quit ('q'/'Q'), Ctrl-C signal handled by the FTXUI screen loop, or
+// terminal disconnect. There is no non-zero return path from the
+// loop. FTXUI's `ScreenInteractive::Fullscreen()` and `Loop()` are
+// best-effort with no throwing failure modes (verified against the
+// vendored FTXUI source), so initialization failure manifests as a
+// degraded loop rather than a non-zero return; the BACKLOG Mi-10
+// invariant "non-zero only on initialization failure" is therefore
+// vacuously satisfied. If callers need to distinguish "TUI ran" from
+// "TUI couldn't initialize," that signal must come from elsewhere
+// (e.g. checking terminal capabilities before the call).
 int run_tui(AppState& state);
 
 } // namespace mwaac::tui

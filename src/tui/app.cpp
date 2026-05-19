@@ -17,19 +17,17 @@ void export_tracks(AppState& state);
 
 int run_tui(AppState& state) {
     auto screen = ScreenInteractive::Fullscreen();
-    
+
     // Cursor follows selected marker
     int cursor_col = 0;
-    if (!state.split_points.empty() && state.selected_marker >= 0 && 
+    if (!state.split_points.empty() && state.selected_marker >= 0 &&
         state.selected_marker < static_cast<int>(state.split_points.size())) {
         int width = Terminal::Size().dimx - 2;
         if (state.audio.samples.size() > 0) {
             cursor_col = static_cast<int>(static_cast<std::size_t>(state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample * width) / state.audio.samples.size());
         }
     }
-    
-    bool quit = false;
-    
+
     auto component = Renderer([&] {
         int width = Terminal::Size().dimx - 2;
         int height = 20;  // Waveform height
@@ -152,7 +150,13 @@ int run_tui(AppState& state) {
         }
         
         if (event == Event::Character('q') || event == Event::Character('Q')) {
-            quit = true;
+            // Mi-10: `screen.Exit()` is the actual quit mechanism — it
+            // breaks the event loop. The pre-cure `bool quit` sentinel
+            // and the `return quit ? 0 : 1` at function end inverted
+            // the documented contract (Ctrl-C and any other non-Q exit
+            // returned 1, contradicting the docstring's "0 on normal
+            // exit, non-zero only on init failure"). Removed; every
+            // event-loop exit is now a normal exit.
             screen.Exit();
             return true;
         }
@@ -267,8 +271,15 @@ int run_tui(AppState& state) {
     });
     
     screen.Loop(component);
-    
-    return quit ? 0 : 1;
+
+    // Mi-10: every loop exit is a normal exit (per docstring contract
+    // in src/tui/app.hpp). FTXUI's `Fullscreen()` and `Loop()` are
+    // best-effort with no throwing failure modes (verified against the
+    // vendored FTXUI source — zero `throw` in screen_interactive.cpp),
+    // so initialization failure manifests as a degraded loop rather
+    // than a return-or-throw signal that this function could surface
+    // via a non-zero return.
+    return 0;
 }
 
 // AAC-CPP-025: Export functionality
