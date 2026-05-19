@@ -273,10 +273,12 @@ int run_tui(AppState& state) {
     screen.Loop(component);
 
     // Mi-10: every loop exit is a normal exit (per docstring contract
-    // in src/tui/app.hpp). Initialization failure
-    // (`ScreenInteractive::Fullscreen()` cannot acquire a terminal)
-    // propagates as a thrown exception above, never reaching this
-    // return.
+    // in src/tui/app.hpp). FTXUI's `Fullscreen()` and `Loop()` are
+    // best-effort with no throwing failure modes (verified against the
+    // vendored FTXUI source — zero `throw` in screen_interactive.cpp),
+    // so initialization failure manifests as a degraded loop rather
+    // than a return-or-throw signal that this function could surface
+    // via a non-zero return.
     return 0;
 }
 
