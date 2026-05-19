@@ -1774,7 +1774,7 @@ migration to `std::expected`-style storage happens in M-14.
   - [ ] Header docstring restated.
   - [ ] Exit code matches doc.
 
-### M-WAVEFORM-CLAMP-UB — `render_waveform` `std::clamp` UB on `height == 1` input
+### M-WAVEFORM-CLAMP-UB — `render_waveform` `std::clamp` UB on `height == 1` input — **RESOLVED in #56 (`3650fe2`)**
 
 - **Origin.** Adjacent-entry sweep during M-9 pre-dispatch checklist
   (2026-05-04). Same defect class as M-9 (empty-container `std::clamp`
@@ -1847,17 +1847,58 @@ migration to `std::expected`-style storage happens in M-14.
 - **Effort.** ≤ 5 lines of code (single guard) + 1 unit test. One
   PR, one audit. Test infrastructure dependency adds work if
   Tier 7's TUI harness is not yet established when this dispatches.
+- **Audit-cardinality.** Single-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook clear (third
+  instance of established defensive-cure pattern from M-9 / M-10;
+  cure is a single-line guard widening) and blast-radius small (5 LOC
+  cure + 1 new additive test file + 1 CMakeLists line). Audit
+  returned CLEAN on all 4 axes (cure correctness, test correctness,
+  sibling sweep, paperwork forward-look).
+- **Pre-dispatch sibling sweep — family fixed point reached.** Standing
+  grep across `src/` for `std::clamp(` patterns surfaced 5 sites in
+  addition to the cured one; audit independently re-verified each
+  classification:
+  - `src/core/correlation.cpp:232` — safe (uses
+    `std::max(int64_t{0}, max_valid_lag)` to ensure `hi >= 0 >= lo`).
+  - `src/modes/blind_mode.cpp:92` — safe (constants `0.0f, 1.0f`).
+  - `src/modes/reference_mode.cpp:147` — safe (enclosed in
+    `extra > SMALL_GAP` branch which guarantees
+    `natural_end_excl > ref_end`, so `hi > lo`).
+  - `src/modes/reference_mode.cpp:1124` — safe (M-9 function-entry
+    early-return at `:915-917` guards against `vinyl.samples.empty()`).
+  - `src/tui/waveform.cpp:77-78` — cured by this PR.
+  No new same-class sites; the `std::clamp` UB cure family (M-9,
+  M-10, M-WAVEFORM-CLAMP-UB) has reached fixed point.
 - **Exit criteria.**
-  - [ ] `src/tui/waveform.cpp:68-69` no longer invoke `std::clamp`
-        with `hi < lo` for any reachable input (verified by reachability
-        analysis on the `height == 1` path).
-  - [ ] Guard added per (a) or (b); cure choice documented in the
-        PR body.
-  - [ ] New unit test exercises `render_waveform(..., height=1, ...)`
-        with non-empty peaks; sanitizer-clean run; assertions on
-        returned rows well-formed.
-  - [ ] No regression in `render_waveform`'s behavior for `height >= 2`
-        inputs (existing TUI rendering unchanged for typical heights).
+  - [x] `src/tui/waveform.cpp:68-69` no longer invoke `std::clamp`
+        with `hi < lo` for any reachable input. Implementation:
+        input-boundary guard at `:53` widened from `height <= 0` to
+        `height < 2`; the `height == 1` path now returns empty before
+        entering the per-column loop.
+  - [x] Guard added per (a) (fail-fast at the input boundary —
+        `render_waveform` requires `height >= 2` to produce any
+        usable output). Cure choice documented in the PR body and
+        in the cure comment at `src/tui/waveform.cpp:53`.
+  - [x] New unit test exercises `render_waveform(..., height=1, ...)`
+        with non-empty peaks; sanitizer-clean run (CI `sanitizers
+        (asan+ubsan)` job pass); functional assertion `rows.empty()`.
+        See `tests/test_waveform.cpp` "M-WAVEFORM-CLAMP-UB regression
+        test".
+  - [x] No regression in `render_waveform`'s behavior for `height >= 2`
+        inputs — exercised by the new `height == 2` no-regression test;
+        also confirmed by full 13/13 ctest suite passing locally and
+        in CI (no existing test failures introduced).
+
+### Tier 7 — TUI infrastructure follow-up notes (from M-WAVEFORM-CLAMP-UB close-out)
+
+- **First mwaac_tui test target landed.** PR #56 added the first test
+  target (`test_waveform`) to link `mwaac_tui`. The wedge is scoped
+  to pure-function tests of `render_waveform`; it does NOT establish
+  the headless state-mutator harness that Mi-8 / Mi-9 BACKLOG entries
+  call for. Future Tier 7 dispatches for Mi-8 / Mi-9 will need to
+  introduce a separate harness (FTXUI provides a screen abstraction
+  that can be driven without a real terminal — exact design deferred
+  to those items).
 
 ---
 

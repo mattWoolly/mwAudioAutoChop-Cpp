@@ -485,11 +485,57 @@ Empty vinyl returns empty offsets, no UB from `std::clamp(..., hi<lo)`.
   in-loop guard because the early return shape cleanly distinguishes
   "no vinyl at all" from "this track skipped" (the cure rationale is
   documented in the cure comment block at `:843-857`).
-- **Adjacent risk filed:** M-WAVEFORM-CLAMP-UB (Tier 7) — `render_waveform`
-  has the same empty-container `std::clamp` UB pattern at
+- **Adjacent risk RESOLVED:** M-WAVEFORM-CLAMP-UB (Tier 7) — `render_waveform`
+  had the same empty-container `std::clamp` UB pattern at
   `src/tui/waveform.cpp:68-69`, reachable when called with `height == 1`.
   Cross-tier finding from M-9 pre-dispatch sweep, filed in commit
-  `8f70230`.
+  `8f70230`. **RESOLVED via PR #56 merge `3650fe2`** (2026-05-19) — see
+  sibling [[INV-WAVEFORM-DEGENERATE-HEIGHT]] below for the cured
+  invariant.
+
+### INV-WAVEFORM-DEGENERATE-HEIGHT — `render_waveform` rejects degenerate-height input at the boundary
+
+`render_waveform` requires `height >= 2` (one row for the waveform +
+one row for track-number labels). The pre-cure guard at `:53` admitted
+`height == 1`, which then computed `waveform_height = height - 1 == 0`
+and invoked `std::clamp(min_row, 0, waveform_height - 1)` with
+`hi = -1 < lo = 0` — undefined behavior per cppreference. The cure
+tightened the input-boundary guard to fail fast on any height that
+cannot produce at least one waveform row.
+
+- **Owner.** `render_waveform` in `src/tui/waveform.cpp`.
+- **Enforcement.**
+  - Input-boundary guard at `src/tui/waveform.cpp:53` widened from
+    `height <= 0` to `height < 2`. Returns empty `std::vector<std::string>`
+    for any input that has no usable waveform rows to draw.
+  - `render_waveform: height==1 does not invoke std::clamp with hi < lo`
+    in `tests/test_waveform.cpp` exercises the cured path with non-empty
+    peaks; primary signal is sanitizer-clean run (the CI `sanitizers
+    (asan+ubsan)` job — pre-cure the test would trip UBsan on
+    iteration 1 of the per-column loop). Functional assertion is on
+    the returned vector being empty.
+  - `render_waveform: height==0 returns empty` defensive test that
+    the widened guard preserves the original `height <= 0` arm.
+  - `render_waveform: height==2 returns one waveform row + one
+    track-number row` no-regression test for the smallest valid
+    height — catches a hypothetical regression that widened the
+    guard further (e.g., to `height < 3`) and broke previously-valid
+    inputs.
+- **Status.** `holds` post-M-WAVEFORM-CLAMP-UB merge `3650fe2` (PR #56).
+  Tier 7 first item; same defensive-cure pattern family as M-9 (PR
+  closed earlier this cycle, `5c577d7`) and M-10 (PR `5c577d7`).
+  Three instances of the family now closed; pre-dispatch sweep on
+  PR #56 verified all five remaining `std::clamp` sites in `src/`
+  are invariant-protected (see PR #56 description), so the family
+  has reached fixed point on the `std::clamp(x, lo, hi)` UB axis.
+- **TUI test infrastructure note.** `tests/test_waveform.cpp` is the
+  first test target to link `mwaac_tui`; it establishes a pure-
+  function test wedge for `src/tui/`. Mi-8 / Mi-9 (TUI marker nudge
+  + view bounds) BACKLOG entries call out the need for a "headless
+  state-mutator harness" for `app.cpp` event handlers — that is a
+  distinct harness from this wedge and is not addressed by the
+  M-WAVEFORM-CLAMP-UB cure. Filing as a forward note so the next
+  Tier 7 dispatch starts with this scope distinction in mind.
 
 ### INV-ZCR-SHORT-FRAME — `compute_zero_crossing_rate` is 0 below 2 samples
 
