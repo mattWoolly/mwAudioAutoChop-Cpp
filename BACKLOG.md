@@ -1404,7 +1404,7 @@ migration to `std::expected`-style storage happens in M-14.
         established pattern as M-MUSIC-DETECT's divisibility smoke
         test.
 
-### M-CORRELATION-FRAME-SAMPLE-BRIDGE — disputed: `i * factor` in downsample (inter-lattice vs frame×stride classification)
+### M-CORRELATION-FRAME-SAMPLE-BRIDGE — disputed: `i * factor` in downsample (inter-lattice vs frame×stride classification) — **RESOLVED INVESTIGATE-ONLY 2026-05-18 (audit-2 classification confirmed)**
 
 - **Origin.** Surfaced during M-ANALYSIS-FRAME-SAMPLE-BRIDGE audit-1
   (PR #55, 2026-05-18). `src/core/correlation.cpp:135-153` —
@@ -1443,25 +1443,68 @@ migration to `std::expected`-style storage happens in M-14.
   (~25 LOC, mirrors EnvFrameIdx pattern), or (b) reuse `FrameIdx`
   if the user accepts that downsample frames are "RMS-frame-like
   enough" (~5 LOC, no new type).
-- **Possible outcomes.**
-  - (a) Confirmed not-a-match → close as INVESTIGATE-only paperwork.
-    Document the inter-lattice vs frame×stride distinction in the
-    cycle rationale so future bridge-family sweeps don't refire on
-    this kind of site.
-  - (b) Confirmed same-class → cure shape decision per orchestrator
-    gate-eval above.
-- **Tier rationale.** Tier 6 (API hygiene) if (b); INVESTIGATE-only
-  close if (a). Same tier as M-ANALYSIS regardless of outcome.
-- **Effort.** Investigation: ~15 minutes (read downsample call paths,
-  decide semantics). Cure (if (b)): bounded by cure-shape choice
-  above; option (a) close is paperwork-only.
+- **Investigation outcome (2026-05-18).** **Option (a) confirmed —
+  audit-2's not-a-match classification is correct; no code cure
+  needed.** Reasoning:
+  - **`downsample` is rate conversion, not frame extraction.** Both
+    the input `samples` parameter and the output `result` are
+    sample-domain arrays. The function converts an N-sample signal
+    at rate R into an (N/factor)-sample signal at rate R/factor by
+    averaging `factor`-sized blocks. `result[i]` is a SAMPLE in the
+    downsampled lattice — semantically the same KIND of value as
+    `samples[k]`, not a feature-aggregate of a different kind (as
+    `compute_rms_energy`'s `rms[i]` is — an energy value distinct
+    from the input samples).
+  - **`:214` is the structural confirmation.** Inside the same TU,
+    `coarse_lag = best_coarse_lag * downsample_factor` is explicitly
+    named as a lag conversion (downsampled-lattice lag → full-
+    resolution lag). Both operands are sample-domain lag-quantities.
+    The whole `cross_correlate_fast` function family treats
+    downsample's input and output as sample-domain at different
+    rates — the `* factor` and `/ factor` operations are inter-
+    lattice mappings, not frame×stride crossings.
+  - **Type-discipline value would be negative.** Introducing a
+    `DownsampleFrameIdx` would mislabel the downsampled signal as
+    "frames" when it is semantically samples at a lower rate. The
+    cure pattern that worked for M-6 / M-MUSIC-DETECT / M-REF /
+    M-ANALYSIS depends on the index domain being a DIFFERENT KIND
+    of thing from the sample domain (RMS-frame indices, envelope-
+    frame indices). For downsample, the index isn't a different
+    kind of thing — it's a sample position in a different lattice.
+  - **Confusion path is closed.** In-scope size_t variables at
+    `correlation.cpp:143` are `output_size`, `samples.size()` — both
+    sample-COUNTS (cardinality), not sample-POSITIONS. The loop
+    structure `for (size_t i = 0; i < output_size; ++i)` makes
+    `i`'s role unambiguous; there's no realistic future-edit
+    confusion path the typed bridge would prevent.
+- **Generalization — inter-lattice vs frame×stride classification.**
+  The bridge family cures untagged `frame_index × stride`
+  multiplications producing sample offsets. The defect class is
+  specifically "X-domain index × per-X-element stride → Y-domain
+  offset, where X and Y are semantically different kinds." A pattern
+  that LOOKS structurally similar but is actually "X-domain index ×
+  ratio → X-domain offset at different rate" (inter-lattice mapping)
+  is NOT in the bridge family's defect class. Future bridge-family
+  sweeps should classify each candidate site along this distinction
+  rather than fire reflexively on structural similarity. (Recorded
+  in this BACKLOG entry's resolution, not promoted to a feedback
+  memory — single example so far; promote if a second similar
+  classification question arises.)
+- **Files touched.** None (paperwork-only close). The audit-1 finding
+  was the right thing to file — preserving the open classification
+  question rather than reflexively expanding M-ANALYSIS scope — and
+  the investigation confirmed audit-2's framing was the correct
+  classification.
+- **Tier rationale.** Tier 6 (API hygiene). Same tier as M-ANALYSIS;
+  classification outcome is "not a member of the bridge family
+  defect class."
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
   the finding surfaced during M-ANALYSIS audit-1 on a different file
   in a structurally-similar shape. Filing as its own Tier 6 item
   rather than expanding M-ANALYSIS scope (which the cure family had
-  already declared at fixed-point per audit-2) preserves the option
+  already declared at fixed-point per audit-2) preserved the option
   while not blocking M-ANALYSIS merge on an unresolved classification
-  question.
+  question — pattern confirmed productive.
 
 ### M-REF-NO-TRACKS-OUTCOME — `ReferenceError::NoTracksFound` may misclassify a legitimate outcome as an error — **RESOLVED INVESTIGATE-ONLY 2026-05-18**
 

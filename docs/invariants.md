@@ -728,13 +728,18 @@ silently regressing the cure.
     at its root.
   - **M-CORRELATION-FRAME-SAMPLE-BRIDGE** — `src/core/correlation.cpp:145`
     (`size_t start = i * static_cast<std::size_t>(factor)` in
-    `downsample`). Filed by audit-1 of PR #55 (audit-2 of PR #55
-    classified as not-a-match — inter-lattice sample-to-sample
-    mapping rather than frame×stride). **INVESTIGATE-only filing**;
-    the two-audit disagreement is itself the artifact that warrants
-    user judgment on the cure-vs-not-cure decision. See
-    M-CORRELATION-FRAME-SAMPLE-BRIDGE BACKLOG entry for both
-    framings.
+    `downsample`). Filed by audit-1 of PR #55; audit-2 classified as
+    not-a-match (inter-lattice sample-to-sample mapping rather than
+    frame×stride). **RESOLVED INVESTIGATE-ONLY 2026-05-18 (commit
+    after this one)** — orchestrator gate-eval confirmed audit-2's
+    framing: downsample is rate conversion between two sample-domain
+    lattices, not a frame extraction. Sibling `:214` (`coarse_lag =
+    best_coarse_lag * downsample_factor`) is the structural
+    confirmation — both operands are sample-domain lag-quantities.
+    Generalization: the bridge defect class is "X-domain index ×
+    per-X-element stride → Y-domain offset where X and Y are
+    semantically different kinds"; inter-lattice mappings between
+    same-kind lattices at different rates are NOT in the family.
 
 ### INV-NO-DEAD-PARAMS — Public APIs do not carry dead parameters
 
