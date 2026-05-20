@@ -100,13 +100,25 @@ std::pair<std::int64_t, std::int64_t> resolve_view_range(
     return {cur_start, cur_end};
 }
 
-// Mi-9 normalization helper: enforce INV-VIEW-NON-INVERTED
-// (`0 <= view_start < view_end <= total_samples`) by clamping
-// proposed (start, end) to the valid range. On empty audio (total
-// <= 0), no valid view exists; the helper signals this by returning
-// false and the caller must no-op rather than commit a degenerate
-// state. On success, writes the normalized values to state and
-// returns true.
+// Mi-9 normalization helper (Mi-VIEW-ZOOM-BOUNDARY-SHIFT extended):
+// enforce INV-VIEW-NON-INVERTED (`0 <= view_start < view_end <=
+// total_samples`) using a **shift-shift** policy — when one edge
+// of the proposed view is out of bounds, shift the opposite edge
+// by the same delta to preserve the requested range. Falls back
+// to a clamp-clamp policy only when the requested range exceeds
+// total_samples (in which case the view collapses to `[0, total]`).
+//
+// Pre-Mi-VIEW-ZOOM-BOUNDARY-SHIFT: this helper used a clamp-only
+// policy that pinned the offending edge without shifting the
+// opposite edge, producing a narrower-than-requested view near
+// the audio boundaries (e.g. zoom_out from view=[0, 100) on
+// total=100000 produced view=[0, 150) instead of view=[0, 200)
+// preserving the 200-sample zoom-out request).
+//
+// On empty audio (total <= 0), no valid view exists; the helper
+// signals this by returning false and the caller must no-op
+// rather than commit a degenerate state. On success, writes the
+// normalized values to state and returns true.
 bool commit_normalized_view(AppState& state,
                             std::int64_t proposed_start,
                             std::int64_t proposed_end,
@@ -116,15 +128,33 @@ bool commit_normalized_view(AppState& state,
         return false;  // no valid view exists
     }
 
-    // Clamp end to [1, total]; then clamp start to [0, end - 1].
-    // Order matters — clamping start first against `end` could pin
-    // it at total - 1 even when the caller wanted a tighter view.
+    // Mi-VIEW-ZOOM-BOUNDARY-SHIFT: shift-shift normalization.
+    // If `proposed_start < 0`, shift `proposed_end` right by the
+    // overflow amount. If `proposed_end > total`, shift
+    // `proposed_start` left by the overflow amount. Order matters
+    // (left-then-right) so that when both edges are out of bounds
+    // — i.e. requested range >= total — the second shift triggers
+    // the post-shift clamp to collapse to [0, total] safely.
+    if (proposed_start < 0) {
+        proposed_end += -proposed_start;
+        proposed_start = 0;
+    }
+    if (proposed_end > total) {
+        proposed_start -= (proposed_end - total);
+        proposed_end = total;
+    }
+
+    // Post-shift clamp. When the requested range exceeds total, the
+    // shifted edge will overflow the opposite bound (e.g. proposed
+    // range = total + 10: after both shifts, start = -10, end = total;
+    // start gets clamped to 0). The clamp order (end then start) is
+    // retained from Mi-9 — clamping start first against `end` could
+    // pin it at total - 1 even when caller wanted a tighter view.
     proposed_end = std::clamp<std::int64_t>(proposed_end, 1, total);
     proposed_start = std::clamp<std::int64_t>(proposed_start, 0, proposed_end - 1);
 
-    // After clamping `start < end` is guaranteed by construction
-    // (clamp upper bound is `end - 1`), so the strict-less-than
-    // invariant holds. Commit.
+    // Strict-less-than `start < end` invariant: post-clamp end >= 1,
+    // start <= end - 1, so start < end. Commit.
     state.view_start = proposed_start;
     state.view_end = proposed_end;
     return true;
