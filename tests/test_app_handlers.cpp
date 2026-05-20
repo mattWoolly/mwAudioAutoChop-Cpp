@@ -13,27 +13,33 @@
 // app_handlers.cpp without any FTXUI dependency — no terminal, no
 // event loop, no screen.
 //
-// TEST_CASE classification (per Mi-8 audit-1 finding 2):
+// TEST_CASE classification (Mi-MARKER-NUDGE-SEMANTIC re-cure, per
+// Mi-8 audit-1 finding 2's guidance):
 //
-//   Mi-8 regression-guards (would FAIL with cure reverted):
-//     - nudge_marker_right: clamps against total_samples - 1
-//     - nudge_marker_right: clamps against next marker's start_sample
-//     - nudge_marker_right: last marker clamps against total_samples - 1, not next
-//     - nudge_marker_left: clamps against previous marker's end_sample
-//     - nudge_marker_right: empty audio (total_samples == 0) no-ops
-//     - (Implicit) the normal-shift tests confirm the cure didn't
-//       break working paths — they pass both pre- and post-cure but
-//       fail under any cure that breaks the non-degenerate path.
+//   Mi-MARKER-NUDGE-SEMANTIC regression-guards (would FAIL with
+//   either Mi-8 block-shift OR no-cure-at-all):
+//     - nudge_marker_right: moves boundary right; prev grows, sel shrinks
+//     - nudge_marker_right: works on blind-mode gap-of-1 output
+//       (the motivating case — pre-re-cure block-shift universally
+//       no-op'd interior markers on blind-mode output)
+//     - nudge_marker_right: refuses on selected zero-duration collapse
+//     - nudge_marker_left: moves boundary left; prev shrinks, sel grows
+//     - nudge_marker_left: refuses on previous zero-duration collapse
+//     - nudge_marker_*: inter-track gap preserved across sequences
+//     - nudge_marker_*: durations change inversely (sum invariant)
 //
-//   Invariant locks / defensive documentation (pass pre-cure too):
-//     - nudge_marker_left: clamps against 0  (pre-cure guard covered this)
-//     - nudge_marker_*: empty split_points no-ops both directions
-//     - nudge_marker_*: selected_marker out of range no-ops both directions
-//     - nudge_marker_*: preserves duration_samples (block-shift property)
+//   Invariant locks / defensive documentation:
+//     - nudge_marker_right: first marker (idx == 0) no-ops
+//     - nudge_marker_left: first marker (idx == 0) no-ops
+//     - nudge_marker_*: empty split_points / out-of-range no-op
 //
-// Future Mi-9 (and beyond) authors: when extending this harness,
-// preserve the regression-guard / invariant-lock distinction. A test
-// that passes pre-cure is documentation, not a guard.
+// The pre-re-cure (Mi-8 block-shift) test set has been rewritten;
+// the assertions there codified the wrong semantic per the user's
+// Mi-MARKER-NUDGE-SEMANTIC choice (boundary-shift).
+//
+// Future Mi-* authors: when extending this harness, preserve the
+// regression-guard / invariant-lock distinction. A test that passes
+// pre-cure is documentation, not a guard.
 
 namespace {
 
@@ -59,97 +65,116 @@ mwaac::SplitPoint marker(std::int64_t start, std::int64_t end) {
 
 } // namespace
 
-// ─── nudge_marker_right ────────────────────────────────────────────
+// ─── nudge_marker_right (boundary-shift per Mi-MARKER-NUDGE-SEMANTIC) ──
 
-TEST_CASE("nudge_marker_right: normal shift (no neighbors, well within bounds)",
-          "[tui][app_handlers][mi-8]")
+TEST_CASE("nudge_marker_right: moves boundary right; prev grows, sel shrinks",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
+    // The canonical boundary-shift case (matches the AskUserQuestion
+    // preview). Two adjacent markers with gap-of-1 (blind-mode output
+    // shape). Nudge right on marker[1]: boundary between [0] and [1]
+    // moves right by 1; marker[0] grows, marker[1] shrinks; gap-of-1
+    // preserved.
+    auto s = build_state(/*total=*/1000,
+                         {marker(100, 199), marker(200, 299)},
+                         /*selected=*/1);
+    mwaac::tui::nudge_marker_right(s);
+    CHECK(s.split_points[0].start_sample == 100);
+    CHECK(s.split_points[0].end_sample == 200);  // grew
+    CHECK(s.split_points[1].start_sample == 201);  // shrunk
+    CHECK(s.split_points[1].end_sample == 299);
+    // Inter-track gap preserved (end[0] + 1 == start[1]):
+    CHECK(s.split_points[0].end_sample + 1 == s.split_points[1].start_sample);
+}
+
+TEST_CASE("nudge_marker_right: first marker (idx == 0) no-ops (no boundary before file start)",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
+{
+    // Mi-MARKER-NUDGE-SEMANTIC: selected_marker == 0 has no boundary
+    // BEFORE it — the file start is fixed. Nudge no-ops.
     auto s = build_state(/*total=*/1000,
                          {marker(100, 200)},
-                         /*selected=*/0);
-    mwaac::tui::nudge_marker_right(s);
-    CHECK(s.split_points[0].start_sample == 101);
-    CHECK(s.split_points[0].end_sample == 201);
-}
-
-TEST_CASE("nudge_marker_right: clamps against total_samples - 1",
-          "[tui][app_handlers][mi-8]")
-{
-    // Marker's end_sample is already at the last valid sample
-    // (total_samples - 1 = 999). Nudge right must no-op.
-    auto s = build_state(/*total=*/1000,
-                         {marker(800, 999)},
-                         /*selected=*/0);
-    mwaac::tui::nudge_marker_right(s);
-    CHECK(s.split_points[0].start_sample == 800);
-    CHECK(s.split_points[0].end_sample == 999);
-}
-
-TEST_CASE("nudge_marker_right: clamps against next marker's start_sample",
-          "[tui][app_handlers][mi-8]")
-{
-    // marker[0] ends at 199; marker[1] starts at 200. The inter-track
-    // gap invariant requires marker[0].end_sample < marker[1].start_sample.
-    // Currently end=199 < start=200 (gap of 1). Nudging marker[0] right
-    // would make end=200, which equals next.start — must no-op.
-    auto s = build_state(/*total=*/1000,
-                         {marker(100, 199), marker(200, 500)},
                          /*selected=*/0);
     mwaac::tui::nudge_marker_right(s);
     CHECK(s.split_points[0].start_sample == 100);
-    CHECK(s.split_points[0].end_sample == 199);
-    // marker[1] unchanged.
-    CHECK(s.split_points[1].start_sample == 200);
+    CHECK(s.split_points[0].end_sample == 200);
 }
 
-TEST_CASE("nudge_marker_right: last marker clamps against total_samples - 1, not next",
-          "[tui][app_handlers][mi-8]")
+TEST_CASE("nudge_marker_right: refuses when selected marker would collapse to zero duration",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
-    // marker[1] is last; only the global bound applies. Currently end=998;
-    // nudge right should produce end=999 (still < 1000 = total_samples).
+    // marker[1] is currently duration 1 (start==end==200). Nudge right
+    // would push start to 201 > end=200 → zero/negative duration. Refuse.
     auto s = build_state(/*total=*/1000,
-                         {marker(100, 199), marker(200, 998)},
+                         {marker(100, 199), marker(200, 200)},
                          /*selected=*/1);
     mwaac::tui::nudge_marker_right(s);
-    CHECK(s.split_points[1].end_sample == 999);
+    CHECK(s.split_points[1].start_sample == 200);
+    CHECK(s.split_points[1].end_sample == 200);
+    // Neighbor also unchanged.
+    CHECK(s.split_points[0].end_sample == 199);
 }
 
-// ─── nudge_marker_left ─────────────────────────────────────────────
+TEST_CASE("nudge_marker_right: works on blind-mode gap-of-1 output (Mi-MARKER-NUDGE-SEMANTIC regression-guard)",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
+{
+    // The motivating case for the Mi-MARKER-NUDGE-SEMANTIC re-cure:
+    // pre-re-cure (block-shift), interior markers on blind-mode
+    // gap-of-1 output universally no-op'd. Post-re-cure (boundary-shift),
+    // they nudge naturally. This case asserts marker[1] in a 3-track
+    // blind-mode-shape layout (end[0]=199, start[1]=200, end[1]=399,
+    // start[2]=400) successfully nudges.
+    auto s = build_state(/*total=*/10000,
+                         {marker(0, 199), marker(200, 399), marker(400, 9999)},
+                         /*selected=*/1);
+    mwaac::tui::nudge_marker_right(s);
+    // Boundary between marker[0] and marker[1] moved right.
+    CHECK(s.split_points[0].end_sample == 200);
+    CHECK(s.split_points[1].start_sample == 201);
+    // Other edges of marker[1] and other markers untouched.
+    CHECK(s.split_points[1].end_sample == 399);
+    CHECK(s.split_points[2].start_sample == 400);
+}
 
-TEST_CASE("nudge_marker_left: normal shift (no neighbors, well within bounds)",
-          "[tui][app_handlers][mi-8]")
+// ─── nudge_marker_left (symmetric) ──────────────────────────────────
+
+TEST_CASE("nudge_marker_left: moves boundary left; prev shrinks, sel grows",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
+{
+    auto s = build_state(/*total=*/1000,
+                         {marker(100, 199), marker(200, 299)},
+                         /*selected=*/1);
+    mwaac::tui::nudge_marker_left(s);
+    CHECK(s.split_points[0].start_sample == 100);
+    CHECK(s.split_points[0].end_sample == 198);  // shrunk
+    CHECK(s.split_points[1].start_sample == 199);  // grew
+    CHECK(s.split_points[1].end_sample == 299);
+    // Inter-track gap preserved (end[0] + 1 == start[1]):
+    CHECK(s.split_points[0].end_sample + 1 == s.split_points[1].start_sample);
+}
+
+TEST_CASE("nudge_marker_left: first marker (idx == 0) no-ops (no boundary before file start)",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
     auto s = build_state(/*total=*/1000,
                          {marker(100, 200)},
                          /*selected=*/0);
     mwaac::tui::nudge_marker_left(s);
-    CHECK(s.split_points[0].start_sample == 99);
-    CHECK(s.split_points[0].end_sample == 199);
-}
-
-TEST_CASE("nudge_marker_left: clamps against 0",
-          "[tui][app_handlers][mi-8]")
-{
-    // start_sample == 0 — pre-cure this was the only guarded case.
-    auto s = build_state(/*total=*/1000,
-                         {marker(0, 200)},
-                         /*selected=*/0);
-    mwaac::tui::nudge_marker_left(s);
-    CHECK(s.split_points[0].start_sample == 0);
+    CHECK(s.split_points[0].start_sample == 100);
     CHECK(s.split_points[0].end_sample == 200);
 }
 
-TEST_CASE("nudge_marker_left: clamps against previous marker's end_sample",
-          "[tui][app_handlers][mi-8]")
+TEST_CASE("nudge_marker_left: refuses when previous marker would collapse to zero duration",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
-    // marker[0] ends at 199; marker[1] starts at 200. Nudging marker[1]
-    // left would make start=199 which equals prev.end — must no-op.
+    // marker[0] is currently duration 1 (start==end==100). Nudge left
+    // would push prev.end to 99 < prev.start=100 → zero/negative duration.
     auto s = build_state(/*total=*/1000,
-                         {marker(100, 199), marker(200, 500)},
+                         {marker(100, 100), marker(200, 500)},
                          /*selected=*/1);
     mwaac::tui::nudge_marker_left(s);
+    CHECK(s.split_points[0].end_sample == 100);
     CHECK(s.split_points[1].start_sample == 200);
-    CHECK(s.split_points[1].end_sample == 500);
 }
 
 // ─── degenerate inputs ─────────────────────────────────────────────
@@ -171,43 +196,49 @@ TEST_CASE("nudge_marker_*: selected_marker out of range no-ops both directions",
                          /*selected=*/5);  // out of range
     mwaac::tui::nudge_marker_right(s);
     mwaac::tui::nudge_marker_left(s);
-    // The (only) marker is unchanged.
     CHECK(s.split_points[0].start_sample == 100);
     CHECK(s.split_points[0].end_sample == 200);
 }
 
-TEST_CASE("nudge_marker_right: empty audio (total_samples == 0) no-ops",
-          "[tui][app_handlers][mi-8]")
+// ─── boundary-shift invariants ──────────────────────────────────────
+
+TEST_CASE("nudge_marker_*: inter-track gap preserved across boundary-shift sequences",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
-    // Edge case: AppState with no audio loaded. total_samples - 1 = -1;
-    // any nudge right with marker end >= 0 would exceed it (or invoke
-    // signed arithmetic at the bound). Mutator must no-op.
-    auto s = build_state(/*total=*/0,
-                         {marker(0, 0)},
-                         /*selected=*/0);
-    mwaac::tui::nudge_marker_right(s);
-    CHECK(s.split_points[0].start_sample == 0);
-    CHECK(s.split_points[0].end_sample == 0);
+    // Boundary-shift cure shifts BOTH prev.end and sel.start by the
+    // same delta in lockstep. The inter-track gap (sel.start - prev.end)
+    // is invariant. Verify across a long sequence of nudges.
+    auto s = build_state(/*total=*/10000,
+                         {marker(100, 199), marker(200, 5000)},
+                         /*selected=*/1);
+    const std::int64_t initial_gap =
+        s.split_points[1].start_sample - s.split_points[0].end_sample;
+    for (int i = 0; i < 100; ++i) {
+        mwaac::tui::nudge_marker_right(s);
+        CHECK(s.split_points[1].start_sample - s.split_points[0].end_sample == initial_gap);
+    }
+    for (int i = 0; i < 200; ++i) {
+        mwaac::tui::nudge_marker_left(s);
+        CHECK(s.split_points[1].start_sample - s.split_points[0].end_sample == initial_gap);
+    }
 }
 
-// ─── within-marker invariant preservation ──────────────────────────
-
-TEST_CASE("nudge_marker_*: preserves duration_samples on every successful nudge",
-          "[tui][app_handlers][mi-8]")
+TEST_CASE("nudge_marker_*: durations change inversely across boundary-shift",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
-    // Both start and end shift by the same delta, so duration is
-    // invariant. Verify across a sequence of nudges.
-    auto s = build_state(/*total=*/1000,
-                         {marker(100, 200)},
-                         /*selected=*/0);
-    const std::int64_t initial_duration = s.split_points[0].duration_samples();
-    for (int i = 0; i < 50; ++i) {
-        mwaac::tui::nudge_marker_right(s);
-        CHECK(s.split_points[0].duration_samples() == initial_duration);
-    }
+    // Per the boundary-shift semantic, when the boundary moves right
+    // by N: prev gains N samples, sel loses N samples. Sum of adjacent
+    // durations is invariant. Verify across a sequence.
+    auto s = build_state(/*total=*/10000,
+                         {marker(100, 199), marker(200, 500)},
+                         /*selected=*/1);
+    const std::int64_t initial_sum =
+        s.split_points[0].duration_samples() + s.split_points[1].duration_samples();
     for (int i = 0; i < 100; ++i) {
-        mwaac::tui::nudge_marker_left(s);
-        CHECK(s.split_points[0].duration_samples() == initial_duration);
+        mwaac::tui::nudge_marker_right(s);
+        const std::int64_t cur_sum =
+            s.split_points[0].duration_samples() + s.split_points[1].duration_samples();
+        CHECK(cur_sum == initial_sum);
     }
 }
 
