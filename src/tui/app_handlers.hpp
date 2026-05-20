@@ -33,21 +33,38 @@
 
 namespace mwaac::tui {
 
-// Shift the selected marker (a SplitPoint representing a track range)
-// one sample to the right. No-ops when:
+// Move the BOUNDARY before the selected marker (the boundary between
+// markers[selected-1] and markers[selected]) one sample to the right.
+// Adjusts both edges of that boundary in lockstep:
+//   - markers[selected-1].end_sample += 1 (grows marker[selected-1])
+//   - markers[selected].start_sample += 1 (shrinks marker[selected])
+// Inter-track gap is preserved; adjacent track durations change
+// inversely.
+//
+// Mi-MARKER-NUDGE-SEMANTIC (cure 2026-05-20): boundary-shift semantic
+// chosen over the original block-shift (Mi-8) per user judgment. The
+// block-shift semantic preserved per-marker duration but combined with
+// blind_mode's algorithmic-output gap-of-exactly-1 made interior
+// markers in the dominant blind-mode workflow universally unable to
+// nudge.
+//
+// No-ops when:
 //   - split_points is empty or selected_marker is out of range
-//   - moving right would push end_sample past total_samples - 1
-//   - moving right would push end_sample to or past the next marker's
-//     start_sample (maintaining the inter-track gap)
-// The marker shifts as a block: both start_sample and end_sample
-// move by the same delta, so within-marker duration is preserved.
+//   - selected_marker == 0 (no boundary before the first marker — its
+//     start_sample is at the file start and not editable via nudge)
+//   - moving the boundary right would collapse markers[selected] to
+//     zero or negative duration
 void nudge_marker_right(AppState& state);
 
-// Mirror of nudge_marker_right. No-ops when:
+// Mirror of nudge_marker_right. Moves the boundary BEFORE the selected
+// marker one sample to the left:
+//   - markers[selected-1].end_sample -= 1 (shrinks marker[selected-1])
+//   - markers[selected].start_sample -= 1 (grows marker[selected])
+// No-ops when:
 //   - split_points is empty or selected_marker is out of range
-//   - moving left would push start_sample below 0
-//   - moving left would push start_sample to or past the previous
-//     marker's end_sample (maintaining the inter-track gap)
+//   - selected_marker == 0 (no boundary before first marker)
+//   - moving the boundary left would collapse markers[selected-1] to
+//     zero or negative duration
 void nudge_marker_left(AppState& state);
 
 // View-bounds mutators (Mi-9). Each call ends with a normalization
