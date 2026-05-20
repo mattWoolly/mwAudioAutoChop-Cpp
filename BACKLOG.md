@@ -1795,7 +1795,7 @@ migration to `std::expected`-style storage happens in M-14.
         confirm the cure path for all clamp boundaries (global upper,
         global lower, sibling upper, sibling lower, last-marker-no-next).
 
-### Mi-CURSOR-COL-CLAMP — TUI ArrowRight cursor_col unbounded increment
+### Mi-CURSOR-COL-CLAMP — TUI ArrowRight cursor_col unbounded increment — **RESOLVED in #60 (`55b2aa4`)**
 
 - **Origin.** Surfaced during Mi-8 audit-1 (PR #58 audit-agent
   finding 1, 2026-05-19). Adjacent-entry sweep in `src/tui/app.cpp`
@@ -1831,13 +1831,32 @@ migration to `std::expected`-style storage happens in M-14.
   pattern. May be dispatched after Mi-9 since `cursor_col` shares
   some state with view bounds and a unified mutator pass might be
   more efficient — decide at dispatch.
+- **Audit-cardinality.** Single-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook clear
+  (pure adoption of well-established Mi-8/Mi-9 harness pattern); blast-
+  radius small (5 LOC mutator + 1-line dispatch + 6 TEST_CASEs). Audit
+  retried once after transient API 529; returned CLEAN.
+- **Cure shape divergence from Mi-8/Mi-9 pattern.** `cursor_col` lives
+  in `run_tui`'s local scope (NOT in AppState), so the mutator
+  signatures take `int& cursor_col` rather than `AppState&`. FTXUI's
+  `Terminal::Size()` query stays in app.cpp; the mutator itself is
+  pure (no FTXUI dependency in the test path). The asymmetric
+  extraction (left side is extraction-only since pre-cure already
+  clamped; right side is extraction + clamp-fix) is documented in
+  the cure comment.
 - **Exit criteria.**
-  - [ ] ArrowRight handler clamps `cursor_col` against display_width
-        upper bound (mirror of ArrowLeft's lower-bound clamp at `:255`).
-  - [ ] Mutator extracted into `app_handlers.{hpp,cpp}` (same pattern
-        as Mi-8's nudge_marker_*).
-  - [ ] Tests in `test_app_handlers.cpp` exercise both ends of the
-        cursor range.
+  - [x] ArrowRight handler clamps `cursor_col` against display_width
+        upper bound. Implementation: `cursor_col = std::min(cursor_col + 1,
+        std::max(0, display_width - 1));` in
+        `src/tui/app_handlers.cpp:move_cursor_right`. The `std::max(0, ...)`
+        defends against degenerate `display_width <= 0` (terminal
+        width 1 produces `dimx - 2 = -1` in the handler).
+  - [x] Mutator extracted into `app_handlers.{hpp,cpp}`. Same pattern
+        as Mi-8's `nudge_marker_*` modulo the by-reference signature
+        adaptation.
+  - [x] Tests in `test_app_handlers.cpp` exercise both ends of the
+        cursor range. 6 new TEST_CASEs: 4 regression-guards (would
+        FAIL with cure reverted) + 2 invariant locks / documentation.
 
 ### Mi-MARKER-NUDGE-SEMANTIC — block-shift vs boundary-shift cure semantic (Mi-8 audit-2 UX discovery)
 
