@@ -958,7 +958,41 @@ enum value) under the post-M-14 unified taxonomy.
 
 ### INV-SPLITPOINT-ORDER — `0 ≤ start ≤ end ≤ total - 1` for every SplitPoint
 
-- **Status.** `pending` (Mi-8).
+For every `SplitPoint` produced by the analysis pipelines and
+maintained by the TUI editing surface:
+`0 ≤ start_sample ≤ end_sample ≤ total_samples - 1`. Within-marker
+ordering is preserved trivially by block-shift nudge semantics
+(both edges shift by the same delta — see Mi-8 cure). Cross-marker
+no-gap invariant `markers[i].end_sample < markers[i+1].start_sample`
+is maintained by the sibling clamp in the TUI nudge mutators
+(blind_mode and reference_mode pipelines produce it via the
+post-loop end_sample fill-in; TUI editing must not break it).
+
+- **Owner.** TUI marker editing in `src/tui/app_handlers.cpp`
+  (`nudge_marker_right` + `nudge_marker_left`); algorithmic
+  producers in `src/modes/blind_mode.cpp` and
+  `src/modes/reference_mode.cpp`.
+- **Enforcement.**
+  - In-mutator clamping: `nudge_marker_right` refuses to nudge if
+    the result would exceed `min(total_samples - 1, next_marker.start_sample - 1)`;
+    `nudge_marker_left` refuses if the result would fall below
+    `max(0, prev_marker.end_sample + 1)`.
+  - `tests/test_app_handlers.cpp` 11 TEST_CASEs (7 Mi-8 regression-
+    guards + 4 invariant locks). Classification annotated in the
+    file's header per Mi-8 audit-1 finding 2 so future-Mi-* authors
+    extending the harness preserve the regression-guard ratio.
+  - `duration_samples()` preservation test asserts the within-marker
+    invariant across long nudge sequences — locks the block-shift
+    property against a future regression that might shift one edge
+    without the other.
+- **Status.** `holds` (block-shift semantics) post-Mi-8 merge
+  `0980606` (PR #58). See **Mi-MARKER-NUDGE-SEMANTIC** in
+  `BACKLOG.md` for the audit-2 UX discovery that the block-shift
+  semantic combined with blind_mode's algorithmic-output
+  gap-of-exactly-1 makes interior markers in blind-mode output
+  unable to nudge in either direction (only first-marker-left and
+  last-marker-right can move). Pending user judgment on whether to
+  switch to boundary-shift semantics.
 
 ### INV-VIEW-NON-INVERTED — `0 ≤ view_start < view_end ≤ total_samples` in TUI
 

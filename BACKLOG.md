@@ -1742,17 +1742,167 @@ migration to `std::expected`-style storage happens in M-14.
 
 ## Tier 7 — TUI invariants
 
-### Mi-8 — TUI marker nudge breaks start≤end invariant
+### Mi-8 — TUI marker nudge breaks start≤end invariant — **RESOLVED in #58 (`0980606`)**
 
-- **Defect.** `tui/app.cpp:191–204` increments/decrements without bounds.
+- **Defect.** `tui/app.cpp:191–209` `+`/`=`/`]` handlers incremented
+  both `start_sample` and `end_sample` by 1 with NO bounds clamping;
+  `-`/`_`/`[` handlers had a single `start_sample > 0` guard but no
+  clamping against sibling markers or `total_samples`.
 - **Invariant established.** "For every SplitPoint:
-  `0 ≤ start_sample ≤ end_sample ≤ total_samples - 1`."
-- **Files touched.** `src/tui/app.cpp`.
-- **Tests added.** TUI tests are currently absent; add a headless unit test
-  at the state-mutator level.
-  - `tui: nudge clamps against neighbor start_sample` (new).
+  `0 ≤ start_sample ≤ end_sample ≤ total_samples - 1`" — preserved
+  trivially because nudges shift both edges by the same delta
+  (block-shift semantics; see Mi-MARKER-NUDGE-SEMANTIC below for the
+  audit-2 UX-implication finding). Cross-marker no-gap invariant
+  `markers[i].end_sample < markers[i+1].start_sample` from the
+  blind_mode / reference_mode pipelines is also maintained by the
+  sibling clamp.
+- **Cure shape.** New file pair `src/tui/app_handlers.{hpp,cpp}` —
+  establishes the state-mutator harness Mi-8 / Mi-9 BACKLOG entries
+  identified as a prerequisite. Pure free functions
+  `nudge_marker_right(AppState&)` / `nudge_marker_left(AppState&)`
+  in `mwaac::tui` namespace; FTXUI event-handler closures in
+  `app.cpp` collapse to one-line dispatches. Mutators no-op on
+  degenerate input (empty split_points, out-of-range selected_marker,
+  empty audio) and on attempts to nudge past the global or sibling
+  bounds (refuses-not-saturates to preserve `duration_samples()`).
+- **Files touched.** `src/tui/app.cpp` (handler bodies reduced to
+  dispatches), `src/tui/app_handlers.hpp` (NEW — mutator
+  declarations), `src/tui/app_handlers.cpp` (NEW — mutator
+  implementations), `tests/test_app_handlers.cpp` (NEW — second
+  test target linking mwaac_tui after `test_waveform`, with 11
+  TEST_CASEs covering normal/clamped/degenerate paths +
+  duration-preservation invariant), `CMakeLists.txt` (wired new
+  source + test target).
+- **Tests added.** 11 TEST_CASEs in `tests/test_app_handlers.cpp`.
+  Audit-1 classified 7 as Mi-8 regression-guards (fail with cure
+  reverted) and 4 as invariant locks / defensive documentation
+  (pass pre-cure); classification annotated in the test-file
+  header comment per audit-1 finding 2.
+- **Audit-cardinality.** Two-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook single
+  (small cure), blast-radius flagged on the first state-mutator
+  harness establishing precedent for Mi-9 and beyond. Both audits
+  returned CONCERNS with explicit "merge + file separately"
+  recommendations:
+  - Audit-1: cursor_col adjacent finding (filed as Mi-CURSOR-COL-CLAMP
+    below) + test-classification clarity note (annotated post-merge
+    in test-file header).
+  - Audit-2: block-shift vs boundary-shift UX semantic discovery
+    (filed as Mi-MARKER-NUDGE-SEMANTIC below for user judgment).
 - **Exit criteria.**
-  - [ ] Nudge handlers clamp against sibling markers and global limits.
+  - [x] Nudge handlers clamp against sibling markers and global
+        limits. Implementation in `src/tui/app_handlers.cpp`; tests
+        confirm the cure path for all clamp boundaries (global upper,
+        global lower, sibling upper, sibling lower, last-marker-no-next).
+
+### Mi-CURSOR-COL-CLAMP — TUI ArrowRight cursor_col unbounded increment
+
+- **Origin.** Surfaced during Mi-8 audit-1 (PR #58 audit-agent
+  finding 1, 2026-05-19). Adjacent-entry sweep in `src/tui/app.cpp`
+  flagged `:259` `cursor_col++` as same-defect-class to Mi-8 (TUI
+  state-mutator bounds-clamping omission).
+- **Defect.** `src/tui/app.cpp:259` (ArrowRight handler) increments
+  `cursor_col` with no upper bound; `ArrowLeft` at `:255` correctly
+  clamps the lower bound at 0 via `std::max(0, cursor_col - 1)`.
+  Pre-cure: indefinite right-arrow presses produce `cursor_col`
+  values that overflow the terminal width and the audio sample
+  count; the value flows into `render_waveform` as `cursor_pos`
+  parameter at `:62` of app.cpp.
+- **Reachability dormancy.** Not exploited today because the cursor
+  is used for visual display only (the bug doesn't corrupt state
+  beyond the cursor position itself); render_waveform's per-column
+  loop bounds it by `peaks.size() == width`, so an out-of-range
+  cursor just doesn't show. But the unbounded-mutation shape is
+  the same defect class Mi-8 cured for split-point markers.
+- **Invariant established.** "0 ≤ cursor_col ≤ display_width - 1
+  (or whatever upper bound the TUI imposes); ArrowRight clamps
+  against the upper bound symmetrically to ArrowLeft."
+- **Files touched.** `src/tui/app_handlers.{hpp,cpp}` (add
+  `move_cursor_right(AppState&, int display_width)` mutator;
+  symmetric extraction to Mi-8's nudge pattern). `src/tui/app.cpp`
+  (ArrowRight handler dispatches to new mutator). `tests/test_app_handlers.cpp`
+  (new TEST_CASEs for the cursor-clamp invariant).
+- **Tier rationale.** Tier 7 (TUI invariants). Same shape as Mi-8.
+- **Effort.** ≤ 20 LOC + 2-3 TEST_CASEs.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
+  the finding surfaced during Mi-8 audit-1 on a different handler
+  in the same tier and file. Filing as its own item rather than
+  expanding Mi-8 scope preserves the single-defect-per-PR cycle
+  pattern. May be dispatched after Mi-9 since `cursor_col` shares
+  some state with view bounds and a unified mutator pass might be
+  more efficient — decide at dispatch.
+- **Exit criteria.**
+  - [ ] ArrowRight handler clamps `cursor_col` against display_width
+        upper bound (mirror of ArrowLeft's lower-bound clamp at `:255`).
+  - [ ] Mutator extracted into `app_handlers.{hpp,cpp}` (same pattern
+        as Mi-8's nudge_marker_*).
+  - [ ] Tests in `test_app_handlers.cpp` exercise both ends of the
+        cursor range.
+
+### Mi-MARKER-NUDGE-SEMANTIC — block-shift vs boundary-shift cure semantic (Mi-8 audit-2 UX discovery)
+
+- **Origin.** Surfaced during Mi-8 audit-2 (PR #58 audit-agent,
+  2026-05-19). The cure landed in #58 satisfies the Mi-8 invariant
+  ("0 ≤ start ≤ end ≤ total - 1" + sibling clamp) faithfully — but
+  the audit's invariant trace discovered a UX implication that
+  warrants user judgment.
+- **Defect (UX, not correctness).** Mi-8's cure preserves the
+  pre-cure **block-shift semantic**: a `+` nudge shifts both
+  `start_sample` and `end_sample` of the selected marker by 1
+  sample, leaving adjacent markers untouched. Combined with the
+  cure's sibling-clamp (don't push end past next.start - 1) and
+  blind_mode's algorithmic-output invariant
+  (`end[i] = start[i+1] - 1`, i.e. gap-of-exactly-1 between adjacent
+  tracks), the cure makes interior markers in blind-mode output
+  **universally no-op** on both `+` and `-` nudges: nudging right
+  requires gap-of-2 ahead (only first marker on a non-adjacent
+  layout can move right; only last marker can move left). The
+  feature is preserved for reference-mode (where tracks are
+  independently positioned and gaps are data-dependent) but
+  degraded for blind-mode's dominant workflow.
+- **Two cure-shape options.**
+  - **(a) Block-shift (current, landed in #58).** Nudge shifts the
+    entire track block as a unit; gaps between tracks grow or
+    shrink as a side effect. Refuses-to-nudge rather than altering
+    gaps below 1 sample. Invariant: every track's duration is
+    preserved across nudges. **Cost**: on blind-mode output (the
+    dominant cycle workflow), interior markers cannot be nudged at
+    all because the algorithmic-output gap is exactly 1.
+  - **(b) Boundary-shift (alternative).** Nudge moves the BOUNDARY
+    between adjacent tracks; `markers[i].end_sample` and
+    `markers[i+1].start_sample` shift in lockstep. Adjacent tracks
+    resize. Invariant: every nudge preserves the total covered range
+    and the inter-track gap; durations of the two adjacent tracks
+    change inversely. **Cost**: more complex cure (must mutate two
+    markers per nudge, with bounds checks against both edges); the
+    "selected marker" semantic becomes ambiguous (does `+` move the
+    boundary AFTER the selected marker, or BEFORE?).
+- **What needs user input.** Which semantic matches your intent for
+  marker editing? Block-shift is the conservative continuation of
+  pre-cure behavior; boundary-shift is what a user familiar with
+  DAW track-boundary editing would expect. The BACKLOG Mi-8 entry
+  as originally written did not disambiguate; the cure went with
+  block-shift to preserve the pre-cure behavior modulo clamping.
+- **Possible outcomes.**
+  - (a) **Block-shift confirmed.** Close as INVESTIGATE-only;
+    document the gap-of-1 → no-op trade-off in
+    INV-MARKER-NUDGE-BOUNDS as expected behavior; future users
+    can work around by inserting a gap before nudging.
+  - (b) **Boundary-shift authorized.** Re-cure Mi-8 with the
+    boundary-shift semantic. Estimated effort: ~50 LOC + tests
+    (the harness from #58 still applies; just different mutator
+    logic).
+  - (c) **Hybrid.** Add a key-combination (e.g. `Shift+`/`Shift+-`)
+    for the alternative semantic. Most flexible; most complex.
+- **Tier rationale.** Tier 7 (TUI invariants). Same tier as Mi-8.
+- **Effort.** Investigation: ~10 minutes (user decision). Cure (if
+  any): bounded by outcome above.
+- **Filed timing.** Per `feedback_escalation_framing_governance_not_technical.md`
+  — surface as audit-verdict + recommendation; user adjudicates.
+  Filed as a separate item rather than blocking Mi-8 PR per
+  audit-2's explicit "do NOT block this PR" recommendation. The
+  Mi-8 cure is correct as specified; this item resolves the
+  underspecification.
 
 ### Mi-9 — TUI view bounds can invert
 

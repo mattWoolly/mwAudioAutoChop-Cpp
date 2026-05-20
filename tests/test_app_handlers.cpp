@@ -12,6 +12,28 @@
 // a synthetic AppState directly and invoke the mutators in
 // app_handlers.cpp without any FTXUI dependency — no terminal, no
 // event loop, no screen.
+//
+// TEST_CASE classification (per Mi-8 audit-1 finding 2):
+//
+//   Mi-8 regression-guards (would FAIL with cure reverted):
+//     - nudge_marker_right: clamps against total_samples - 1
+//     - nudge_marker_right: clamps against next marker's start_sample
+//     - nudge_marker_right: last marker clamps against total_samples - 1, not next
+//     - nudge_marker_left: clamps against previous marker's end_sample
+//     - nudge_marker_right: empty audio (total_samples == 0) no-ops
+//     - (Implicit) the normal-shift tests confirm the cure didn't
+//       break working paths — they pass both pre- and post-cure but
+//       fail under any cure that breaks the non-degenerate path.
+//
+//   Invariant locks / defensive documentation (pass pre-cure too):
+//     - nudge_marker_left: clamps against 0  (pre-cure guard covered this)
+//     - nudge_marker_*: empty split_points no-ops both directions
+//     - nudge_marker_*: selected_marker out of range no-ops both directions
+//     - nudge_marker_*: preserves duration_samples (block-shift property)
+//
+// Future Mi-9 (and beyond) authors: when extending this harness,
+// preserve the regression-guard / invariant-lock distinction. A test
+// that passes pre-cure is documentation, not a guard.
 
 namespace {
 
