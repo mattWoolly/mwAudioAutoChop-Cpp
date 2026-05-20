@@ -1997,7 +1997,7 @@ migration to `std::expected`-style storage happens in M-14.
         called by all four mutators on commit; enforces
         INV-VIEW-NON-INVERTED by construction.
 
-### Mi-VIEW-ZOOM-BOUNDARY-SHIFT — `zoom_out` near boundaries produces narrower-than-requested range (Mi-9 audit-1 finding 1)
+### Mi-VIEW-ZOOM-BOUNDARY-SHIFT — `zoom_out` near boundaries produces narrower-than-requested range (Mi-9 audit-1 finding 1) — **RESOLVED in #61 (`60c23ff`)**
 
 - **Origin.** Surfaced during Mi-9 audit-1 (PR #59 audit-agent
   finding 1, 2026-05-19).
@@ -2034,12 +2034,42 @@ migration to `std::expected`-style storage happens in M-14.
   but a different defect surface (UX-shape, not invariant-shape).
   Filing as own item rather than expanding Mi-9 scope per audit's
   explicit "ACCEPT for Mi-9, file follow-up" recommendation.
+- **Audit-cardinality.** Single-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook clear
+  (pure extension of Mi-9's `commit_normalized_view`); blast-radius
+  small (~12 LOC + 4 TEST_CASEs). Audit returned CLEAN on all 4 axes.
+- **Cure shape.** Shift-shift policy in `commit_normalized_view`:
+  detect each edge's overflow before the final clamp pass and shift
+  the opposite edge by the same delta. Order matters (left-then-right)
+  so requested range > total collapses cleanly to `[0, total]` after
+  the second shift triggers the final clamp.
 - **Exit criteria.**
-  - [ ] `zoom_out` near `[0, total]` boundary produces a view with
+  - [x] `zoom_out` near `[0, total]` boundary produces a view with
         the requested range (not a narrowed range), with `view_start`
         or `view_end` pinned at the boundary as appropriate.
-  - [ ] TEST_CASEs exercise both boundary cases (start at 0, end
-        at total).
+        Implementation: shift-shift block in
+        `src/tui/app_handlers.cpp:commit_normalized_view`.
+  - [x] TEST_CASEs exercise both boundary cases (start at 0, end
+        at total). Both regression-guards present in
+        `tests/test_app_handlers.cpp`; verified to FAIL with cure
+        reverted (audit-1 axis 4).
+
+### Tier 7 cleanup-tail close (Mi-VIEW-ZOOM-BOUNDARY-SHIFT close-out)
+
+Tier 7 originally-planned items closed 2026-05-19 across PRs #56
+(M-WAVEFORM-CLAMP-UB), #57 (Mi-10), #58 (Mi-8), #59 (Mi-9). Dispatch
+tail follow-ups all closed 2026-05-20 across PRs #60 (Mi-CURSOR-COL-CLAMP)
+and #61 (Mi-VIEW-ZOOM-BOUNDARY-SHIFT) — total Tier 7 cleanup: 6 PRs
++ 1 INVESTIGATE-only-pending item.
+
+**Remaining Tier 7 item: Mi-MARKER-NUDGE-SEMANTIC** (filed during
+Mi-8 audit-2). Needs user judgment — block-shift vs boundary-shift
+cure semantic. The current block-shift cure satisfies the BACKLOG
+Mi-8 invariant but makes interior markers in blind-mode output
+universally unable to nudge in either direction (gap-of-1 algorithmic-
+output × block-shift = nudge no-op). Boundary-shift alternative would
+resize adjacent tracks. See M-MARKER-NUDGE-SEMANTIC entry for the
+full framing.
 
 ### Mi-10 — run_tui exit-code documentation — **RESOLVED in #57 (`f359e19`)**
 
