@@ -1858,7 +1858,7 @@ migration to `std::expected`-style storage happens in M-14.
         cursor range. 6 new TEST_CASEs: 4 regression-guards (would
         FAIL with cure reverted) + 2 invariant locks / documentation.
 
-### Mi-MARKER-NUDGE-SEMANTIC — block-shift vs boundary-shift cure semantic (Mi-8 audit-2 UX discovery)
+### Mi-MARKER-NUDGE-SEMANTIC — block-shift vs boundary-shift cure semantic (Mi-8 audit-2 UX discovery) — **RESOLVED in #62 (`d20c899`) with boundary-shift re-cure**
 
 - **Origin.** Surfaced during Mi-8 audit-2 (PR #58 audit-agent,
   2026-05-19). The cure landed in #58 satisfies the Mi-8 invariant
@@ -1922,6 +1922,109 @@ migration to `std::expected`-style storage happens in M-14.
   audit-2's explicit "do NOT block this PR" recommendation. The
   Mi-8 cure is correct as specified; this item resolves the
   underspecification.
+- **Resolution (2026-05-20).** User authorized option (b)
+  **boundary-shift** via AskUserQuestion. Re-cure landed in PR #62
+  (`d20c899`):
+  - `src/tui/app_handlers.cpp`: rewrote `nudge_marker_right` and
+    `nudge_marker_left` from block-shift to boundary-shift. `+`/`-`
+    on selected marker N moves the BOUNDARY between
+    `markers[N-1]` and `markers[N]`. Both `markers[N-1].end_sample`
+    and `markers[N].start_sample` shift by ±1 in lockstep. Adjacent
+    track durations change inversely. Inter-track gap preserved.
+  - First marker (`N == 0`) no-ops — no boundary before file start.
+  - Refusal: zero-duration collapse on the marker whose duration
+    would shrink (selected on right-nudge; previous on left-nudge).
+  - 11 Mi-8 TEST_CASEs (block-shift assertions) rewritten as 12
+    boundary-shift TEST_CASEs. Audit-1 follow-ups in same PR added
+    2 more (last-allowed-step coverage on both directions) +
+    updated stale call-site comment in `app.cpp`.
+  - Two audits CLEAN (cure correctness + semantic match). Two
+    optional follow-up items filed (see below — both are forward-
+    looking defensive design questions, not bugs).
+- **Re-cure follow-ups (audit-2 optional findings).**
+  - **Mi-NUDGE-EVIDENCE-STALENESS** — boundary-shift leaves
+    `prev.evidence` and `sel.evidence` maps describing the pre-edit
+    sample ranges (the evidence was attached by the algorithmic
+    pipeline at the time the marker was constructed). Audit-2
+    classified as "descriptive provenance, not a coordinate
+    contract" — nothing in `src/` consumes evidence post-export.
+    Filed for documentation only.
+  - **Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP** — audit-2 noted that the
+    re-cure dropped Mi-8's `total_samples - 1` clamp. The hole is
+    unreachable through any current code path (no TUI mutator
+    extends `sel.end_sample`; algorithmic pipelines cap at
+    `total - 1`). Forward-compat precondition assertion would
+    catch a future end-extending mutator. Filed for forward-compat.
+
+### Mi-NUDGE-EVIDENCE-STALENESS — boundary-shift leaves marker evidence describing pre-edit ranges
+
+- **Origin.** Surfaced during Mi-MARKER-NUDGE-SEMANTIC audit-2
+  (PR #62, 2026-05-20).
+- **Defect (descriptive, not invariant).** When the user nudges
+  marker boundaries via `+`/`-`, the cure shifts `prev.end_sample`
+  and `sel.start_sample` but does NOT touch either marker's
+  `evidence` map. The evidence was attached by the algorithmic
+  pipeline at the time the marker was constructed (e.g.
+  `blind_mode.cpp:255-256` sets `gap_start_frame` /
+  `gap_end_frame` per the original gap location). After several
+  nudges, the evidence keys point to sample positions outside
+  the current marker range — they describe where the gap *was
+  found*, not where the marker *is now*.
+- **Reachability.** No consumer in `src/` reads `evidence` post-
+  export — `export_tracks` (`src/tui/app.cpp:310`) writes
+  `start_sample`/`end_sample` to the output WAV file only;
+  `reaper_export.cpp` similarly reads positions, not evidence.
+  So the staleness is cosmetic / for future tooling.
+- **Possible outcomes.**
+  - (a) Document in `INV-SPLITPOINT-ORDER` or `split_point.hpp`
+    that evidence is descriptive provenance from the original
+    algorithmic detection and may become stale under TUI editing.
+    Paperwork-only close.
+  - (b) Clear evidence on every nudge (treat any edit as
+    invalidating the algorithmic provenance). Minor cost; consumer
+    impact depends on whether future tooling needs the evidence.
+  - (c) Update evidence keys to track the post-edit positions.
+    More work; questionable value if nothing reads it.
+- **Tier rationale.** Tier 7 (TUI hygiene) or Tier 8 (documentation),
+  depending on outcome chosen.
+- **Effort.** Investigation: ~10 min. Cure (if needed): ≤ 10 LOC.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
+  the audit surfaced the question as descriptive provenance during
+  the boundary-shift re-cure; not a blocker.
+
+### Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP — forward-compat: re-cure dropped Mi-8's total_samples clamp
+
+- **Origin.** Surfaced during Mi-MARKER-NUDGE-SEMANTIC audit-2
+  (PR #62, 2026-05-20).
+- **Defect (latent / forward-compat).** Mi-8's block-shift cure
+  included a `total_samples - 1` clamp on `nudge_marker_right` and
+  a `0` lower-bound clamp on `nudge_marker_left`. The boundary-shift
+  re-cure dropped both, relying on the algorithmic pipelines'
+  invariant that markers always sit within `[0, total_samples - 1]`
+  (blind_mode.cpp:268-270, main.cpp:303-305 cap end_sample at
+  `total - 1`; reference_mode similarly).
+- **Reachability dormancy.** Unreachable through current code paths:
+  - No TUI mutator extends `sel.end_sample` (the boundary-shift
+    `nudge_marker_right` only grows `prev.end` and `sel.start` by 1
+    in lockstep; the global edges of `sel` and `prev` are untouched).
+  - Algorithmic pipelines guarantee `markers[*].end_sample <= total - 1`
+    at construction time.
+- **Forward-compat concern.** If a future TUI mutator extends
+  marker edges (e.g., "stretch marker" feature), the dropped clamp
+  becomes a real hole. A precondition assertion on the boundary-
+  shift mutator (`MWAAC_ASSERT_PRECONDITION(sel.end_sample <
+  total_samples)` per the Mi-3-family pattern) would catch the
+  invariant violation at the bridge boundary rather than producing
+  out-of-buffer offsets downstream.
+- **Possible outcomes.**
+  - (a) Add the precondition assertion now (~5 LOC). Defensive;
+    documents the invariant chain for future readers.
+  - (b) Defer until a future end-extending mutator is filed. The
+    invariant chain holds today; assertion adds noise.
+- **Tier rationale.** Tier 7 (TUI invariants). Same tier as Mi-8.
+- **Effort.** ≤ 10 LOC if option (a).
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
+  forward-compat audit finding; not a current bug.
 
 ### Mi-9 — TUI view bounds can invert — **RESOLVED in #59 (`815f278`)**
 
@@ -2054,22 +2157,19 @@ migration to `std::expected`-style storage happens in M-14.
         `tests/test_app_handlers.cpp`; verified to FAIL with cure
         reverted (audit-1 axis 4).
 
-### Tier 7 cleanup-tail close (Mi-VIEW-ZOOM-BOUNDARY-SHIFT close-out)
+### Tier 7 cleanup-tail close (Mi-MARKER-NUDGE-SEMANTIC close-out)
 
 Tier 7 originally-planned items closed 2026-05-19 across PRs #56
-(M-WAVEFORM-CLAMP-UB), #57 (Mi-10), #58 (Mi-8), #59 (Mi-9). Dispatch
-tail follow-ups all closed 2026-05-20 across PRs #60 (Mi-CURSOR-COL-CLAMP)
-and #61 (Mi-VIEW-ZOOM-BOUNDARY-SHIFT) — total Tier 7 cleanup: 6 PRs
-+ 1 INVESTIGATE-only-pending item.
+(M-WAVEFORM-CLAMP-UB), #57 (Mi-10), #58 (Mi-8), #59 (Mi-9). Dispatch-
+tail follow-ups closed 2026-05-20 across PRs #60 (Mi-CURSOR-COL-CLAMP),
+#61 (Mi-VIEW-ZOOM-BOUNDARY-SHIFT), and #62 (Mi-MARKER-NUDGE-SEMANTIC
+re-cure of Mi-8 with boundary-shift semantic per user judgment).
 
-**Remaining Tier 7 item: Mi-MARKER-NUDGE-SEMANTIC** (filed during
-Mi-8 audit-2). Needs user judgment — block-shift vs boundary-shift
-cure semantic. The current block-shift cure satisfies the BACKLOG
-Mi-8 invariant but makes interior markers in blind-mode output
-universally unable to nudge in either direction (gap-of-1 algorithmic-
-output × block-shift = nudge no-op). Boundary-shift alternative would
-resize adjacent tracks. See M-MARKER-NUDGE-SEMANTIC entry for the
-full framing.
+**Total Tier 7 cleanup: 7 PRs.** All originally-planned items closed.
+All dispatch-tail follow-ups closed. 2 new forward-looking items
+filed during the Mi-MARKER-NUDGE-SEMANTIC audit (Mi-NUDGE-EVIDENCE-
+STALENESS and Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP); both flagged as
+descriptive / forward-compat and not blocking.
 
 ### Mi-10 — run_tui exit-code documentation — **RESOLVED in #57 (`f359e19`)**
 

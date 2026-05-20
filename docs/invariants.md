@@ -961,38 +961,64 @@ enum value) under the post-M-14 unified taxonomy.
 For every `SplitPoint` produced by the analysis pipelines and
 maintained by the TUI editing surface:
 `0 ≤ start_sample ≤ end_sample ≤ total_samples - 1`. Within-marker
-ordering is preserved trivially by block-shift nudge semantics
-(both edges shift by the same delta — see Mi-8 cure). Cross-marker
-no-gap invariant `markers[i].end_sample < markers[i+1].start_sample`
-is maintained by the sibling clamp in the TUI nudge mutators
-(blind_mode and reference_mode pipelines produce it via the
-post-loop end_sample fill-in; TUI editing must not break it).
+ordering is preserved by the boundary-shift nudge semantic (the
+mutator refuses any nudge that would collapse either adjacent marker
+to zero or negative duration). Cross-marker no-gap invariant
+`markers[i].end_sample < markers[i+1].start_sample` is preserved by
+construction — the boundary-shift mutator moves `markers[i].end_sample`
+and `markers[i+1].start_sample` in lockstep by ±1, so the gap
+(difference) is invariant across nudges. Blind_mode and reference_mode
+pipelines produce the no-gap invariant via the post-loop
+`end_sample = next.start_sample - 1` fill-in.
 
 - **Owner.** TUI marker editing in `src/tui/app_handlers.cpp`
   (`nudge_marker_right` + `nudge_marker_left`); algorithmic
   producers in `src/modes/blind_mode.cpp` and
   `src/modes/reference_mode.cpp`.
 - **Enforcement.**
-  - In-mutator clamping: `nudge_marker_right` refuses to nudge if
-    the result would exceed `min(total_samples - 1, next_marker.start_sample - 1)`;
-    `nudge_marker_left` refuses if the result would fall below
-    `max(0, prev_marker.end_sample + 1)`.
-  - `tests/test_app_handlers.cpp` 11 TEST_CASEs (7 Mi-8 regression-
-    guards + 4 invariant locks). Classification annotated in the
-    file's header per Mi-8 audit-1 finding 2 so future-Mi-* authors
-    extending the harness preserve the regression-guard ratio.
-  - `duration_samples()` preservation test asserts the within-marker
-    invariant across long nudge sequences — locks the block-shift
-    property against a future regression that might shift one edge
-    without the other.
-- **Status.** `holds` (block-shift semantics) post-Mi-8 merge
-  `0980606` (PR #58). See **Mi-MARKER-NUDGE-SEMANTIC** in
-  `BACKLOG.md` for the audit-2 UX discovery that the block-shift
-  semantic combined with blind_mode's algorithmic-output
-  gap-of-exactly-1 makes interior markers in blind-mode output
-  unable to nudge in either direction (only first-marker-left and
-  last-marker-right can move). Pending user judgment on whether to
-  switch to boundary-shift semantics.
+  - In-mutator boundary-shift logic: `nudge_marker_right` moves the
+    boundary between `markers[selected-1]` and `markers[selected]`
+    right by 1 (both `prev.end_sample` and `sel.start_sample`
+    increment together). Refuses on:
+    1. `selected_marker == 0` (no boundary before the first marker).
+    2. `sel.start_sample + 1 > sel.end_sample` (would collapse the
+       selected marker to zero or negative duration).
+    `nudge_marker_left` is symmetric (decrement both; refuse if
+    previous marker would collapse).
+  - `tests/test_app_handlers.cpp` 14 TEST_CASEs on the marker-nudge
+    family (12 boundary-shift behavior + 2 last-allowed-step coverage
+    tests added per Mi-MARKER-NUDGE-SEMANTIC audit-1 finding 2).
+    Classification annotated in the file's header so future-Mi-*
+    authors extending the harness preserve the regression-guard
+    ratio.
+  - `inter-track gap preserved across boundary-shift sequences` test
+    locks the cross-marker invariant across 300 nudge calls
+    (right + left) — catches any regression that breaks the lockstep
+    shift.
+  - `durations change inversely (sum invariant)` test locks the
+    "adjacent-pair total duration invariant" of boundary-shift
+    against any cure that breaks the lockstep.
+- **Status.** `holds` (boundary-shift semantics, per
+  Mi-MARKER-NUDGE-SEMANTIC re-cure of Mi-8) post-merge `d20c899`
+  (PR #62). The original Mi-8 cure used block-shift semantics
+  (merge `0980606` PR #58); Mi-8 audit-2 surfaced that block-shift
+  combined with blind_mode's algorithmic-output gap-of-exactly-1
+  made interior markers universally unable to nudge in either
+  direction. User chose boundary-shift via AskUserQuestion
+  2026-05-20; re-cure landed in PR #62. The boundary-shift semantic
+  works on blind-mode gap-of-1 output because the boundary moves
+  naturally (the gap is preserved across the shift, not narrowed).
+- **Known limitations (forward-looking, not blocking).**
+  - **Mi-NUDGE-EVIDENCE-STALENESS** (filed) — boundary-shift leaves
+    `SplitPoint::evidence` describing pre-edit sample ranges (the
+    evidence was attached by the algorithmic pipeline at construction
+    time). Descriptive provenance; no consumer in `src/` reads it
+    post-export.
+  - **Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP** (filed) — the re-cure dropped
+    Mi-8's `total_samples - 1` clamp. Unreachable through any current
+    code path (no TUI mutator extends `sel.end_sample`); forward-
+    compat precondition assertion would catch a future end-extending
+    mutator.
 
 ### INV-VIEW-NON-INVERTED — `0 ≤ view_start < view_end ≤ total_samples` in TUI
 
