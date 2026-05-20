@@ -472,3 +472,77 @@ TEST_CASE("move_cursor_*: cursor stays in [0, display_width-1] across long mutat
         CHECK(cursor_col <= display_width - 1);
     }
 }
+
+// ─── Mi-VIEW-ZOOM-BOUNDARY-SHIFT ───────────────────────────────────
+//
+// Pre-cure: commit_normalized_view used a clamp-only policy that
+// pinned the offending edge without shifting the opposite edge.
+// `zoom_out` near `[0, total]` boundaries produced a view narrower
+// than the requested range. Post-cure: shift-shift policy preserves
+// the requested range whenever it fits in [0, total]; falls back to
+// the maximal view [0, total] only when requested range exceeds total.
+
+TEST_CASE("zoom_out near left boundary: range preserved by shift-shift (Mi-VIEW-ZOOM-BOUNDARY-SHIFT regression-guard)",
+          "[tui][app_handlers][mi-view-zoom-boundary-shift]")
+{
+    // Pre-cure: cur=[0, 100), total=100000. zoom_out targets range=200
+    // about center=50. proposed=[-50, 150). Clamp-only policy: start
+    // clamped to 0, end UNCHANGED at 150 → effective range 150 (NOT 200).
+    // Post-cure: shift-shift policy → start clamped to 0, end shifted
+    // to 200 → effective range 200 (preserved).
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/0, /*view_end=*/100);
+    mwaac::tui::zoom_out(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 200);
+    CHECK(s.view_end - s.view_start == 200);  // range preserved
+}
+
+TEST_CASE("zoom_out near right boundary: range preserved by shift-shift (Mi-VIEW-ZOOM-BOUNDARY-SHIFT regression-guard)",
+          "[tui][app_handlers][mi-view-zoom-boundary-shift]")
+{
+    // Symmetric to the left-boundary case: cur=[99900, 100000),
+    // total=100000. zoom_out targets range=200 about center=99950.
+    // proposed=[99850, 100050). Clamp-only policy: end clamped to
+    // 100000, start UNCHANGED at 99850 → effective range 150.
+    // Post-cure: end clamped to 100000, start shifted to 99800 →
+    // effective range 200.
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/99900, /*view_end=*/100000);
+    mwaac::tui::zoom_out(s);
+    CHECK(s.view_end == 100000);
+    CHECK(s.view_start == 99800);
+    CHECK(s.view_end - s.view_start == 200);  // range preserved
+}
+
+TEST_CASE("zoom_out: requested range > total collapses to [0, total] fallback",
+          "[tui][app_handlers][mi-view-zoom-boundary-shift]")
+{
+    // When the requested range exceeds total_samples, no shift-shift
+    // policy can preserve it. Fallback: collapse to the maximal view
+    // [0, total]. Cure: cur=[40, 60), total=100. zoom_out targets
+    // range=40 (capped at total since 20*2=40 < 100), about center=50.
+    // proposed=[30, 70). Both edges in bounds — straightforward zoom.
+    // Stronger test: cur=[0, 100), total=100. zoom_out targets
+    // range=200 capped at 100 → straight cap to total. Verify the
+    // fallback produces [0, 100).
+    auto s = build_view_state(/*total=*/100,
+                              /*view_start=*/0, /*view_end=*/100);
+    mwaac::tui::zoom_out(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 100);
+}
+
+TEST_CASE("commit_normalized_view (via zoom_out): shift-shift preserves range when fitting",
+          "[tui][app_handlers][mi-view-zoom-boundary-shift]")
+{
+    // No-regression: zoom_out from a comfortable middle view should
+    // produce the same result as Mi-9's existing behavior (no shift
+    // triggered because both edges land in bounds).
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/40000, /*view_end=*/50000);
+    mwaac::tui::zoom_out(s);
+    // Range 10000 doubled to 20000 about center 45000 → [35000, 55000).
+    CHECK(s.view_start == 35000);
+    CHECK(s.view_end == 55000);
+}
