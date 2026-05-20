@@ -75,4 +75,29 @@ void pan_to_start(AppState& state);
 // changing zoom level. Caps current_range at total_samples.
 void pan_to_end(AppState& state);
 
+// Cursor-position mutators (Mi-CURSOR-COL-CLAMP). The cursor is a
+// column index into the rendered waveform display, bounded by
+// [0, display_width - 1]. `cursor_col` lives in `run_tui`'s local
+// scope (not in AppState), so these mutators take it by reference
+// rather than via AppState. `display_width` is queried from
+// `Terminal::Size().dimx - 2` at handler call time in `app.cpp`.
+//
+// Pre-cure (Mi-CURSOR-COL-CLAMP defect): ArrowRight handler did
+// `cursor_col++` with no upper bound; ArrowLeft handler at app.cpp:255
+// correctly clamped via `std::max(0, cursor_col - 1)`. The asymmetry
+// is the bug.
+//
+// Post-cure: symmetric extraction — both handlers reduce to one-line
+// dispatches. Mutators no-op (refuse to move past the bound) rather
+// than saturating.
+
+// Decrement cursor_col, clamped at 0.
+void move_cursor_left(int& cursor_col);
+
+// Increment cursor_col, clamped at display_width - 1.
+// Degenerate display_width <= 0: cursor_col stays at 0 (or wherever
+// it was if non-zero — the handler caller is responsible for ensuring
+// cursor_col is already valid).
+void move_cursor_right(int& cursor_col, int display_width);
+
 } // namespace mwaac::tui

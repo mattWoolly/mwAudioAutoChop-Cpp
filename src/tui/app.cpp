@@ -237,13 +237,17 @@ int run_tui(AppState& state) {
             return true;
         }
         
-        // Arrow keys for cursor movement (legacy support)
+        // Arrow keys for cursor movement (legacy support).
+        // Mi-CURSOR-COL-CLAMP: bounds clamping (upper at display_width - 1)
+        // lives in the mutators in app_handlers.cpp; the event handler
+        // queries Terminal::Size() and dispatches.
         if (event == Event::ArrowLeft) {
-            cursor_col = std::max(0, cursor_col - 1);
+            move_cursor_left(cursor_col);
             return true;
         }
         if (event == Event::ArrowRight) {
-            cursor_col++;
+            const int width = Terminal::Size().dimx - 2;
+            move_cursor_right(cursor_col, width);
             return true;
         }
         

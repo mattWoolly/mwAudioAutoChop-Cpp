@@ -383,3 +383,92 @@ TEST_CASE("view mutators: resolve view_end == 0 sentinel to total_samples",
     CHECK(s.view_start == 25000);
     CHECK(s.view_end == 75000);
 }
+
+// ─── Mi-CURSOR-COL-CLAMP cursor mutators ───────────────────────────
+//
+// TEST_CASE classification (Mi-CURSOR-COL-CLAMP cure):
+//
+//   Mi-CURSOR-COL-CLAMP regression-guards (FAIL with cure reverted):
+//     - move_cursor_right clamps at display_width - 1
+//     - move_cursor_right clamps at display_width - 1 starting from 0
+//     - move_cursor_right with display_width == 0 keeps cursor at 0
+//     - move_cursor_right with display_width == 1 keeps cursor at 0
+//
+//   Invariant locks / behavioral documentation:
+//     - move_cursor_left clamps at 0 (pre-cure guard preserved verbatim)
+//     - move_cursor_*: cursor never exits [0, display_width-1] across
+//       long sequences
+
+TEST_CASE("move_cursor_left: clamps at 0",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    int cursor_col = 5;
+    mwaac::tui::move_cursor_left(cursor_col);
+    CHECK(cursor_col == 4);
+
+    cursor_col = 0;
+    mwaac::tui::move_cursor_left(cursor_col);
+    CHECK(cursor_col == 0);
+}
+
+TEST_CASE("move_cursor_right: normal increment within display",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    int cursor_col = 5;
+    mwaac::tui::move_cursor_right(cursor_col, /*display_width=*/100);
+    CHECK(cursor_col == 6);
+}
+
+TEST_CASE("move_cursor_right: clamps at display_width - 1 (Mi-CURSOR-COL-CLAMP regression-guard)",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    // Pre-cure: `cursor_col++` had no upper bound. Display width 100
+    // means valid range is [0, 99]; cursor at 99 must not move right.
+    int cursor_col = 99;
+    mwaac::tui::move_cursor_right(cursor_col, /*display_width=*/100);
+    CHECK(cursor_col == 99);
+}
+
+TEST_CASE("move_cursor_right: clamps at display_width - 1 starting from 0",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    // Increment from 0 with display_width == 1: must stay at 0 (the
+    // only valid column).
+    int cursor_col = 0;
+    mwaac::tui::move_cursor_right(cursor_col, /*display_width=*/1);
+    CHECK(cursor_col == 0);
+}
+
+TEST_CASE("move_cursor_right: degenerate display_width == 0 keeps cursor at 0",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    // `display_width <= 0` is theoretically reachable (terminal width
+    // computation could yield it on a 1-column terminal: `dimx - 2 = -1`).
+    // The mutator must not invert (move cursor to a negative value).
+    int cursor_col = 0;
+    mwaac::tui::move_cursor_right(cursor_col, /*display_width=*/0);
+    CHECK(cursor_col == 0);
+
+    cursor_col = 0;
+    mwaac::tui::move_cursor_right(cursor_col, /*display_width=*/-1);
+    CHECK(cursor_col == 0);
+}
+
+TEST_CASE("move_cursor_*: cursor stays in [0, display_width-1] across long mutation sequences",
+          "[tui][app_handlers][mi-cursor-col-clamp]")
+{
+    // Mash right then left a lot of times; cursor must never exit
+    // the valid range even with stale display widths.
+    int cursor_col = 0;
+    const int display_width = 80;
+    for (int i = 0; i < 200; ++i) {
+        mwaac::tui::move_cursor_right(cursor_col, display_width);
+        CHECK(cursor_col >= 0);
+        CHECK(cursor_col <= display_width - 1);
+    }
+    for (int i = 0; i < 200; ++i) {
+        mwaac::tui::move_cursor_left(cursor_col);
+        CHECK(cursor_col >= 0);
+        CHECK(cursor_col <= display_width - 1);
+    }
+}
