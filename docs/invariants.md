@@ -996,7 +996,36 @@ post-loop end_sample fill-in; TUI editing must not break it).
 
 ### INV-VIEW-NON-INVERTED — `0 ≤ view_start < view_end ≤ total_samples` in TUI
 
-- **Status.** `pending` (Mi-9).
+The TUI view bounds (`AppState::view_start`, `view_end`) maintain
+strict-less-than ordering and stay within `[0, total_samples]` after
+every state-mutator call. The `view_end == 0` sentinel ("auto-stretch
+to file end", interpreted at the Renderer site
+`src/tui/app.cpp:40`) is a valid pre-mutation state but is consumed
+on first mutator commit; post-commit `view_end >= 1`.
+
+- **Owner.** TUI view mutators in `src/tui/app_handlers.cpp`
+  (`zoom_in`, `zoom_out`, `pan_to_start`, `pan_to_end`).
+- **Enforcement.**
+  - `commit_normalized_view(state, proposed_start, proposed_end, total)`
+    private helper enforces the invariant by construction: returns
+    false (no-op) on `total <= 0`; clamps `proposed_end` to
+    `[1, total]` THEN `proposed_start` to `[0, proposed_end - 1]`.
+    Strict-less-than guaranteed: post-clamp `end >= 1`,
+    `start <= end - 1`, so `start < end`.
+  - All four mutators resolve the `view_end == 0` sentinel BEFORE
+    computing the proposed range, via
+    `resolve_view_range(state, total)`.
+  - `tests/test_app_handlers.cpp` has 7 Mi-9 TEST_CASEs including
+    empty-audio regression-guards on all four mutators and a
+    200-call alternating mutation sequence asserting
+    `view_start < view_end` after every call.
+- **Status.** `holds` post-Mi-9 merge `815f278` (PR #59).
+- **Known limitation.** Near-boundary `zoom_out` (e.g.
+  `cur_view = [0, 100), total = 100000`) produces a narrower range
+  than requested because the clamp pins the offending edge without
+  shifting the opposite edge. Invariant still holds; this is a UX
+  shortfall filed as Mi-VIEW-ZOOM-BOUNDARY-SHIFT (Tier 7). Pre-cure
+  had the same shape — Mi-9 preserved behavioral parity.
 
 ### INV-RUN-TUI-EXIT-CODE — `run_tui` returns `0` on normal exit
 

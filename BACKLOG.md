@@ -1904,15 +1904,123 @@ migration to `std::expected`-style storage happens in M-14.
   Mi-8 cure is correct as specified; this item resolves the
   underspecification.
 
-### Mi-9 — TUI view bounds can invert
+### Mi-9 — TUI view bounds can invert — **RESOLVED in #59 (`815f278`)**
 
-- **Defect.** `tui/app.cpp:208–241` — view_end < view_start possible.
-- **Invariant established.** "0 ≤ view_start < view_end ≤ total_samples."
-- **Files touched.** `src/tui/app.cpp`.
-- **Tests added.** Same headless-unit-test harness as Mi-8.
-  - `tui: view handlers never invert or zero the range`.
+- **Defect.** `tui/app.cpp:208–241` zoom + pan handlers performed
+  ad-hoc clamping. On empty audio (`total_samples == 0`): `zoom_out`
+  and `pan_*` produced `view_start == view_end == 0` (zero range,
+  violates INV-VIEW-NON-INVERTED's strict-less-than). `zoom_in`
+  didn't clamp `view_end` against `total_samples` and computed
+  arithmetic that could yield negative view_start values.
+- **Invariant established.** INV-VIEW-NON-INVERTED:
+  `0 ≤ view_start < view_end ≤ total_samples`. Strict-less-than
+  enforced by construction in the new normalization helper.
+- **Cure shape (per BACKLOG exit criterion "post-handler
+  normalization helper").** 4 new mutators in `app_handlers.{hpp,cpp}`
+  reusing the Mi-8 harness pattern (zoom_in, zoom_out, pan_to_start,
+  pan_to_end). Each mutator computes a proposed (view_start, view_end)
+  and commits via the new `commit_normalized_view(state, proposed_start,
+  proposed_end, total)` helper that:
+  - No-ops on empty audio (`total <= 0`); no valid view exists
+  - Clamps `proposed_end` to `[1, total]` THEN `proposed_start` to
+    `[0, proposed_end - 1]` (order matters — clamping start first
+    against end could pin it at total - 1 even when caller wanted a
+    tighter view)
+  - Strict-less-than `view_start < view_end` guaranteed by
+    construction (post-clamp `end >= 1`, `start <= end - 1`).
+- **Files touched.** `src/tui/app_handlers.hpp` (4 new mutator
+  declarations), `src/tui/app_handlers.cpp` (mutator implementations
+  + private `commit_normalized_view()` + `resolve_view_range()`
+  helpers), `src/tui/app.cpp` (4 event-handler closures collapsed to
+  one-line dispatches; same pattern as Mi-8), `tests/test_app_handlers.cpp`
+  (7 new TEST_CASEs).
+- **Sentinel handling.** `AppState::view_end{0}` is the "auto-stretch
+  to file end" sentinel (resolved at the Renderer site,
+  `src/tui/app.cpp:40` — `view_end > 0 ? view_end : total_samples`).
+  The mutators resolve the sentinel BEFORE any mutation logic via
+  `resolve_view_range(state, total)`. **Sentinel-once consumption**:
+  after any successful mutator commit, `view_end >= 1` (the literal
+  sentinel is consumed). The user cannot return to the auto-stretch
+  state via these four handlers — only to an equivalent explicit
+  `[0, total)` range via `pan_to_start + zoom_out`-until-capped or
+  `pan_to_end`. Audit-1 of #59 flagged this as semantic-doc-worthy
+  but not a defect (the resolved view is observably equivalent).
+- **Tests added.** 7 new TEST_CASEs in `tests/test_app_handlers.cpp`
+  (total now 18 = 11 Mi-8 + 7 Mi-9):
+  - Normal-behavior: zoom_in halves, zoom_out doubles with cap,
+    pan_to_start jumps to [0, range), pan_to_end mirror.
+  - Empty-audio regression-guards on all four mutators (pre-cure
+    would produce inverted/zero-range view; post-cure no-ops).
+  - INV-VIEW-NON-INVERTED holds across a 200-call (50 outer ×
+    4 mutators) mutation sequence — locks the post-normalization
+    guarantee against future regression.
+  - view_end == 0 sentinel resolution test.
+- **Audit-cardinality.** Single-audit per
+  `feedback_audit_cardinality_two_axes.md` — sharp-hook clear
+  (pure adoption of Mi-8's established harness pattern; pre-cure
+  bugs are well-spec'd); blast-radius small (extends existing TU
+  pair, no new files). Audit returned CONCERNS with 3 LOW findings,
+  all merge-acceptable per audit's recommendation:
+  - Finding 1: `zoom_out` near-boundary clamp-shift produces
+    narrower-than-requested range. Pre-cure same shape (no
+    regression). Filed as **Mi-VIEW-ZOOM-BOUNDARY-SHIFT** below.
+  - Finding 2 (governance): orchestrator-self attribution of a
+    "150 LOC / two-domains" split heuristic to Mi-8 audit-2.
+    Heuristic exists in Mi-8 audit-2's result message but was NOT
+    promoted to BACKLOG.md or memory; treating it as ratified
+    governance was a slip. Captured as new memory rule
+    `feedback_audit_suggestions_need_ratification.md`.
+  - Finding 3: sentinel-once consumption undocumented in INV.
+    Addressed in this close-out (above).
 - **Exit criteria.**
-  - [ ] Post-handler normalization helper.
+  - [x] Post-handler normalization helper. See
+        `commit_normalized_view()` in `src/tui/app_handlers.cpp`;
+        called by all four mutators on commit; enforces
+        INV-VIEW-NON-INVERTED by construction.
+
+### Mi-VIEW-ZOOM-BOUNDARY-SHIFT — `zoom_out` near boundaries produces narrower-than-requested range (Mi-9 audit-1 finding 1)
+
+- **Origin.** Surfaced during Mi-9 audit-1 (PR #59 audit-agent
+  finding 1, 2026-05-19).
+- **Defect (UX, not invariant).** When `zoom_out` computes a new
+  range that would extend past the audio boundaries, the
+  `commit_normalized_view` helper clamps the offending edge but
+  does NOT shift the opposite edge to preserve the intended range.
+  Example: `cur_view = [0, 100), total = 100000`, `zoom_out` targets
+  range = 200 (doubled); `center = 50`, `new_start = 50 - 100 = -50`,
+  `new_end = 50 + 100 = 150`. After clamp: `new_start = 0` (clamped
+  up from -50), `new_end = 150` (untouched). Effective range = 150
+  instead of the requested 200. Symmetric issue at the
+  `cur_end` near `total` boundary.
+- **Reachability dormancy.** Pre-cure `zoom_out` had the SAME shape
+  (`std::max<int64_t>(0, center - new_range / 2)` then
+  `std::min(start + new_range, total)`). Mi-9 cure preserved
+  behavioral parity — this is not a Mi-9 regression. Affects only
+  zoom-out near audio boundaries; INV-VIEW-NON-INVERTED holds
+  either way (strict-less-than guaranteed by clamp construction).
+- **Invariant established.** "zoom_out preserves the user-requested
+  range whenever it fits within `[0, total_samples]`; near boundaries,
+  the range shifts (clamped edge anchors, opposite edge moves to
+  preserve range) rather than narrowing."
+- **Cure shape.** Extend `commit_normalized_view` (or add a sibling
+  `commit_normalized_view_preserving_range`) to: if `proposed_start`
+  is clamped up, shift `proposed_end` by the same delta and re-clamp;
+  if `proposed_end` is clamped down, shift `proposed_start` by the
+  same delta. ~10 LOC + 2 TEST_CASEs.
+- **Files touched.** `src/tui/app_handlers.cpp`, `tests/test_app_handlers.cpp`.
+- **Tier rationale.** Tier 7 (TUI invariants). Same tier as Mi-9.
+- **Effort.** ≤ 20 LOC + 2 TEST_CASEs.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
+  the finding surfaced during Mi-9 audit on the same file/function
+  but a different defect surface (UX-shape, not invariant-shape).
+  Filing as own item rather than expanding Mi-9 scope per audit's
+  explicit "ACCEPT for Mi-9, file follow-up" recommendation.
+- **Exit criteria.**
+  - [ ] `zoom_out` near `[0, total]` boundary produces a view with
+        the requested range (not a narrowed range), with `view_start`
+        or `view_end` pinned at the boundary as appropriate.
+  - [ ] TEST_CASEs exercise both boundary cases (start at 0, end
+        at total).
 
 ### Mi-10 — run_tui exit-code documentation — **RESOLVED in #57 (`f359e19`)**
 
