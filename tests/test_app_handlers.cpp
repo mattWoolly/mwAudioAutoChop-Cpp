@@ -115,6 +115,25 @@ TEST_CASE("nudge_marker_right: refuses when selected marker would collapse to ze
     CHECK(s.split_points[0].end_sample == 199);
 }
 
+TEST_CASE("nudge_marker_right: last allowed step (duration 2 → 1) succeeds",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
+{
+    // Audit-1 coverage-gap follow-up: assert the step BEFORE refusal
+    // succeeds. marker[1] is duration 2 (start=200, end=201). Nudge
+    // right shrinks to duration 1 (start=201, end=201) — allowed.
+    // Off-by-one drift in the refusal predicate ("> end" tightened
+    // to ">= end") would NOT be caught by the duration==1 refusal
+    // test alone; this case catches the too-strict direction.
+    auto s = build_state(/*total=*/1000,
+                         {marker(100, 199), marker(200, 201)},
+                         /*selected=*/1);
+    mwaac::tui::nudge_marker_right(s);
+    CHECK(s.split_points[0].end_sample == 200);     // grew
+    CHECK(s.split_points[1].start_sample == 201);   // shrunk
+    CHECK(s.split_points[1].end_sample == 201);     // unchanged
+    CHECK(s.split_points[1].duration_samples() == 1);
+}
+
 TEST_CASE("nudge_marker_right: works on blind-mode gap-of-1 output (Mi-MARKER-NUDGE-SEMANTIC regression-guard)",
           "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
 {
@@ -175,6 +194,23 @@ TEST_CASE("nudge_marker_left: refuses when previous marker would collapse to zer
     mwaac::tui::nudge_marker_left(s);
     CHECK(s.split_points[0].end_sample == 100);
     CHECK(s.split_points[1].start_sample == 200);
+}
+
+TEST_CASE("nudge_marker_left: last allowed step (prev duration 2 → 1) succeeds",
+          "[tui][app_handlers][mi-8][mi-marker-nudge-semantic]")
+{
+    // Audit-1 coverage-gap follow-up: symmetric to the right-nudge
+    // last-allowed-step test. marker[0] is duration 2 (start=100,
+    // end=101). Nudge left on marker[1] shrinks marker[0] to
+    // duration 1 (start=100, end=100) — allowed.
+    auto s = build_state(/*total=*/1000,
+                         {marker(100, 101), marker(200, 500)},
+                         /*selected=*/1);
+    mwaac::tui::nudge_marker_left(s);
+    CHECK(s.split_points[0].start_sample == 100);   // unchanged
+    CHECK(s.split_points[0].end_sample == 100);     // shrunk
+    CHECK(s.split_points[1].start_sample == 199);   // grew
+    CHECK(s.split_points[0].duration_samples() == 1);
 }
 
 // ─── degenerate inputs ─────────────────────────────────────────────

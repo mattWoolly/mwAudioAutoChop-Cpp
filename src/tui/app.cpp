@@ -189,9 +189,13 @@ int run_tui(AppState& state) {
             return true;
         }
         
-        // Marker fine adjustment. Mi-8: bounds clamping (global +
-        // sibling) lives inside the mutator functions in app_handlers.cpp;
-        // the event handler just dispatches.
+        // Marker fine adjustment. Mi-MARKER-NUDGE-SEMANTIC (re-cure of
+        // Mi-8, 2026-05-20): boundary-shift semantic. The mutators
+        // in app_handlers.cpp move the BOUNDARY between
+        // markers[selected-1] and markers[selected] in lockstep;
+        // adjacent track durations change inversely. First marker
+        // (selected == 0) and zero-duration-collapse cases no-op.
+        // The event handler just dispatches.
         if (event == Event::Character('+') || event == Event::Character('=') || event == Event::Character(']')) {
             nudge_marker_right(state);
             return true;
