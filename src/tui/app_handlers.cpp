@@ -195,4 +195,21 @@ void pan_to_end(AppState& state) {
     commit_normalized_view(state, total - cur_range, total, total);
 }
 
+// ─── Mi-CURSOR-COL-CLAMP cursor mutators ───────────────────────────
+
+void move_cursor_left(int& cursor_col) {
+    // Pre-cure already clamped at 0; preserved verbatim.
+    cursor_col = std::max(0, cursor_col - 1);
+}
+
+void move_cursor_right(int& cursor_col, int display_width) {
+    // Mi-CURSOR-COL-CLAMP: upper bound at display_width - 1.
+    // The std::max(0, ...) guards against display_width <= 0 (degenerate
+    // terminal sizes occasionally observed in CI / tiny terminals);
+    // without it, display_width - 1 could be negative and the
+    // std::min would clamp cursor_col to a negative value.
+    const int upper = std::max(0, display_width - 1);
+    cursor_col = std::min(cursor_col + 1, upper);
+}
+
 } // namespace mwaac::tui
