@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "app_handlers.hpp"
 #include "waveform.hpp"
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
@@ -188,23 +189,15 @@ int run_tui(AppState& state) {
             return true;
         }
         
-        // Marker fine adjustment
+        // Marker fine adjustment. Mi-8: bounds clamping (global +
+        // sibling) lives inside the mutator functions in app_handlers.cpp;
+        // the event handler just dispatches.
         if (event == Event::Character('+') || event == Event::Character('=') || event == Event::Character(']')) {
-            if (!state.split_points.empty() && state.selected_marker >= 0 &&
-                state.selected_marker < static_cast<int>(state.split_points.size())) {
-                state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample += 1;
-                state.split_points[static_cast<std::size_t>(state.selected_marker)].end_sample += 1;
-            }
+            nudge_marker_right(state);
             return true;
         }
         if (event == Event::Character('-') || event == Event::Character('_') || event == Event::Character('[')) {
-            if (!state.split_points.empty() && state.selected_marker >= 0 &&
-                state.selected_marker < static_cast<int>(state.split_points.size())) {
-                if (state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample > 0) {
-                    state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample -= 1;
-                    state.split_points[static_cast<std::size_t>(state.selected_marker)].end_sample -= 1;
-                }
-            }
+            nudge_marker_left(state);
             return true;
         }
         

@@ -175,6 +175,7 @@ set(REFERENCE_SOURCES
 set(TUI_SOURCES
     src/tui/waveform.cpp
     src/tui/app.cpp
+    src/tui/app_handlers.cpp
 )
 
 # Core library
@@ -254,6 +255,7 @@ mwaac_add_test(test_blind_mode        mwaac_core mwaac_sndfile)
 mwaac_add_test(test_drift_model       mwaac_core)
 mwaac_add_test(test_integration       mwaac_core mwaac_sndfile)
 mwaac_add_test(test_waveform          mwaac_tui  mwaac_core)
+mwaac_add_test(test_app_handlers      mwaac_tui  mwaac_core)
 
 # Reproducible test fixtures. Each subdirectory of tests/fixtures/ is a
 # self-contained fixture project — see tests/fixtures/README.md. Wiring
