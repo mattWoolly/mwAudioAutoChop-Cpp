@@ -210,3 +210,176 @@ TEST_CASE("nudge_marker_*: preserves duration_samples on every successful nudge"
         CHECK(s.split_points[0].duration_samples() == initial_duration);
     }
 }
+
+// ─── Mi-9 view-bounds mutators ─────────────────────────────────────
+//
+// TEST_CASE classification (Mi-9 cure):
+//
+//   Mi-9 regression-guards (would FAIL with cure reverted):
+//     - zoom_out: empty audio (total == 0) no-ops (pre-cure produced
+//       view_end < view_start when total == 0)
+//     - pan_to_start: empty audio no-ops (pre-cure produced
+//       zero-range view_start == view_end == 0)
+//     - pan_to_end: empty audio no-ops (same shape)
+//     - zoom_in: empty audio no-ops (pre-cure would compute a negative
+//       view_start from center=0 - new_range/2)
+//     - INV-VIEW-NON-INVERTED holds after every mutator on
+//       non-degenerate inputs (view_start < view_end strictly)
+//
+//   Invariant locks / behavioral documentation:
+//     - zoom_in: normal halving with floor at MIN_VIEW_RANGE
+//     - zoom_out: normal doubling capped at total
+//     - pan_to_start: maintains current range when starting from
+//       middle of file
+//     - pan_to_end: symmetric to pan_to_start
+
+namespace {
+
+// Build a view-state with given view_start / view_end and total_samples.
+mwaac::tui::AppState build_view_state(std::int64_t total_samples,
+                                       std::int64_t view_start,
+                                       std::int64_t view_end) {
+    mwaac::tui::AppState s;
+    s.audio.samples.resize(static_cast<std::size_t>(total_samples), 0.0f);
+    s.audio.sample_rate = 44100;
+    s.view_start = view_start;
+    s.view_end = view_end;
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("zoom_in: halves range about center, with floor at MIN_VIEW_RANGE",
+          "[tui][app_handlers][mi-9]")
+{
+    // Range = 8000, center = 5000. Zoom in → range = 4000 about
+    // center 5000 → [3000, 7000).
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/1000, /*view_end=*/9000);
+    mwaac::tui::zoom_in(s);
+    CHECK(s.view_start == 3000);
+    CHECK(s.view_end == 7000);
+    CHECK(s.view_start < s.view_end);  // INV-VIEW-NON-INVERTED holds
+
+    // Range = 2000 (= 2 * MIN_VIEW_RANGE). Zoom in → range = 1000 (floor).
+    s = build_view_state(/*total=*/100000, /*view_start=*/0, /*view_end=*/2000);
+    mwaac::tui::zoom_in(s);
+    CHECK(s.view_end - s.view_start == 1000);
+
+    // Range = 1000 (already at floor). Zoom in → no-op.
+    s = build_view_state(/*total=*/100000, /*view_start=*/0, /*view_end=*/1000);
+    mwaac::tui::zoom_in(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 1000);
+}
+
+TEST_CASE("zoom_out: doubles range about center, capped at total_samples",
+          "[tui][app_handlers][mi-9]")
+{
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/40000, /*view_end=*/50000);
+    mwaac::tui::zoom_out(s);
+    // Range was 10000; doubled to 20000 about center 45000 →
+    // [35000, 55000).
+    CHECK(s.view_start == 35000);
+    CHECK(s.view_end == 55000);
+
+    // Range = 60000 doubled to 120000, capped at 100000.
+    s = build_view_state(/*total=*/100000,
+                         /*view_start=*/20000, /*view_end=*/80000);
+    mwaac::tui::zoom_out(s);
+    CHECK(s.view_end - s.view_start == 100000);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 100000);
+}
+
+TEST_CASE("pan_to_start: jumps view to [0, current_range)",
+          "[tui][app_handlers][mi-9]")
+{
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/50000, /*view_end=*/60000);
+    mwaac::tui::pan_to_start(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 10000);  // current_range was 10000
+}
+
+TEST_CASE("pan_to_end: jumps view to [total - current_range, total)",
+          "[tui][app_handlers][mi-9]")
+{
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/20000, /*view_end=*/30000);
+    mwaac::tui::pan_to_end(s);
+    CHECK(s.view_end == 100000);
+    CHECK(s.view_start == 90000);  // current_range was 10000
+}
+
+// ─── Mi-9 regression-guards: empty audio ───────────────────────────
+
+TEST_CASE("zoom_in / zoom_out / pan_*: empty audio (total_samples == 0) no-op all four",
+          "[tui][app_handlers][mi-9]")
+{
+    // Pre-cure: zoom_out with total==0 computed new_range=0, then
+    // view_end = min(view_start + 0, 0) = 0. If view_start was already
+    // 0, view_start == view_end (zero-range, violates strict-less-than).
+    // pan_to_start / pan_to_end produced the same zero-range. zoom_in
+    // would compute new_start from negative center arithmetic.
+    // Post-cure: all four no-op on empty audio (no valid view exists).
+    auto s = build_view_state(/*total=*/0,
+                              /*view_start=*/0, /*view_end=*/0);
+    mwaac::tui::zoom_in(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 0);
+
+    mwaac::tui::zoom_out(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 0);
+
+    mwaac::tui::pan_to_start(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 0);
+
+    mwaac::tui::pan_to_end(s);
+    CHECK(s.view_start == 0);
+    CHECK(s.view_end == 0);
+}
+
+// ─── Mi-9 invariant lock ────────────────────────────────────────────
+
+TEST_CASE("view mutators: INV-VIEW-NON-INVERTED holds across long mutation sequences",
+          "[tui][app_handlers][mi-9]")
+{
+    // Alternate zoom_in / zoom_out / pan_to_start / pan_to_end and
+    // assert the strict-less-than invariant holds after every call.
+    // This locks the post-normalization guarantee.
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/10000, /*view_end=*/20000);
+    for (int i = 0; i < 50; ++i) {
+        mwaac::tui::zoom_out(s);
+        CHECK(s.view_start < s.view_end);
+        mwaac::tui::pan_to_end(s);
+        CHECK(s.view_start < s.view_end);
+        mwaac::tui::zoom_in(s);
+        CHECK(s.view_start < s.view_end);
+        mwaac::tui::pan_to_start(s);
+        CHECK(s.view_start < s.view_end);
+    }
+}
+
+// ─── Mi-9 view_end == 0 sentinel ────────────────────────────────────
+
+TEST_CASE("view mutators: resolve view_end == 0 sentinel to total_samples",
+          "[tui][app_handlers][mi-9]")
+{
+    // AppState default-constructs view_end == 0 meaning "auto-stretch
+    // to file end" per the Renderer at app.cpp. The mutators resolve
+    // this sentinel BEFORE normalization so the first zoom/pan
+    // operates on the implicit-full-range view rather than treating
+    // view_end == 0 literally.
+    auto s = build_view_state(/*total=*/100000,
+                              /*view_start=*/0, /*view_end=*/0);
+    mwaac::tui::zoom_in(s);
+    // Implicit range was 100000; halved to 50000 about center 50000 →
+    // [25000, 75000).
+    CHECK(s.view_start == 25000);
+    CHECK(s.view_end == 75000);
+}

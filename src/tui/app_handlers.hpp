@@ -50,4 +50,29 @@ void nudge_marker_right(AppState& state);
 //     marker's end_sample (maintaining the inter-track gap)
 void nudge_marker_left(AppState& state);
 
+// View-bounds mutators (Mi-9). Each call ends with a normalization
+// pass that enforces INV-VIEW-NON-INVERTED:
+//   0 <= view_start < view_end <= total_samples
+// where total_samples == state.audio.samples.size(). The `view_end == 0`
+// sentinel (meaning "auto-stretch to file end" in the Renderer) is
+// resolved BEFORE any normalization runs, then re-applied if no valid
+// view can be constructed (e.g. empty audio). The mutators no-op on
+// empty audio (no valid view satisfies the strict-less-than).
+
+// Zoom in: halve the current view range about its center, floor at
+// 1000 samples (minimum useful zoom). No-op on empty audio.
+void zoom_in(AppState& state);
+
+// Zoom out: double the current view range about its center, capped
+// at total_samples. No-op on empty audio.
+void zoom_out(AppState& state);
+
+// Pan to start: jump view to [0, current_range) without changing
+// zoom level. Caps current_range at total_samples.
+void pan_to_start(AppState& state);
+
+// Pan to end: jump view to [total - current_range, total) without
+// changing zoom level. Caps current_range at total_samples.
+void pan_to_end(AppState& state);
+
 } // namespace mwaac::tui
