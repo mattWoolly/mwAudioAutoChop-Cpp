@@ -201,39 +201,26 @@ int run_tui(AppState& state) {
             return true;
         }
         
-        // Zoom in/out
+        // Zoom in/out. Mi-9: view-bounds normalization (clamp against
+        // [0, total_samples], enforce strict-less-than) lives inside
+        // the mutators in app_handlers.cpp; the event handler just
+        // dispatches.
         if (event == Event::ArrowUp) {
-            int64_t current_range = state.view_end - state.view_start;
-            int64_t center = state.view_start + current_range / 2;
-            int64_t new_range = std::max<int64_t>(current_range / 2, 1000);
-            state.view_start = std::max<int64_t>(0, center - new_range / 2);
-            state.view_end = state.view_start + new_range;
+            zoom_in(state);
             return true;
         }
         if (event == Event::ArrowDown) {
-            int64_t current_range = state.view_end - state.view_start;
-            int64_t total_samples = static_cast<int64_t>(state.audio.samples.size());
-            int64_t center = state.view_start + current_range / 2;
-            int64_t new_range = std::min<int64_t>(current_range * 2, total_samples);
-            state.view_start = std::max<int64_t>(0, center - new_range / 2);
-            state.view_end = std::min(state.view_start + new_range, total_samples);
+            zoom_out(state);
             return true;
         }
-        
-        // Jump to start/end (pan view, maintain zoom level)
+
+        // Jump to start/end (pan view, maintain zoom level).
         if (event == Event::Home) {
-            // Pan to start of file, maintain current zoom level
-            int64_t current_range = state.view_end - state.view_start;
-            state.view_start = 0;
-            state.view_end = std::min(current_range, static_cast<int64_t>(state.audio.samples.size()));
+            pan_to_start(state);
             return true;
         }
         if (event == Event::End) {
-            // Pan to end of file, maintain current zoom level
-            int64_t total = static_cast<int64_t>(state.audio.samples.size());
-            int64_t current_range = state.view_end - state.view_start;
-            state.view_end = total;
-            state.view_start = std::max<int64_t>(0, total - current_range);
+            pan_to_end(state);
             return true;
         }
         
