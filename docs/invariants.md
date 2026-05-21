@@ -998,9 +998,28 @@ pipelines produce the no-gap invariant via the post-loop
   - `durations change inversely (sum invariant)` test locks the
     "adjacent-pair total duration invariant" of boundary-shift
     against any cure that breaks the lockstep.
-- **Status.** `holds` (boundary-shift semantics, per
-  Mi-MARKER-NUDGE-SEMANTIC re-cure of Mi-8) post-merge `d20c899`
-  (PR #62). The original Mi-8 cure used block-shift semantics
+  - **Evidence-clear-on-nudge (Mi-NUDGE-EVIDENCE-STALENESS, option (b)).**
+    Both `nudge_marker_right` and `nudge_marker_left` call
+    `prev.evidence.clear()` and `sel.evidence.clear()` after the
+    successful commit. `SplitPoint::evidence` is descriptive
+    provenance from the algorithmic pipelines
+    (`src/modes/blind_mode.cpp`, `src/modes/reference_mode.cpp`);
+    once the user edits the boundary, the recorded provenance no
+    longer describes the current marker range. Post-nudge, evidence
+    is therefore either empty (cleared by the user's edit) or in-sync
+    with the current marker boundaries (set at construction by the
+    algorithmic pipeline and never touched). Refused nudges
+    (`selected_marker == 0` no-op; would-collapse refusal) `return`
+    before the commit lines, so evidence is preserved across refused
+    calls. Locked by `nudge_marker_right: clears evidence on
+    successful nudge`, `nudge_marker_left: clears evidence on
+    successful nudge`, and `nudge_marker_*: refused nudges preserve
+    evidence` TEST_CASEs in `tests/test_app_handlers.cpp`.
+- **Status.** `holds` (boundary-shift semantics with evidence-clear-
+  on-nudge enforcement, per Mi-MARKER-NUDGE-SEMANTIC re-cure of Mi-8
+  plus Mi-NUDGE-EVIDENCE-STALENESS close-out) post-merge `d20c899`
+  (PR #62) and Mi-NUDGE-FOLLOWUPS close-out. The original Mi-8 cure
+  used block-shift semantics
   (merge `0980606` PR #58); Mi-8 audit-2 surfaced that block-shift
   combined with blind_mode's algorithmic-output gap-of-exactly-1
   made interior markers universally unable to nudge in either
@@ -1008,17 +1027,20 @@ pipelines produce the no-gap invariant via the post-loop
   2026-05-20; re-cure landed in PR #62. The boundary-shift semantic
   works on blind-mode gap-of-1 output because the boundary moves
   naturally (the gap is preserved across the shift, not narrowed).
-- **Known limitations (forward-looking, not blocking).**
-  - **Mi-NUDGE-EVIDENCE-STALENESS** (filed) — boundary-shift leaves
-    `SplitPoint::evidence` describing pre-edit sample ranges (the
-    evidence was attached by the algorithmic pipeline at construction
-    time). Descriptive provenance; no consumer in `src/` reads it
-    post-export.
-  - **Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP** (filed) — the re-cure dropped
-    Mi-8's `total_samples - 1` clamp. Unreachable through any current
-    code path (no TUI mutator extends `sel.end_sample`); forward-
-    compat precondition assertion would catch a future end-extending
-    mutator.
+- **Known limitations.**
+  - **Mi-NUDGE-EVIDENCE-STALENESS** — RESOLVED via Mi-NUDGE-FOLLOWUPS
+    close-out, option (b) (clear-on-nudge). Boundary-shift now clears
+    `evidence` on both affected markers on every successful nudge;
+    refused nudges preserve evidence by code structure. See the
+    enforcement bullet above.
+  - **Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP** — RESOLVED INVESTIGATE-only via
+    Mi-NUDGE-FOLLOWUPS close-out, option (b) (defer assertion). The
+    invariant chain holds today via the algorithmic pipelines
+    (`blind_mode.cpp:268-270`, `main.cpp:303-305`, reference_mode
+    equivalents) and no current TUI mutator extends `sel.end_sample`
+    (the boundary-shift mutator only shifts `prev.end` and `sel.start`
+    in lockstep). Re-open trigger: file a new entry if any
+    end-extending TUI mutator is proposed.
 
 ### INV-VIEW-NON-INVERTED — `0 ≤ view_start < view_end ≤ total_samples` in TUI
 

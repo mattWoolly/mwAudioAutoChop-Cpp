@@ -236,6 +236,124 @@ TEST_CASE("nudge_marker_*: selected_marker out of range no-ops both directions",
     CHECK(s.split_points[0].end_sample == 200);
 }
 
+// ─── Mi-NUDGE-EVIDENCE-STALENESS regression-guards ──────────────────
+//
+// Boundary-shift nudges clear SplitPoint::evidence on both affected
+// markers. evidence is descriptive provenance from the algorithmic
+// pipelines (blind_mode / reference_mode set it at construction);
+// post-user-edit it no longer describes the current marker range.
+// Refused nudges (idx == 0 no-op, would-collapse refusal) must leave
+// evidence untouched — only successful commits clear it.
+
+namespace {
+
+// Helper: build a marker with non-empty evidence (so the cure has
+// something to clear).
+mwaac::SplitPoint marker_with_evidence(std::int64_t start, std::int64_t end) {
+    mwaac::SplitPoint sp;
+    sp.start_sample = start;
+    sp.end_sample = end;
+    sp.evidence["test_key"] = static_cast<double>(123.0);
+    sp.evidence["another_key"] = std::string("provenance");
+    return sp;
+}
+
+} // namespace
+
+TEST_CASE("nudge_marker_right: clears evidence on successful nudge (Mi-NUDGE-EVIDENCE-STALENESS regression-guard)",
+          "[tui][app_handlers][mi-nudge-evidence-staleness]")
+{
+    // Two markers each with non-empty evidence. A successful nudge
+    // moves the boundary right and must clear both markers' evidence
+    // (both prev and sel had a boundary moved).
+    auto s = build_state(/*total=*/1000,
+                         {marker_with_evidence(100, 199),
+                          marker_with_evidence(200, 299)},
+                         /*selected=*/1);
+    REQUIRE_FALSE(s.split_points[0].evidence.empty());
+    REQUIRE_FALSE(s.split_points[1].evidence.empty());
+    mwaac::tui::nudge_marker_right(s);
+    // Sanity: boundary actually moved (this should be a successful nudge).
+    CHECK(s.split_points[0].end_sample == 200);
+    CHECK(s.split_points[1].start_sample == 201);
+    // Cure: both evidence maps cleared.
+    CHECK(s.split_points[0].evidence.empty());
+    CHECK(s.split_points[1].evidence.empty());
+}
+
+TEST_CASE("nudge_marker_left: clears evidence on successful nudge (Mi-NUDGE-EVIDENCE-STALENESS regression-guard)",
+          "[tui][app_handlers][mi-nudge-evidence-staleness]")
+{
+    // Symmetric to the right-nudge case.
+    auto s = build_state(/*total=*/1000,
+                         {marker_with_evidence(100, 199),
+                          marker_with_evidence(200, 299)},
+                         /*selected=*/1);
+    REQUIRE_FALSE(s.split_points[0].evidence.empty());
+    REQUIRE_FALSE(s.split_points[1].evidence.empty());
+    mwaac::tui::nudge_marker_left(s);
+    // Sanity: boundary actually moved.
+    CHECK(s.split_points[0].end_sample == 198);
+    CHECK(s.split_points[1].start_sample == 199);
+    // Cure: both evidence maps cleared.
+    CHECK(s.split_points[0].evidence.empty());
+    CHECK(s.split_points[1].evidence.empty());
+}
+
+TEST_CASE("nudge_marker_*: refused nudges preserve evidence (Mi-NUDGE-EVIDENCE-STALENESS)",
+          "[tui][app_handlers][mi-nudge-evidence-staleness]")
+{
+    // idx == 0 no-op (right): no boundary before the first marker;
+    // evidence must be preserved.
+    {
+        auto s = build_state(/*total=*/1000,
+                             {marker_with_evidence(100, 200)},
+                             /*selected=*/0);
+        const auto original_size = s.split_points[0].evidence.size();
+        REQUIRE(original_size > 0);
+        mwaac::tui::nudge_marker_right(s);
+        CHECK(s.split_points[0].evidence.size() == original_size);
+    }
+    // idx == 0 no-op (left): symmetric.
+    {
+        auto s = build_state(/*total=*/1000,
+                             {marker_with_evidence(100, 200)},
+                             /*selected=*/0);
+        const auto original_size = s.split_points[0].evidence.size();
+        REQUIRE(original_size > 0);
+        mwaac::tui::nudge_marker_left(s);
+        CHECK(s.split_points[0].evidence.size() == original_size);
+    }
+    // Would-collapse refusal (right): sel duration 1 cannot shrink to 0.
+    {
+        auto s = build_state(/*total=*/1000,
+                             {marker_with_evidence(100, 199),
+                              marker_with_evidence(200, 200)},
+                             /*selected=*/1);
+        const auto prev_size = s.split_points[0].evidence.size();
+        const auto sel_size = s.split_points[1].evidence.size();
+        REQUIRE(prev_size > 0);
+        REQUIRE(sel_size > 0);
+        mwaac::tui::nudge_marker_right(s);
+        CHECK(s.split_points[0].evidence.size() == prev_size);
+        CHECK(s.split_points[1].evidence.size() == sel_size);
+    }
+    // Would-collapse refusal (left): prev duration 1 cannot shrink to 0.
+    {
+        auto s = build_state(/*total=*/1000,
+                             {marker_with_evidence(100, 100),
+                              marker_with_evidence(200, 500)},
+                             /*selected=*/1);
+        const auto prev_size = s.split_points[0].evidence.size();
+        const auto sel_size = s.split_points[1].evidence.size();
+        REQUIRE(prev_size > 0);
+        REQUIRE(sel_size > 0);
+        mwaac::tui::nudge_marker_left(s);
+        CHECK(s.split_points[0].evidence.size() == prev_size);
+        CHECK(s.split_points[1].evidence.size() == sel_size);
+    }
+}
+
 // ─── boundary-shift invariants ──────────────────────────────────────
 
 TEST_CASE("nudge_marker_*: inter-track gap preserved across boundary-shift sequences",

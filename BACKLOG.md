@@ -1956,7 +1956,7 @@ migration to `std::expected`-style storage happens in M-14.
     `total - 1`). Forward-compat precondition assertion would
     catch a future end-extending mutator. Filed for forward-compat.
 
-### Mi-NUDGE-EVIDENCE-STALENESS — boundary-shift leaves marker evidence describing pre-edit ranges
+### Mi-NUDGE-EVIDENCE-STALENESS — boundary-shift leaves marker evidence describing pre-edit ranges — **RESOLVED in #<PR>** via option (b) (clear-on-nudge)
 
 - **Origin.** Surfaced during Mi-MARKER-NUDGE-SEMANTIC audit-2
   (PR #62, 2026-05-20).
@@ -1991,8 +1991,26 @@ migration to `std::expected`-style storage happens in M-14.
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
   the audit surfaced the question as descriptive provenance during
   the boundary-shift re-cure; not a blocker.
+- **Status / Resolution.** RESOLVED via Mi-NUDGE-FOLLOWUPS close-out
+  (commit `<post-merge>`). Cure direction: option (b) (clear-on-nudge),
+  chosen by user via AskUserQuestion 2026-05-20. Both
+  `nudge_marker_right` and `nudge_marker_left` in
+  `src/tui/app_handlers.cpp` now call `prev.evidence.clear()` and
+  `sel.evidence.clear()` after the successful boundary-shift commit;
+  refused nudges (`selected_marker == 0` no-op; would-collapse
+  refusal) `return` before the commit lines, so evidence is preserved
+  on refused calls. The cure treats any user edit of a marker
+  boundary as invalidating the algorithmic provenance, so post-nudge
+  the evidence map is either empty (cleared by user edit) or in-sync
+  with the current marker range (set at construction by
+  `blind_mode.cpp` / `reference_mode.cpp`, never touched). Locked by
+  three regression-guard TEST_CASEs in `tests/test_app_handlers.cpp`
+  (clears-on-success right, clears-on-success left, refused-preserves
+  covering both directions and both refusal modes) plus a
+  `split_point.hpp` comment on the `evidence` field and an
+  enforcement bullet in `docs/invariants.md` INV-SPLITPOINT-ORDER.
 
-### Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP — forward-compat: re-cure dropped Mi-8's total_samples clamp
+### Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP — forward-compat: re-cure dropped Mi-8's total_samples clamp — **RESOLVED INVESTIGATE-only** via option (b) (defer; invariant chain holds via algorithmic pipelines)
 
 - **Origin.** Surfaced during Mi-MARKER-NUDGE-SEMANTIC audit-2
   (PR #62, 2026-05-20).
@@ -2025,6 +2043,20 @@ migration to `std::expected`-style storage happens in M-14.
 - **Effort.** ≤ 10 LOC if option (a).
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
   forward-compat audit finding; not a current bug.
+- **Status / Resolution.** RESOLVED INVESTIGATE-only via
+  Mi-NUDGE-FOLLOWUPS close-out (commit `<post-merge>`). Cure
+  direction: option (b) (defer assertion), chosen by user via
+  AskUserQuestion 2026-05-20. No code change. Rationale: the
+  invariant `markers[*].end_sample <= total_samples - 1` is
+  established at construction by `blind_mode.cpp:268-270`,
+  `main.cpp:303-305`, and the reference_mode equivalents. No current
+  TUI mutator extends `sel.end_sample` — `nudge_marker_right` only
+  shifts `prev.end` and `sel.start` in lockstep by ±1, leaving
+  `sel.end` invariant; `nudge_marker_left` is symmetric. The
+  forward-compat hole reopens if-and-only-if a future TUI mutator
+  extends marker edges (e.g., a hypothetical "stretch marker"
+  feature). Re-open trigger: file a new entry if any end-extending
+  TUI mutator is filed.
 
 ### Mi-9 — TUI view bounds can invert — **RESOLVED in #59 (`815f278`)**
 
