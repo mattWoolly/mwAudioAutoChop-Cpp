@@ -985,12 +985,16 @@ pipelines produce the no-gap invariant via the post-loop
        selected marker to zero or negative duration).
     `nudge_marker_left` is symmetric (decrement both; refuse if
     previous marker would collapse).
-  - `tests/test_app_handlers.cpp` 14 TEST_CASEs on the marker-nudge
-    family (12 boundary-shift behavior + 2 last-allowed-step coverage
-    tests added per Mi-MARKER-NUDGE-SEMANTIC audit-1 finding 2).
-    Classification annotated in the file's header so future-Mi-*
-    authors extending the harness preserve the regression-guard
-    ratio.
+  - `tests/test_app_handlers.cpp` 16 TEST_CASEs on the marker-nudge
+    family (11 boundary-shift behavior + 2 last-allowed-step coverage
+    tests added per Mi-MARKER-NUDGE-SEMANTIC audit-1 finding 2 + 3
+    evidence-clear-on-nudge regression-guards added per
+    Mi-NUDGE-EVIDENCE-STALENESS close-out). Pre-Mi-NUDGE-EVIDENCE-
+    STALENESS the count was 13 (11 + 2); the legacy "14 (12 + 2)"
+    narration from PR #62 was an off-by-one paraphrase slip and is
+    corrected in the same edit. Classification annotated in the
+    file's header so future-Mi-* authors extending the harness
+    preserve the regression-guard ratio.
   - `inter-track gap preserved across boundary-shift sequences` test
     locks the cross-marker invariant across 300 nudge calls
     (right + left) — catches any regression that breaks the lockstep
