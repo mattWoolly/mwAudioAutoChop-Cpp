@@ -46,6 +46,14 @@ void nudge_marker_right(AppState& state) {
 
     prev.end_sample += 1;
     sel.start_sample += 1;
+
+    // Mi-NUDGE-EVIDENCE-STALENESS option (b): clear evidence on any
+    // successful boundary-shift. evidence is descriptive provenance
+    // from the algorithmic pipelines; once the user edits the boundary,
+    // the recorded provenance no longer describes the current marker
+    // range. Both prev and sel had a boundary moved, so clear both.
+    prev.evidence.clear();
+    sel.evidence.clear();
 }
 
 void nudge_marker_left(AppState& state) {
@@ -71,6 +79,10 @@ void nudge_marker_left(AppState& state) {
 
     prev.end_sample -= 1;
     sel.start_sample -= 1;
+
+    // Mi-NUDGE-EVIDENCE-STALENESS: see nudge_marker_right.
+    prev.evidence.clear();
+    sel.evidence.clear();
 }
 
 // ─── Mi-9 view-bounds mutators ─────────────────────────────────────
