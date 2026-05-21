@@ -1956,7 +1956,7 @@ migration to `std::expected`-style storage happens in M-14.
     `total - 1`). Forward-compat precondition assertion would
     catch a future end-extending mutator. Filed for forward-compat.
 
-### Mi-NUDGE-EVIDENCE-STALENESS — boundary-shift leaves marker evidence describing pre-edit ranges — **RESOLVED in #<PR>** via option (b) (clear-on-nudge)
+### Mi-NUDGE-EVIDENCE-STALENESS — boundary-shift leaves marker evidence describing pre-edit ranges — **RESOLVED in #63 (`9d4d124`)** via option (b) (clear-on-nudge)
 
 - **Origin.** Surfaced during Mi-MARKER-NUDGE-SEMANTIC audit-2
   (PR #62, 2026-05-20).
@@ -1992,7 +1992,7 @@ migration to `std::expected`-style storage happens in M-14.
   the audit surfaced the question as descriptive provenance during
   the boundary-shift re-cure; not a blocker.
 - **Status / Resolution.** RESOLVED via Mi-NUDGE-FOLLOWUPS close-out
-  (commit `<post-merge>`). Cure direction: option (b) (clear-on-nudge),
+  PR #63 (commit `9d4d124`). Cure direction: option (b) (clear-on-nudge),
   chosen by user via AskUserQuestion 2026-05-20. Both
   `nudge_marker_right` and `nudge_marker_left` in
   `src/tui/app_handlers.cpp` now call `prev.evidence.clear()` and
@@ -2044,7 +2044,7 @@ migration to `std::expected`-style storage happens in M-14.
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md` —
   forward-compat audit finding; not a current bug.
 - **Status / Resolution.** RESOLVED INVESTIGATE-only via
-  Mi-NUDGE-FOLLOWUPS close-out (commit `<post-merge>`). Cure
+  Mi-NUDGE-FOLLOWUPS close-out PR #63 (commit `9d4d124`). Cure
   direction: option (b) (defer assertion), chosen by user via
   AskUserQuestion 2026-05-20. No code change. Rationale: the
   invariant `markers[*].end_sample <= total_samples - 1` is
@@ -2197,11 +2197,15 @@ tail follow-ups closed 2026-05-20 across PRs #60 (Mi-CURSOR-COL-CLAMP),
 #61 (Mi-VIEW-ZOOM-BOUNDARY-SHIFT), and #62 (Mi-MARKER-NUDGE-SEMANTIC
 re-cure of Mi-8 with boundary-shift semantic per user judgment).
 
-**Total Tier 7 cleanup: 7 PRs.** All originally-planned items closed.
-All dispatch-tail follow-ups closed. 2 new forward-looking items
-filed during the Mi-MARKER-NUDGE-SEMANTIC audit (Mi-NUDGE-EVIDENCE-
-STALENESS and Mi-NUDGE-DEFENSIVE-TOTAL-CLAMP); both flagged as
-descriptive / forward-compat and not blocking.
+**Total Tier 7 cleanup: 8 PRs.** All originally-planned items closed.
+All dispatch-tail follow-ups closed. Both forward-looking items
+filed during the Mi-MARKER-NUDGE-SEMANTIC audit also closed in
+PR #63 (Mi-NUDGE-FOLLOWUPS, 2026-05-20, commit `9d4d124`): Mi-NUDGE-
+EVIDENCE-STALENESS RESOLVED via option (b) (clear-on-nudge); Mi-NUDGE-
+DEFENSIVE-TOTAL-CLAMP RESOLVED INVESTIGATE-only via option (b) (defer
+assertion; invariant chain holds via algorithmic pipelines). User
+ratified both cure directions via AskUserQuestion. **Tier 7 closes
+zero-residue.**
 
 ### Mi-10 — run_tui exit-code documentation — **RESOLVED in #57 (`f359e19`)**
 
