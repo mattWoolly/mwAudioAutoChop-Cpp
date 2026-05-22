@@ -16,7 +16,7 @@ Designed for vinyl archivists who want bit-perfect output, tight alignment to a 
 
 Feed it a continuous vinyl rip and either:
 
-- **Reference mode** — a folder of reference tracks (digital master, CD rip, whatever you have), and the tool aligns each one sample-accurately and writes out individually-chopped files.
+- **Reference mode** — a folder of reference tracks (digital master, CD rip, whatever you have), and the tool aligns each one to within ±1 native sample (per INV-RATECONV-ROUNDED) and writes out individually-chopped files.
 - **Blind mode** — no reference needed; detects inter-track gaps by energy envelope.
 - **TUI mode** — interactive waveform editor for when you want hands-on control.
 
@@ -40,7 +40,7 @@ mwAudioAutoChop reference vinyl_rip.wav -r reference_tracks/ -o output/ --dry-ru
 
 ## Recommended workflow: automated pass + REAPER review
 
-The alignment gets most tracks sample-accurate, but difficult material (gradual fade-ins, continuous DJ mixes, heavy rhythmic repetition) sometimes lands a second or two off. Rather than tuning algorithms endlessly, run with `--reaper` and review:
+The alignment gets most tracks within ±1 sample, but difficult material (gradual fade-ins, continuous DJ mixes, heavy rhythmic repetition) sometimes lands a second or two off. Rather than tuning algorithms endlessly, run with `--reaper` and review:
 
 1. Generate chops + REAPER project:
    ```
