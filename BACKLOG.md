@@ -219,11 +219,13 @@ migration to `std::expected`-style storage happens in M-14.
         `kHeadSize` cycle precedent.*
   - [x] README's "sample-accurate" claim is reconciled (DOC-1) with the
         achievable tolerance.
-        *Resolved 2026-05-21 via T8-PAPERWORK-SWEEP. `README.md:19`
-        reworded to "aligns each one to within ±1 native sample
-        (per INV-RATECONV-ROUNDED)"; `README.md:43` colloquial form
-        tightened to "within ±1 sample" for consistency. See DOC-1
-        entry below for full close-out attribution.*
+        *Resolved INVESTIGATE-only 2026-05-24 via T8-PAPERWORK-SWEEP per
+        user judgment via AskUserQuestion. README preserved as-is;
+        rationale recorded under DOC-1 below — line 43's in-sentence
+        "but … sometimes lands a second or two off" hedge serves as
+        the test-bridge for the "sample-accurate" descriptor, and the
+        strict tolerance lives in `docs/invariants.md` INV-RATECONV-
+        ROUNDED (the source of truth for tech-spec readers).*
 
 ### C-5 — `compute_spectral_flatness` unsigned wrap + stub implementation
 
@@ -2408,27 +2410,49 @@ zero-residue.**
 - **Exit criteria.**
   - [ ] No magic numbers remain in the per-track loop bodies.
 
-### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED via T8-PAPERWORK-SWEEP**
+### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
 
 - **Defect.** README uses "sample-accurate" in a context where the code
   rounds ±1 native-rate sample (post-C-4 fix).
 - **Invariant established.** "Every README claim is either enforced by a
   test or rewritten to match behavior."
 - **Files touched.** `README.md`.
-- **Exit criteria.**
-  - [x] Claim reworded to match the tolerance guaranteed by C-4's new test.
-        *`README.md:19` ("Reference mode" bullet) reworded from
-        "aligns each one sample-accurately" to "aligns each one to
-        within ±1 native sample (per INV-RATECONV-ROUNDED)", matching
-        the C-4 invariant text in `docs/invariants.md:312`. `README.md:43`
-        colloquial form tightened from "gets most tracks sample-accurate"
-        to "gets most tracks within ±1 sample" for doc-internal
-        consistency; the self-qualifying "but difficult material …
-        sometimes lands a second or two off" clause preserved.*
-- **Status / Resolution.** RESOLVED 2026-05-21 via T8-PAPERWORK-SWEEP.
-  Tolerance backed by `INV-RATECONV-ROUNDED` in `docs/invariants.md`
-  and by the C-4 regression test `Reference mode: native-rate boundary
-  is rounded not truncated` in `tests/test_reference_mode.cpp`.
+- **Exit criteria (original).**
+  - [~] Claim reworded to match the tolerance guaranteed by C-4's new test.
+        *Original spec called for a strict rewording. User-judgment
+        close on T8-PAPERWORK-SWEEP redirected to INVESTIGATE-only —
+        see Status / Resolution below.*
+- **Status / Resolution.** RESOLVED INVESTIGATE-only 2026-05-24 via
+  T8-PAPERWORK-SWEEP. User judgment via AskUserQuestion: the README's
+  "sample-accurate" descriptor is preserved as written. Rationale:
+  - **Line 43 is self-qualifying.** "The alignment gets most tracks
+    sample-accurate, but difficult material (gradual fade-ins,
+    continuous DJ mixes, heavy rhythmic repetition) sometimes lands
+    a second or two off." The "but … sometimes lands a second or two
+    off" clause is in the same sentence and qualifies the
+    "sample-accurate" descriptor against the worst case. The user-facing
+    claim is therefore not unqualified.
+  - **Line 19 is user-facing rhetorical language.** The "sample-accurate"
+    in the "Reference mode" bullet is the README's high-level
+    description of intent; the technical specification of the tolerance
+    (≤ 1 native-rate sample for the algorithmic path, larger for
+    difficult material) lives in `docs/invariants.md` under
+    INV-RATECONV-ROUNDED (`docs/invariants.md:312`) where tech-spec
+    readers go.
+  - **The "reword to match" invariant ("Every README claim is either
+    enforced by a test or rewritten to match behavior") is honored**
+    by treating line 43's in-sentence hedge as the test-bridge: the
+    claim that survives ("most tracks sample-accurate, some lands a
+    second or two off") IS matched by behavior. Strict rewording was
+    determined to be over-precise for user-facing prose.
+  - **Re-open trigger.** If the README's intent or tolerance description
+    becomes misleading (e.g., a future change widens the tolerance
+    substantially, or removes the self-qualifying clause on line 43),
+    file a new DOC-1-style entry. Tolerance text in
+    `docs/invariants.md` INV-RATECONV-ROUNDED is the source of truth
+    for tech-spec readers; README is intentionally looser.
+- **Files touched (close-out).** None. INVESTIGATE-only close;
+  README.md preserved as-is.
 
 ### DOC-2 — PROJECT_SPEC.md reconciliation
 
@@ -2475,21 +2499,32 @@ zero-residue.**
   files. The 5 other CI jobs (build × Linux/macOS × Debug/Release,
   plus asan+ubsan sanitizers) remain green throughout. No production-
   correctness impact; this is a style-quality gate.
-- **Affected files (from PR #63 audit log).**
+- **Affected files (14, from PR #63 audit log).**
   - `src/core/analysis.cpp`, `src/core/audio_buffer.cpp`,
-    `src/core/correlation.cpp`, `src/core/drift_model.cpp`,
-    `src/core/music_detection.cpp`, `src/core/test_deps.cpp`,
+    `src/core/audio_file.cpp`, `src/core/correlation.cpp`,
+    `src/core/drift_model.cpp`, `src/core/music_detection.cpp`,
+    `src/core/test_deps.cpp`, `src/main.cpp`,
     `src/modes/blind_mode.cpp`, `src/modes/reaper_export.cpp`,
-    `src/modes/reference_mode.cpp`, `src/tui/app_handlers.cpp`.
-- **Error classes.**
-  - `modernize-use-auto` — `T x = static_cast<T>(...)` initializations
-    should be `auto x = static_cast<T>(...)`. Most numerous class
-    (≥6 sites in `app_handlers.cpp` alone).
-  - `readability-uppercase-literal-suffix` — float literals with
-    lowercase `f` suffix (`0.0f`, `0.5f`). Several sites in
-    `analysis.cpp` and `audio_buffer.cpp`.
-  - `readability-implicit-bool-conversion` — `if (!ptr)` patterns
-    should be `if (ptr == nullptr)`. Site at `audio_buffer.cpp:14`.
+    `src/modes/reference_mode.cpp`, `src/tui/app.cpp`,
+    `src/tui/app_handlers.cpp`, `src/tui/waveform.cpp`.
+- **Top error classes by volume (~28 distinct classes total in log;
+  top-4 shown).**
+  - `readability-braces-around-statements` — 72 sites. Single-line
+    `if`/`for`/`while` bodies should be braced.
+  - `readability-uppercase-literal-suffix` — 58 sites. Float literals
+    with lowercase `f` suffix (`0.0f`, `0.5f`).
+  - `modernize-return-braced-init-list` — 41 sites. `return T{...}`
+    should be `return {...}` where the type is deducible.
+  - `modernize-use-auto` — 39 sites. `T x = static_cast<T>(...)`
+    initializations should be `auto x = static_cast<T>(...)` (verified
+    ≥6 sites in `app_handlers.cpp` alone).
+  - Other classes present in the log include
+    `cppcoreguidelines-avoid-c-arrays` (13),
+    `readability-implicit-bool-conversion` (9),
+    `modernize-use-emplace` (5),
+    `cppcoreguidelines-pro-type-reinterpret-cast` (5),
+    plus ~20 long-tail classes. Full per-class breakdown to be refreshed
+    at cure-dispatch time against then-current `main` log.
 - **Reachability.** None of these classes affect runtime behavior;
   all are style-only diagnostics. The cycle's merge-gate has been
   treated as "5/6 green excluding clang-tidy" per
@@ -2505,7 +2540,10 @@ zero-residue.**
   - (c) Status quo: keep the allowed-red baseline. No code change.
 - **Tier rationale.** Tier 8 (project hygiene). Same shape as
   DOC-1/DOC-2/DOC-3 (doc / hygiene work, no correctness impact).
-- **Effort.** ≤ 50 LOC mechanical fix-up for option (a).
+- **Effort.** ≈ 250 LOC mechanical fix-up across 14 files for option (a)
+  (revised from initial ≤ 50 LOC estimate per PR #64 audit finding —
+  initial estimate undercounted both file list (10→14) and class
+  taxonomy (3 named → ~28 in log)).
 - **Filed timing.** Per `feedback_close_followups_before_next_epic.md`
   the discovery was captured during PR #63 gate-eval and filed at
   Tier 8 open (this PR) so the scope is tracked. Cure dispatch
