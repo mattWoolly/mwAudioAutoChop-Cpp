@@ -2376,7 +2376,7 @@ zero-residue.**
 
 ## Tier 8 — Documentation, attribution, hygiene
 
-### M-12 — FFTW3 is dead — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
+### M-12 — FFTW3 is dead — **RESOLVED INVESTIGATE-only in #64 (`760f19e`)** via T8-PAPERWORK-SWEEP
 
 - **Defect.** Already resolved in Phase 0.3 (CMake + CI). Close on
   audit-agent verification.
@@ -2410,7 +2410,7 @@ zero-residue.**
 - **Exit criteria.**
   - [ ] No magic numbers remain in the per-track loop bodies.
 
-### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
+### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED INVESTIGATE-only in #64 (`760f19e`)** via T8-PAPERWORK-SWEEP
 
 - **Defect.** README uses "sample-accurate" in a context where the code
   rounds ±1 native-rate sample (post-C-4 fix).
@@ -2460,7 +2460,7 @@ zero-residue.**
 - **Exit criteria.** Spec and CMakeLists.txt agree on warning flags, standard,
   and dependencies.
 
-### DOC-3 — docs/invariants.md living document — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
+### DOC-3 — docs/invariants.md living document — **RESOLVED INVESTIGATE-only in #64 (`760f19e`)** via T8-PAPERWORK-SWEEP
 
 - **Invariant established.** "Every invariant named in this backlog has an
   entry in docs/invariants.md citing the enforcement site(s)."
@@ -2488,7 +2488,8 @@ zero-residue.**
 
 ### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7
 
-- **Origin.** Filed 2026-05-21 during T8-PAPERWORK-SWEEP. The
+- **Origin.** Filed 2026-05-21 during T8-PAPERWORK-SWEEP (#64,
+  `760f19e`). The
   clang-tidy CI job has been failing on `main` since at least
   Tier 7 open (PR #56, 2026-05-19) and is documented as
   allowed-red in the cycle's merge-gate precedent (5/6 green
