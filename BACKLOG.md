@@ -2389,7 +2389,7 @@ zero-residue.**
   `target_link_libraries`, or `include_directories` reference to
   FFTW remains. Phase 0.3 cure stands.
 
-### M-13 — pocketfft attribution — **RESOLVED via M-13-POCKETFFT-ATTRIBUTION**
+### M-13 — pocketfft attribution — **RESOLVED in #65 (`4e1bedd`)** via M-13-POCKETFFT-ATTRIBUTION
 
 - **Defect.** Vendored pocketfft_hdronly.h has no LICENSE/attribution in-tree.
 - **Invariant established.** "Every third-party file in-tree is accompanied
@@ -2407,8 +2407,9 @@ zero-residue.**
         URL (`https://gitlab.mpcdf.mpg.de/mtr/pocketfft`), and the
         complete BSD-3-Clause license text reproduced verbatim from
         the file header.*
-- **Status / Resolution.** RESOLVED via M-13-POCKETFFT-ATTRIBUTION
-  close-out. `THIRD_PARTY_LICENSES.md` created at repository root;
+- **Status / Resolution.** RESOLVED in #65 (commit `4e1bedd`) via
+  M-13-POCKETFFT-ATTRIBUTION close-out. `THIRD_PARTY_LICENSES.md`
+  created at repository root;
   `README.md` Acknowledgments section gains a bullet pointing to
   `THIRD_PARTY_LICENSES.md`. Verified empirically: pocketfft is the
   only in-tree file with a Copyright header (`find src -name '*.h*'
@@ -2589,7 +2590,7 @@ zero-residue.**
 ### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent
 
 - **Origin.** Filed 2026-05-26 during M-13-POCKETFFT-ATTRIBUTION
-  pre-cure state check. Surfaced via `ls LICENSE LICENSE.md` returning
+  pre-cure state check (#65, `4e1bedd`). Surfaced via `ls LICENSE LICENSE.md` returning
   no matches at the repository root while `README.md:205` reads
   "MIT — see [LICENSE](LICENSE)."
 - **Defect (project hygiene + claim-vs-reality).** The README's
