@@ -2389,7 +2389,7 @@ zero-residue.**
   `target_link_libraries`, or `include_directories` reference to
   FFTW remains. Phase 0.3 cure stands.
 
-### M-13 — pocketfft attribution
+### M-13 — pocketfft attribution — **RESOLVED via M-13-POCKETFFT-ATTRIBUTION**
 
 - **Defect.** Vendored pocketfft_hdronly.h has no LICENSE/attribution in-tree.
 - **Invariant established.** "Every third-party file in-tree is accompanied
@@ -2397,7 +2397,36 @@ zero-residue.**
 - **Files touched.** `THIRD_PARTY_LICENSES.md` (new), `README.md`
   (acknowledgments).
 - **Exit criteria.**
-  - [ ] pocketfft BSD-3 text reproduced; author + URL listed.
+  - [x] pocketfft BSD-3 text reproduced; author + URL listed.
+        *Exit criterion met by `THIRD_PARTY_LICENSES.md` containing
+        the full multi-party copyright lines (Max-Planck-Society
+        2010-2024, Peter Bell 2019-2020, Matteo Frigo + MIT 2003 /
+        2007-14 for DCT-IV, Tan Ping Liang + Peter Bell 2024 for
+        prev_good_size, Cris Luengo 2024 for safeguards), the
+        authors line ("Martin Reinecke, Peter Bell"), the upstream
+        URL (`https://gitlab.mpcdf.mpg.de/mtr/pocketfft`), and the
+        complete BSD-3-Clause license text reproduced verbatim from
+        the file header.*
+- **Status / Resolution.** RESOLVED via M-13-POCKETFFT-ATTRIBUTION
+  close-out. `THIRD_PARTY_LICENSES.md` created at repository root;
+  `README.md` Acknowledgments section gains a bullet pointing to
+  `THIRD_PARTY_LICENSES.md`. Verified empirically: pocketfft is the
+  only in-tree file with a Copyright header (`find src -name '*.h*'
+  -exec grep -l 'Copyright' {} \;` returns only `src/core/pocketfft_hdronly.h`),
+  so the invariant "Every third-party file in-tree is accompanied by
+  attribution satisfying its license" is satisfied in full by this
+  one entry. Externally-fetched dependencies (Catch2, FTXUI,
+  libsndfile) are not vendored and are linked from the README
+  acknowledgments rather than reproduced in `THIRD_PARTY_LICENSES.md`,
+  consistent with the "vendored" qualifier in the invariant text.
+- **Adjacent finding (filed-separately).** Surfaced during this
+  dispatch's pre-cure state check: `README.md:205` references a root
+  `LICENSE` file ("MIT — see [LICENSE](LICENSE).") that does not
+  exist in the repository tree. Filed as `T8-LICENSE-FILE-MISSING`
+  under Tier 8 below per `feedback_tier_boundary_preservation.md`
+  in-tier-but-different-defect filing rather than fold-in (the
+  missing-LICENSE concern is project-self attribution, distinct from
+  M-13's third-party-vendored attribution).
 
 ### Mi-5 — Magic threshold soup in reference mode
 
@@ -2556,6 +2585,47 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block; the cycle's allowed-red baseline note in
   `project_tier5_state.md` is updated to "no longer allowed-red".
+
+### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent
+
+- **Origin.** Filed 2026-05-26 during M-13-POCKETFFT-ATTRIBUTION
+  pre-cure state check. Surfaced via `ls LICENSE LICENSE.md` returning
+  no matches at the repository root while `README.md:205` reads
+  "MIT — see [LICENSE](LICENSE)."
+- **Defect (project hygiene + claim-vs-reality).** The README's
+  License section asserts an MIT license and links to a `LICENSE`
+  file at the repository root, but no such file exists in the tree.
+  The MIT badge (`README.md:4`) makes the same assertion. Readers
+  following the link land on a 404 (GitHub) or a missing-file error
+  (local checkout). Distinct from M-13 (which is third-party
+  vendored attribution); this entry is project-self attribution.
+- **Invariant established.** "Every README link to a project file
+  resolves to an actual file in the repository tree." (Mirrored
+  shape of M-13's third-party invariant — applied to project-self.)
+- **Files touched (forward).** `LICENSE` (new, root) OR `README.md`
+  (revise claim and remove broken link), depending on cure direction.
+- **Possible outcomes.**
+  - (a) Add a root `LICENSE` file with standard MIT text + the
+    project's author/year. ~25 LOC. Aligns repo with README claim.
+  - (b) Revise `README.md` — drop the MIT badge and the License
+    section's link, or change the License section to inline-state
+    the license without a link. User-judgment territory similar to
+    DOC-1's INVESTIGATE-only close (user preferred preserving
+    README copy in DOC-1).
+  - (c) INVESTIGATE-only close: document the discrepancy without
+    cure. Weakest option; leaves the broken link in place.
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Same shape as DOC-1 (claim-vs-reality on user-facing README)
+  combined with M-13 (license file attribution).
+- **Effort.** ≤ 25 LOC for option (a); ≤ 5 LOC for option (b);
+  paperwork only for option (c).
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md`
+  in-tier-but-different-defect filing — surfaced during M-13
+  state-check; filed as own item rather than folded into M-13's
+  third-party scope. M-13 closure remains sharp.
+- **Audit-cardinality (forward).** Single-audit by both axes.
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
 
 ---
 

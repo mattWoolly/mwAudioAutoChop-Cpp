@@ -209,3 +209,4 @@ MIT — see [LICENSE](LICENSE).
 - Original Python implementation: [audio-auto-chop](https://github.com/mattWoolly/audio-auto-chop)
 - Terminal UI: [FTXUI](https://github.com/ArthurSonzogni/FTXUI)
 - Audio I/O: [libsndfile](https://github.com/libsndfile/libsndfile)
+- FFT: [pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft) — BSD-3-Clause; vendored in-tree, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
