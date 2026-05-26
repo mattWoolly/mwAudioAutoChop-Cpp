@@ -217,15 +217,15 @@ migration to `std::expected`-style storage happens in M-14.
         returns no hits. Tolerance constant
         `kAnalysisToNativeRoundingTolerance = 1` named at file scope per
         `kHeadSize` cycle precedent.*
-  - [~] README's "sample-accurate" claim is reconciled (DOC-1) with the
+  - [x] README's "sample-accurate" claim is reconciled (DOC-1) with the
         achievable tolerance.
-        *Deferred to DOC-1 (Tier 8) per Tier 5 governing prompt's
-        "DOC-1 implications surfaced for next epic without expanding scope
-        into DOC-1 itself" rule. C-4 establishes the achievable tolerance
-        (≤ 1 native-rate sample, round-half-away-from-zero); DOC-1 will
-        reconcile the README claim against this tolerance when DOC-1
-        dispatches. `[~]` deferral precedent: BACKLOG.md's M-3 entry on
-        re-attributed `:728` cure.*
+        *Resolved INVESTIGATE-only 2026-05-24 via T8-PAPERWORK-SWEEP per
+        user judgment via AskUserQuestion. README preserved as-is;
+        rationale recorded under DOC-1 below — line 43's in-sentence
+        "but … sometimes lands a second or two off" hedge serves as
+        the test-bridge for the "sample-accurate" descriptor, and the
+        strict tolerance lives in `docs/invariants.md` INV-RATECONV-
+        ROUNDED (the source of truth for tech-spec readers).*
 
 ### C-5 — `compute_spectral_flatness` unsigned wrap + stub implementation
 
@@ -2376,10 +2376,18 @@ zero-residue.**
 
 ## Tier 8 — Documentation, attribution, hygiene
 
-### M-12 — FFTW3 is dead
+### M-12 — FFTW3 is dead — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
 
 - **Defect.** Already resolved in Phase 0.3 (CMake + CI). Close on
   audit-agent verification.
+- **Status / Resolution.** RESOLVED INVESTIGATE-only 2026-05-21 via
+  T8-PAPERWORK-SWEEP. Verified empirically against the working tree:
+  the only occurrence of `FFTW` / `fftw` in the build system is
+  `CMakeLists.txt:122`, an explanatory comment confirming the
+  dependency was explicitly excluded ("of this project used FFTW3 —
+  keep that out of the dependency graph"). No live `find_package`,
+  `target_link_libraries`, or `include_directories` reference to
+  FFTW remains. Phase 0.3 cure stands.
 
 ### M-13 — pocketfft attribution
 
@@ -2402,15 +2410,49 @@ zero-residue.**
 - **Exit criteria.**
   - [ ] No magic numbers remain in the per-track loop bodies.
 
-### DOC-1 — README "sample-accurate" claim reconciliation
+### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
 
 - **Defect.** README uses "sample-accurate" in a context where the code
   rounds ±1 native-rate sample (post-C-4 fix).
 - **Invariant established.** "Every README claim is either enforced by a
   test or rewritten to match behavior."
 - **Files touched.** `README.md`.
-- **Exit criteria.**
-  - [ ] Claim reworded to match the tolerance guaranteed by C-4's new test.
+- **Exit criteria (original).**
+  - [~] Claim reworded to match the tolerance guaranteed by C-4's new test.
+        *Original spec called for a strict rewording. User-judgment
+        close on T8-PAPERWORK-SWEEP redirected to INVESTIGATE-only —
+        see Status / Resolution below.*
+- **Status / Resolution.** RESOLVED INVESTIGATE-only 2026-05-24 via
+  T8-PAPERWORK-SWEEP. User judgment via AskUserQuestion: the README's
+  "sample-accurate" descriptor is preserved as written. Rationale:
+  - **Line 43 is self-qualifying.** "The alignment gets most tracks
+    sample-accurate, but difficult material (gradual fade-ins,
+    continuous DJ mixes, heavy rhythmic repetition) sometimes lands
+    a second or two off." The "but … sometimes lands a second or two
+    off" clause is in the same sentence and qualifies the
+    "sample-accurate" descriptor against the worst case. The user-facing
+    claim is therefore not unqualified.
+  - **Line 19 is user-facing rhetorical language.** The "sample-accurate"
+    in the "Reference mode" bullet is the README's high-level
+    description of intent; the technical specification of the tolerance
+    (≤ 1 native-rate sample for the algorithmic path, larger for
+    difficult material) lives in `docs/invariants.md` under
+    INV-RATECONV-ROUNDED (`docs/invariants.md:312`) where tech-spec
+    readers go.
+  - **The "reword to match" invariant ("Every README claim is either
+    enforced by a test or rewritten to match behavior") is honored**
+    by treating line 43's in-sentence hedge as the test-bridge: the
+    claim that survives ("most tracks sample-accurate, some lands a
+    second or two off") IS matched by behavior. Strict rewording was
+    determined to be over-precise for user-facing prose.
+  - **Re-open trigger.** If the README's intent or tolerance description
+    becomes misleading (e.g., a future change widens the tolerance
+    substantially, or removes the self-qualifying clause on line 43),
+    file a new DOC-1-style entry. Tolerance text in
+    `docs/invariants.md` INV-RATECONV-ROUNDED is the source of truth
+    for tech-spec readers; README is intentionally looser.
+- **Files touched (close-out).** None. INVESTIGATE-only close;
+  README.md preserved as-is.
 
 ### DOC-2 — PROJECT_SPEC.md reconciliation
 
@@ -2418,13 +2460,101 @@ zero-residue.**
 - **Exit criteria.** Spec and CMakeLists.txt agree on warning flags, standard,
   and dependencies.
 
-### DOC-3 — docs/invariants.md living document
+### DOC-3 — docs/invariants.md living document — **RESOLVED INVESTIGATE-only via T8-PAPERWORK-SWEEP**
 
 - **Invariant established.** "Every invariant named in this backlog has an
   entry in docs/invariants.md citing the enforcement site(s)."
 - **Files touched.** `docs/invariants.md` (new).
 - **Exit criteria.** File exists, maintained by invariant-agent every 3–5
   completed items.
+- **Status / Resolution.** RESOLVED INVESTIGATE-only 2026-05-21 via
+  T8-PAPERWORK-SWEEP. Verified empirically: `docs/invariants.md`
+  exists (61 KB, ~1090 lines), with 30+ `INV-*` entries covering
+  every real invariant named in BACKLOG.md. Cross-referenced the
+  BACKLOG-side set of `INV-*` identifiers
+  (INV-BLIND-SINGLE-TRACK, INV-INDEX-TYPE-DISJOINT, INV-RUN-TUI-EXIT-CODE,
+  INV-SPLITPOINT-ORDER, INV-VIEW-NON-INVERTED, INV-RF64-*) against
+  the docs/invariants.md `### INV-*` headers — every real invariant
+  has an entry citing enforcement sites. One counterfactual outlier
+  (INV-MARKER-NUDGE-BOUNDS, BACKLOG.md:1908) is a forward-referenced
+  name from the discarded "block-shift confirmed" branch of the
+  Mi-MARKER-NUDGE-SEMANTIC decision tree — the user chose boundary-
+  shift (option b), so this name never landed as a real invariant;
+  the actual cure landed under INV-SPLITPOINT-ORDER which is present
+  in docs/invariants.md. The living-document discipline has been
+  exercised across Tier 5/6/7 (12+ Status flips and enforcement-bullet
+  additions through the cycle), confirming the per-3-to-5-item
+  maintenance cadence.
+
+### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7
+
+- **Origin.** Filed 2026-05-21 during T8-PAPERWORK-SWEEP. The
+  clang-tidy CI job has been failing on `main` since at least
+  Tier 7 open (PR #56, 2026-05-19) and is documented as
+  allowed-red in the cycle's merge-gate precedent (5/6 green
+  excluding clang-tidy on every Tier 7 PR #56–#63).
+- **Defect (project hygiene, not correctness).** The clang-tidy
+  workflow runs `clang-tidy -p build --warnings-as-errors='*'`
+  across `src/**/*.cpp` and produces errors on multiple source
+  files. The 5 other CI jobs (build × Linux/macOS × Debug/Release,
+  plus asan+ubsan sanitizers) remain green throughout. No production-
+  correctness impact; this is a style-quality gate.
+- **Affected files (14, from PR #63 audit log).**
+  - `src/core/analysis.cpp`, `src/core/audio_buffer.cpp`,
+    `src/core/audio_file.cpp`, `src/core/correlation.cpp`,
+    `src/core/drift_model.cpp`, `src/core/music_detection.cpp`,
+    `src/core/test_deps.cpp`, `src/main.cpp`,
+    `src/modes/blind_mode.cpp`, `src/modes/reaper_export.cpp`,
+    `src/modes/reference_mode.cpp`, `src/tui/app.cpp`,
+    `src/tui/app_handlers.cpp`, `src/tui/waveform.cpp`.
+- **Top error classes by volume (~28 distinct classes total in log;
+  top-4 shown).**
+  - `readability-braces-around-statements` — 72 sites. Single-line
+    `if`/`for`/`while` bodies should be braced.
+  - `readability-uppercase-literal-suffix` — 58 sites. Float literals
+    with lowercase `f` suffix (`0.0f`, `0.5f`).
+  - `modernize-return-braced-init-list` — 41 sites. `return T{...}`
+    should be `return {...}` where the type is deducible.
+  - `modernize-use-auto` — 39 sites. `T x = static_cast<T>(...)`
+    initializations should be `auto x = static_cast<T>(...)` (verified
+    ≥6 sites in `app_handlers.cpp` alone).
+  - Other classes present in the log include
+    `cppcoreguidelines-avoid-c-arrays` (13),
+    `readability-implicit-bool-conversion` (9),
+    `modernize-use-emplace` (5),
+    `cppcoreguidelines-pro-type-reinterpret-cast` (5),
+    plus ~20 long-tail classes. Full per-class breakdown to be refreshed
+    at cure-dispatch time against then-current `main` log.
+- **Reachability.** None of these classes affect runtime behavior;
+  all are style-only diagnostics. The cycle's merge-gate has been
+  treated as "5/6 green excluding clang-tidy" per
+  `feedback_halt_on_red_baseline.md` gate-eval (single-check
+  allowed-red is not "across the board").
+- **Possible outcomes.**
+  - (a) Mechanical batch-fix across all affected files. Single PR;
+    audit cardinality likely two (sharp-hook sharp; blast-radius
+    medium across ~10 source files). ~50 LOC mechanical edits.
+  - (b) Loosen the clang-tidy config (`NOLINT` per site, or disable
+    the noisy checks in `.clang-tidy`). Faster, lower-value;
+    silences the signal rather than fixing it.
+  - (c) Status quo: keep the allowed-red baseline. No code change.
+- **Tier rationale.** Tier 8 (project hygiene). Same shape as
+  DOC-1/DOC-2/DOC-3 (doc / hygiene work, no correctness impact).
+- **Effort.** ≈ 250 LOC mechanical fix-up across 14 files for option (a)
+  (revised from initial ≤ 50 LOC estimate per PR #64 audit finding —
+  initial estimate undercounted both file list (10→14) and class
+  taxonomy (3 named → ~28 in log)).
+- **Filed timing.** Per `feedback_close_followups_before_next_epic.md`
+  the discovery was captured during PR #63 gate-eval and filed at
+  Tier 8 open (this PR) so the scope is tracked. Cure dispatch
+  deferred until the documented Tier 8 items (M-13, Mi-5, DOC-2)
+  close, to keep T8-PAPERWORK-SWEEP minimal-scope.
+- **Audit-cardinality (forward).** When dispatched: two-audit by
+  `feedback_audit_cardinality_two_axes.md` because blast-radius is
+  medium (~10 files touched, multiple error classes).
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block; the cycle's allowed-red baseline note in
+  `project_tier5_state.md` is updated to "no longer allowed-red".
 
 ---
 
