@@ -54,11 +54,12 @@ Full-screen terminal interface inspired by hardware samplers (Elektron, MPC, vin
 - Support for Linux, macOS (Windows optional)
 - Proper dependency management
 
-### Dependencies (suggested)
-- **libsndfile**: Audio I/O (WAV, AIFF, FLAC)
-- **FFTW3** or **KissFFT**: FFT for correlation and analysis
-- **ncurses** or **FTXUI**: Terminal UI
-- **Eigen** (optional): Matrix operations for signal processing
+### Dependencies (actual, post-implementation)
+- **libsndfile**: Audio I/O (WAV, AIFF). System pkg-config preferred; `FetchContent` fallback pins `1.2.2`. Normalized as the `mwaac_sndfile` interface target regardless of source.
+- **pocketfft** (vendored in-tree at `src/core/pocketfft_hdronly.h`, BSD-3-Clause; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)): FFT for correlation and analysis. Header-only; no linkage. Replaces the originally-considered FFTW3/KissFFT (FFTW3 was explicitly removed per backlog item M-12).
+- **FTXUI** (FetchContent, pinned `v5.0.0`): Terminal UI. Replaces the originally-considered ncurses alternative.
+- **Catch2** (FetchContent, pinned `v3.5.2`): Test framework. Selected per the "Catch2 or GoogleTest" code-standards option.
+- *Not used*: Eigen — the originally-considered "optional matrix operations" dependency was never needed; correlation, drift modeling, and envelope analysis are implemented directly against `std::vector<float>` and `std::span<const float>` without a matrix library.
 
 ### Code Standards
 - C++20 or C++23
@@ -106,10 +107,11 @@ src/
 - Orchestrator merges approved PRs
 
 ### Quality Gates
-- Code compiles without warnings (`-Wall -Wextra -Werror`)
-- Unit tests pass
-- Agent code review approval
-- Documentation for public APIs
+- Code compiles without warnings under the project warning set, enforced as errors via the `MWAAC_WERROR` CMake option (default `ON`; CI keeps it on). Non-MSVC warning set is `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wold-style-cast -Wcast-align -Wnon-virtual-dtor -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough` (plus `-Werror` when `MWAAC_WERROR=ON`); MSVC warning set is `/W4 /permissive-` (plus `/WX` when `MWAAC_WERROR=ON`). See the `mwaac_apply_flags` helper in `CMakeLists.txt` — the warning set is scoped to *our* targets only, not third-party `FetchContent` dependencies (FTXUI / libsndfile / Catch2 legitimately produce warnings under `-Wconversion` / `-Wold-style-cast`).
+- AddressSanitizer + UndefinedBehaviorSanitizer can be enabled via the `MWAAC_SANITIZE` CMake option (default `OFF`); CI runs a dedicated sanitizer job (Debug build) with this on.
+- Unit + integration tests pass under `ctest`.
+- Agent code review approval (audit-agent pattern; verdicts CLEAN / CONCERNS / HALT).
+- Documentation for public APIs and project invariants — invariants tracked in [`docs/invariants.md`](docs/invariants.md) as a living document.
 
 ## Testing Strategy
 

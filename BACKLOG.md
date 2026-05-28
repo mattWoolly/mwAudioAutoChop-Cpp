@@ -2484,11 +2484,52 @@ zero-residue.**
 - **Files touched (close-out).** None. INVESTIGATE-only close;
   README.md preserved as-is.
 
-### DOC-2 — PROJECT_SPEC.md reconciliation
+### DOC-2 — PROJECT_SPEC.md reconciliation — **RESOLVED via DOC-2-SPEC-RECONCILIATION**
 
 - **Files touched.** `PROJECT_SPEC.md`.
 - **Exit criteria.** Spec and CMakeLists.txt agree on warning flags, standard,
   and dependencies.
+- **Status / Resolution.** RESOLVED via DOC-2-SPEC-RECONCILIATION
+  close-out. `PROJECT_SPEC.md` updated on the three axes named by the
+  exit criterion:
+  - **Standard** — already agreed pre-cure (`PROJECT_SPEC.md` line 64
+    "C++20 or C++23"; `CMakeLists.txt:5` sets `CMAKE_CXX_STANDARD 20`).
+    No change required.
+  - **Warning flags** — Quality-Gates bullet rewritten from the
+    shorthand `-Wall -Wextra -Werror` claim to the full non-MSVC
+    warning set actually applied by the `mwaac_apply_flags` helper
+    (12 flags), plus the MSVC equivalent (`/W4 /permissive-`), plus
+    the `MWAAC_WERROR` toggle semantics and the scope note that the
+    warning set is applied to first-party targets only (not
+    third-party `FetchContent` deps). Also added the `MWAAC_SANITIZE`
+    option (the dedicated CI sanitizer job) which the spec was silent
+    on.
+  - **Dependencies** — "(suggested)" subsection retitled to "(actual,
+    post-implementation)" and rewritten to match `CMakeLists.txt`:
+    libsndfile (system pkg-config preferred, FetchContent 1.2.2
+    fallback, normalized through `mwaac_sndfile` interface target);
+    pocketfft vendored in-tree (with cross-reference to
+    `THIRD_PARTY_LICENSES.md` per M-13 close-out); FTXUI FetchContent
+    v5.0.0; Catch2 FetchContent v3.5.2. Removed FFTW3/KissFFT (M-12
+    closed out; explicitly excluded per `CMakeLists.txt:120-122`).
+    Removed Eigen (originally suggested as optional; never
+    implemented; correlation/drift/envelope code operates directly
+    on `std::vector<float>` / `std::span<const float>` without a
+    matrix library).
+- **Adjacent finding (filed-separately).** Surfaced during pre-cure
+  state check: the spec's Architecture section (`PROJECT_SPEC.md`
+  lines 73-91) cites a `src/` layout that doesn't match the actual
+  tree — `src/cli/`, `src/utils/`, `alignment.hpp`, `editor.hpp`
+  don't exist; `audio_buffer`, `drift_model`, `music_detection`,
+  `reaper_export`, `app_handlers`, `pocketfft_hdronly.h`,
+  `split_point.hpp` aren't listed; `split_points.hpp` is singular in
+  the actual tree (`split_point.hpp`). Outside the strict DOC-2 exit
+  criterion (which names warning flags, standard, and dependencies).
+  Filed as `T8-SPEC-ARCH-DRIFT` below per
+  `feedback_tier_boundary_preservation.md` in-tier-but-different-defect
+  filing rather than fold-in (the architecture-drift cure has multiple
+  user-judgment options: match-spec-to-tree, reorganize-tree-to-spec,
+  or remove-diagram-entirely).
 
 ### DOC-3 — docs/invariants.md living document — **RESOLVED INVESTIGATE-only in #64 (`760f19e`)** via T8-PAPERWORK-SWEEP
 
@@ -2625,6 +2666,82 @@ zero-residue.**
   state-check; filed as own item rather than folded into M-13's
   third-party scope. M-13 closure remains sharp.
 - **Audit-cardinality (forward).** Single-audit by both axes.
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
+
+### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree
+
+- **Origin.** Filed 2026-05-28 during DOC-2-SPEC-RECONCILIATION pre-cure
+  state check. Surfaced by direct read of `PROJECT_SPEC.md` lines
+  73-91 (the "Architecture" code-block diagram) against `ls src/**/*`.
+- **Defect (project hygiene + claim-vs-reality).** The spec's
+  Architecture section diagrams a `src/` layout that does not match
+  the actual repository tree:
+  - **Empty placeholder directories (exist but unpopulated; spec
+    implies populated):** `src/cli/` and `src/utils/` both exist
+    with only `.gitkeep` files (no source files). The spec implies
+    CLI parsing files live in `src/cli/` and `dsp.hpp` lives in
+    `src/utils/`, but neither directory contains source code.
+    These are scaffold leftovers from the project's initial layout
+    that never got populated; CLI parsing was ultimately implemented
+    directly in `src/main.cpp`, and the DSP helpers were folded
+    into `src/core/*` modules.
+  - **Files in the spec but NOT in the tree:** `src/utils/dsp.hpp`,
+    `src/core/alignment.hpp`, `src/tui/editor.hpp`. (`split_points.hpp`
+    is listed in the spec as plural but actually exists as
+    `src/core/split_point.hpp` singular — naming drift, not a
+    missing file.)
+  - **Files in the tree but NOT in the spec diagram:**
+    `src/core/audio_buffer.{cpp,hpp}`, `src/core/drift_model.{cpp,hpp}`,
+    `src/core/music_detection.{cpp,hpp}`, `src/core/pocketfft_hdronly.h`
+    (vendored, M-13), `src/core/test_deps.cpp`,
+    `src/modes/reaper_export.{cpp,hpp}` (REAPER integration),
+    `src/tui/app_handlers.{cpp,hpp}` (Tier 7 state-mutator harness).
+  - **Naming-convention drift:** spec uses `.hpp`-only stubs
+    (`reference.hpp`, `blind.hpp`); tree uses `_mode.cpp`+`.hpp`
+    pairs (`reference_mode.cpp`, `blind_mode.cpp`).
+- **Invariant established.** "Every section of `PROJECT_SPEC.md` is
+  either currently true against the working tree, or marked
+  explicitly aspirational." (Mirrored shape of DOC-1's
+  claim-vs-reality invariant — applied to PROJECT_SPEC.md instead of
+  README.md.)
+- **Files touched (forward).** `PROJECT_SPEC.md` (Architecture
+  section) OR `src/` (reorganize to match spec) — depending on cure
+  direction.
+- **Possible outcomes.**
+  - (a) Match spec to current `src/` tree. Rewrite the Architecture
+    code-block to enumerate the actual files/dirs as of cure time.
+    Cure-time sub-decision: keep the empty `src/cli/` and `src/utils/`
+    placeholder dirs and annotate them as "reserved for future
+    expansion" in the diagram, OR remove the empty dirs from disk
+    (`git rm`) and from the diagram together. ~30 LOC of doc.
+    Simplest; treats spec as descriptive of current state.
+  - (b) Reorganize `src/` to match the spec. Populates the existing
+    empty `src/cli/` and `src/utils/` placeholder dirs (currently
+    `.gitkeep`-only), renames `*_mode.{cpp,hpp}` → `*.{cpp,hpp}`,
+    consolidates `app_handlers.cpp` into `editor.hpp` etc. Code
+    refactor; large blast-radius across CMakeLists.txt and #include
+    paths. Treats spec as authoritative aspiration.
+  - (c) Remove the Architecture diagram entirely. The diagram is not
+    load-bearing for any tool/agent (the cycle has been running
+    against the actual tree, not the spec diagram). Replace with a
+    one-line pointer to `ls src/` or to `CMakeLists.txt`'s
+    `CORE_SOURCES` / `REFERENCE_SOURCES` / `TUI_SOURCES` lists.
+    INVESTIGATE-only-shape close.
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Same shape as DOC-1's claim-vs-reality concern, scoped to the
+  spec's architecture section instead of the README's tolerance
+  claim.
+- **Effort.** ≤ 30 LOC for option (a) or (c); large refactor for
+  option (b).
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md`
+  in-tier-but-different-defect filing — surfaced during DOC-2
+  state-check; filed as own item rather than folded because the
+  cure direction is user-judgment (3 distinct options with very
+  different scope shapes).
+- **Audit-cardinality (forward).** Single-audit for options (a) or
+  (c); two-audit for option (b) (code-refactor blast-radius across
+  CMakeLists.txt + #include paths).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
