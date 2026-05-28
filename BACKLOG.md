@@ -2484,13 +2484,14 @@ zero-residue.**
 - **Files touched (close-out).** None. INVESTIGATE-only close;
   README.md preserved as-is.
 
-### DOC-2 — PROJECT_SPEC.md reconciliation — **RESOLVED via DOC-2-SPEC-RECONCILIATION**
+### DOC-2 — PROJECT_SPEC.md reconciliation — **RESOLVED in #66 (`cd98294`)** via DOC-2-SPEC-RECONCILIATION
 
 - **Files touched.** `PROJECT_SPEC.md`.
 - **Exit criteria.** Spec and CMakeLists.txt agree on warning flags, standard,
   and dependencies.
-- **Status / Resolution.** RESOLVED via DOC-2-SPEC-RECONCILIATION
-  close-out. `PROJECT_SPEC.md` updated on the three axes named by the
+- **Status / Resolution.** RESOLVED in #66 (commit `cd98294`) via
+  DOC-2-SPEC-RECONCILIATION close-out. `PROJECT_SPEC.md` updated on
+  the three axes named by the
   exit criterion:
   - **Standard** — already agreed pre-cure (`PROJECT_SPEC.md` line 64
     "C++20 or C++23"; `CMakeLists.txt:5` sets `CMAKE_CXX_STANDARD 20`).
@@ -2671,8 +2672,8 @@ zero-residue.**
 
 ### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree
 
-- **Origin.** Filed 2026-05-28 during DOC-2-SPEC-RECONCILIATION pre-cure
-  state check. Surfaced by direct read of `PROJECT_SPEC.md` lines
+- **Origin.** Filed 2026-05-28 during DOC-2-SPEC-RECONCILIATION
+  pre-cure state check (#66, `cd98294`). Surfaced by direct read of `PROJECT_SPEC.md` lines
   73-91 (the "Architecture" code-block diagram) against `ls src/**/*`.
 - **Defect (project hygiene + claim-vs-reality).** The spec's
   Architecture section diagrams a `src/` layout that does not match
