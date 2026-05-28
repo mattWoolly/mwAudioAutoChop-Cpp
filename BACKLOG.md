@@ -2677,11 +2677,20 @@ zero-residue.**
 - **Defect (project hygiene + claim-vs-reality).** The spec's
   Architecture section diagrams a `src/` layout that does not match
   the actual repository tree:
-  - **Files/dirs in the spec but NOT in the tree:** `src/cli/`,
-    `src/utils/dsp.hpp`, `src/core/alignment.hpp`,
-    `src/tui/editor.hpp`. (`split_points.hpp` is listed in the spec
-    as plural but actually exists as `src/core/split_point.hpp`
-    singular — naming drift, not a missing file.)
+  - **Empty placeholder directories (exist but unpopulated; spec
+    implies populated):** `src/cli/` and `src/utils/` both exist
+    with only `.gitkeep` files (no source files). The spec implies
+    CLI parsing files live in `src/cli/` and `dsp.hpp` lives in
+    `src/utils/`, but neither directory contains source code.
+    These are scaffold leftovers from the project's initial layout
+    that never got populated; CLI parsing was ultimately implemented
+    directly in `src/main.cpp`, and the DSP helpers were folded
+    into `src/core/*` modules.
+  - **Files in the spec but NOT in the tree:** `src/utils/dsp.hpp`,
+    `src/core/alignment.hpp`, `src/tui/editor.hpp`. (`split_points.hpp`
+    is listed in the spec as plural but actually exists as
+    `src/core/split_point.hpp` singular — naming drift, not a
+    missing file.)
   - **Files in the tree but NOT in the spec diagram:**
     `src/core/audio_buffer.{cpp,hpp}`, `src/core/drift_model.{cpp,hpp}`,
     `src/core/music_detection.{cpp,hpp}`, `src/core/pocketfft_hdronly.h`
@@ -2702,10 +2711,14 @@ zero-residue.**
 - **Possible outcomes.**
   - (a) Match spec to current `src/` tree. Rewrite the Architecture
     code-block to enumerate the actual files/dirs as of cure time.
-    ~30 LOC of doc. Simplest; treats spec as descriptive of current
-    state.
-  - (b) Reorganize `src/` to match the spec. Introduces `src/cli/`,
-    `src/utils/`, renames `*_mode.{cpp,hpp}` → `*.{cpp,hpp}`,
+    Cure-time sub-decision: keep the empty `src/cli/` and `src/utils/`
+    placeholder dirs and annotate them as "reserved for future
+    expansion" in the diagram, OR remove the empty dirs from disk
+    (`git rm`) and from the diagram together. ~30 LOC of doc.
+    Simplest; treats spec as descriptive of current state.
+  - (b) Reorganize `src/` to match the spec. Populates the existing
+    empty `src/cli/` and `src/utils/` placeholder dirs (currently
+    `.gitkeep`-only), renames `*_mode.{cpp,hpp}` → `*.{cpp,hpp}`,
     consolidates `app_handlers.cpp` into `editor.hpp` etc. Code
     refactor; large blast-radius across CMakeLists.txt and #include
     paths. Treats spec as authoritative aspiration.
