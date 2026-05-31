@@ -2445,11 +2445,14 @@ zero-residue.**
   (promote ALL decision thresholds in `reference_mode.cpp`, not just the
   per-track loop bodies) over conservative (only the BACKLOG-cited
   `584–585` cluster).
-  - **44 file-scope `constexpr` declarations sit immediately after the
-    pre-existing `kAnalysisToNativeRoundingTolerance` (line 30).** One
-    pre-existing (C-4's tolerance) + 43 new Mi-5 promotions. Many
+  - **45 file-scope `constexpr` declarations total: 1 pre-existing
+    (C-4's `kAnalysisToNativeRoundingTolerance` at line 30) + 44 new
+    Mi-5 promotions in the catalog block immediately below it.** Many
     constants are used at multiple sites; the catalog count counts
-    *constants*, not *sites*.
+    *constants*, not *sites*. (Per PR #67 audit: catalog table sums to
+    6+5+6+2+3+9+5+8 = 44 new; `grep -cE "^static constexpr"` returns
+    45 total. Initial PR-body narration said "43 new" — off by one;
+    corrected here.)
   - **Catalog structure (semantic groups, top-to-bottom):**
     - Track-end / flip-gap detection: `kTrackEndSmallGapSeconds`,
       `kTrackEndTailCapSeconds`, `kTrackEndFlipMinSilenceSeconds`,
