@@ -2429,16 +2429,81 @@ zero-residue.**
   missing-LICENSE concern is project-self attribution, distinct from
   M-13's third-party-vendored attribution).
 
-### Mi-5 — Magic threshold soup in reference mode
+### Mi-5 — Magic threshold soup in reference mode — **RESOLVED (pending audit + merge)**
 
-- **Defect.** `reference_mode.cpp:584–585` (and ~12 other sites) have
+- **Defect.** `reference_mode.cpp:584–585` (and ~12 other sites — actual
+  empirical site count was broader, see Resolution below) have
   unexplained numeric thresholds.
 - **Invariant established.** "Every decision threshold is a `constexpr` at
   top of translation unit with a comment citing the observation or corpus
   that produced it."
 - **Files touched.** `src/modes/reference_mode.cpp`.
 - **Exit criteria.**
-  - [ ] No magic numbers remain in the per-track loop bodies.
+  - [x] No magic numbers remain in the per-track loop bodies.
+- **Status / Resolution.** Cure landed on branch `mi-5-magic-thresholds`
+  (PR pending audit + merge as of 2026-05-31). User-ratified strict scope
+  (promote ALL decision thresholds in `reference_mode.cpp`, not just the
+  per-track loop bodies) over conservative (only the BACKLOG-cited
+  `584–585` cluster).
+  - **44 file-scope `constexpr` declarations sit immediately after the
+    pre-existing `kAnalysisToNativeRoundingTolerance` (line 30).** One
+    pre-existing (C-4's tolerance) + 43 new Mi-5 promotions. Many
+    constants are used at multiple sites; the catalog count counts
+    *constants*, not *sites*.
+  - **Catalog structure (semantic groups, top-to-bottom):**
+    - Track-end / flip-gap detection: `kTrackEndSmallGapSeconds`,
+      `kTrackEndTailCapSeconds`, `kTrackEndFlipMinSilenceSeconds`,
+      `kTrackEndTailPadSeconds`, `kTrackEndSilenceFloorDb`,
+      `kTrackEndMinSilenceRunSeconds` (6).
+    - Lead-in fade-detection: `kFadeInMaxSearchSeconds`,
+      `kFadeInMinFadeSeconds`, `kFadeInMaxFadeSeconds`,
+      `kFadeInSteadyStateStartFrame`, `kFadeInTargetRatioMinus10Db` (5).
+    - RMS envelope / envelope-refine: `kEnvelopeDefaultFrameMs`,
+      `kEnvelopeRefineDefaultRadiusSeconds`,
+      `kEnvelopeRefineCallsiteRadiusSeconds`,
+      `kEnvelopeRefineMinTrackSeconds`, `kEnvelopeRefineMinConfidence`,
+      `kEnvelopeRefineMaxShiftSeconds` (6).
+    - Digital-silence / noise-floor: `kDigitalSilenceLinearThreshold`,
+      `kNoiseFloorPercentile` (2).
+    - Find-music-onset (multi_snippet_refine call): `kMusicOnsetSearchSeconds`,
+      `kMusicOnsetThresholdDb`, `kMusicOnsetMinSustainMs` (3).
+    - Snippet correlation / multi-snippet voting: `kSnippetDefaultSeconds`,
+      `kSnippetVoteRadiusSeconds`, `kSnippetVote2PositionNum/Den`,
+      `kSnippetVote3PositionNum/Den`, `kVoteConfidenceMin`,
+      `kVote1TrustConfidence`, `kVote23RecoveryAgreementSeconds` (9).
+    - `align_per_track` inline policy: `kAlignMinCorrelationConfidence`,
+      `kAlignCoarseMarginSeconds`, `kAlignCoarseDownsampleFactor`,
+      `kAlignMultiRefineAcceptConfMin`,
+      `kAlignMultiRefineWeakSpreadSeconds` (5).
+    - `skip_leading_silence` defaults + in-loop overrides:
+      `kSkipSilenceDefault{ThresholdDb,MinSkipSeconds,MaxSkipSeconds,MinMusicMs}`,
+      `kAlignSkipSilence{ThresholdDb,MinSkipSeconds,MaxSkipSeconds,MinMusicMs}` (8).
+  - **Citation comments** are ported from the existing in-source
+    explanations (e.g., `// -10 dB` next to `0.316`, the inline
+    rationales above `compute_track_ends`'s local block, the comment
+    above the downsample-factor 100). Where no inline rationale existed,
+    the catalog comment describes the semantic role and the
+    empirical-corpus citation is deferred for a later audit pass per
+    the dispatch mandate.
+  - **Sites NOT promoted (formula / math constants):**
+    - `10.0` and `20.0` in `std::pow(10.0, db / 20.0)` (dB-to-linear
+      conversion math, 3 sites).
+    - `0.1` and `10` in `fade_end_s = fade_end_frame * 0.1` /
+      `pre_frames = min_fade_seconds * 10` (100 ms-frame to seconds
+      conversion math).
+    - `sample_rate / 10`, `sample_rate / 100`, `sample_rate / 20`
+      (frame-size derivation from sample rate at 100/10/50 ms).
+    - `den / 2` rounding bias in `analysis_to_native_sample` (C-4
+      round-half-away-from-zero formula).
+    - `-120.0` empty-window fallback in `estimate_noise_floor_db` and
+      `1e-9` log-domain safety floor: defensive defaults rather than
+      tunable thresholds, and the function is `[[maybe_unused]]`
+      (dormant).
+    - Time-formatting `/ 60` and `% 60` (seconds-to-minutes).
+  - **Behavior preservation evidence.** ctest 14/14 binaries pass on
+    `build-mi-5` Debug after the refactor (same as pre-cure baseline).
+    Refactor is mechanical; the existing test suite is the
+    regression-guard.
 
 ### DOC-1 — README "sample-accurate" claim reconciliation — **RESOLVED INVESTIGATE-only in #64 (`760f19e`)** via T8-PAPERWORK-SWEEP
 
