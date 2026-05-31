@@ -2429,7 +2429,7 @@ zero-residue.**
   missing-LICENSE concern is project-self attribution, distinct from
   M-13's third-party-vendored attribution).
 
-### Mi-5 — Magic threshold soup in reference mode — **RESOLVED (pending audit + merge)**
+### Mi-5 — Magic threshold soup in reference mode — **RESOLVED in #67 (`348ede5`)**
 
 - **Defect.** `reference_mode.cpp:584–585` (and ~12 other sites — actual
   empirical site count was broader, see Resolution below) have
@@ -2811,6 +2811,99 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit for options (a) or
   (c); two-audit for option (b) (code-refactor blast-radius across
   CMakeLists.txt + #include paths).
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
+
+### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling)
+
+- **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Surfaced
+  by audit-agent's adjacent-entry sweep on `src/modes/blind_mode.cpp`
+  while verifying Mi-5's `reference_mode.cpp` cure. User-ratified
+  filing via AskUserQuestion 2026-05-31.
+- **Defect (project hygiene).** `src/modes/blind_mode.cpp` contains
+  decision thresholds with the same pattern Mi-5 cured in
+  `reference_mode.cpp`: in-body magic numbers without file-scope
+  `constexpr` declarations. Audit cited at least two sites:
+  `noise_floor * 2.0f` (line ~137, "6 dB above noise floor" gap-detect
+  policy) and a `confidence >= 0.6` policy threshold. There are likely
+  more — Mi-5's empirical site count (44 promotions) outpaced the
+  BACKLOG's "~12 sites" paraphrase by ~3×.
+- **Invariant established.** Inherited from Mi-5: "Every decision
+  threshold is a `constexpr` at top of translation unit with a comment
+  citing the observation or corpus that produced it." Applied to
+  `blind_mode.cpp`.
+- **Files touched.** `src/modes/blind_mode.cpp`.
+- **Exit criteria.** No magic numbers remain in `blind_mode.cpp`
+  decision sites (same shape as Mi-5).
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Direct sibling of Mi-5.
+- **Effort.** Unknown until empirical site survey; likely 5-15 sites
+  (smaller than `reference_mode.cpp`'s 44 given `blind_mode.cpp`'s
+  smaller scope and pipeline structure).
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md`
+  in-tier-but-different-file filing rather than fold-in (Mi-5's mandate
+  was strictly `reference_mode.cpp`). Per
+  `feedback_audit_suggestions_need_ratification.md`, audit's "file a
+  sibling" suggestion was surfaced to user for ratification before
+  filing; user ratified.
+- **Audit-cardinality (forward).** Single-audit by both axes (sharp-
+  hook clear; blast-radius small-to-medium given smaller scope).
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
+
+### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling)
+
+- **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Same
+  audit-agent adjacent-entry sweep that surfaced Mi-5-BLIND. User-
+  ratified filing via AskUserQuestion 2026-05-31.
+- **Defect (project hygiene).** `src/core/analysis.cpp` contains
+  decision thresholds matching the Mi-5 pattern. Specific sites not
+  yet empirically enumerated; will be surveyed at dispatch time.
+- **Invariant established.** Inherited from Mi-5 (see Mi-5-BLIND
+  above for the invariant text).
+- **Files touched.** `src/core/analysis.cpp`.
+- **Exit criteria.** No magic numbers remain in `analysis.cpp` decision
+  sites.
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Direct sibling of Mi-5.
+- **Effort.** Unknown until empirical site survey; likely 5-15 sites.
+- **Filed timing.** Per same discipline as Mi-5-BLIND above.
+- **Audit-cardinality (forward).** Single-audit by both axes.
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
+
+### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp`
+
+- **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Pre-existing
+  stale comment found by audit-agent during Mi-5 verification; NOT
+  introduced by Mi-5. User-ratified filing via AskUserQuestion
+  2026-05-31.
+- **Defect (descriptive, not invariant).** `src/modes/reference_mode.cpp`
+  lines 739, 742 (post-Mi-5 line numbers) contain inline comments
+  describing Vote 1 / Vote 2 / Vote 3 snippet windows as "tighter ±1.5 s
+  window" and "wider ±2.5 s window" — but all three radii are now
+  `kSnippetVoteRadiusSeconds = 10.0` (per Mi-5 catalog). The comment
+  was stale pre-Mi-5 (same prose existed at `0d459d3`'s lines
+  575/578 with `10.0` literals); Mi-5 inherited rather than introduced
+  the stale narration.
+- **Reachability.** Cosmetic / for future readers. The constexpr name
+  `kSnippetVoteRadiusSeconds` is self-documenting at the call site; the
+  stale comment misleads only readers parsing the surrounding prose.
+- **Files touched.** `src/modes/reference_mode.cpp` (2 inline comments).
+- **Possible outcomes.**
+  - (a) Update comments to match current values (single `±10 s` window
+    description, or remove the per-vote width annotations since they're
+    all identical now). ~3 LOC.
+  - (b) Update comments AND consider whether the three votes should
+    have different radii (audit didn't recommend; could surface during
+    future correlation tuning).
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Micro-cleanup shape.
+- **Effort.** ≤ 5 LOC.
+- **Filed timing.** Per
+  `feedback_audit_suggestions_need_ratification.md`, audit suggestion
+  surfaced for user ratification before filing.
+- **Audit-cardinality (forward).** Single-audit (trivially small).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
