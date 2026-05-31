@@ -29,6 +29,184 @@ namespace mwaac {
 // manifest (an orthogonal physical quantity).
 static constexpr int64_t kAnalysisToNativeRoundingTolerance = 1;
 
+// ---------------------------------------------------------------------------
+// Mi-5: Decision-threshold catalog.
+//
+// Every numeric policy value that encodes a *choice* (silence floor in dB,
+// gap-duration cutoff in seconds, search radius, confidence floor, vote
+// position fraction, snippet radius, percentile cut, envelope-shift cap)
+// is promoted to a file-scope `constexpr` here so the per-track loop bodies
+// read as policy *use* rather than policy *definition*. Math/formula
+// constants (e.g. the 10.0 and 20.0 in std::pow(10.0, db / 20.0); integer
+// divisors used to derive frame sizes from sample_rate) remain inline since
+// they encode dB-to-linear arithmetic, not a tunable.
+//
+// Many citation comments below port the existing inline explanation that
+// sat next to the literal in the source. Where the original had no
+// rationale, the comment describes the semantic role and notes that the
+// empirical-corpus citation is deferred for a later audit pass.
+// ---------------------------------------------------------------------------
+
+// ----- Track-end / flip-gap detection (compute_track_ends) ---------------
+
+// Reference-vs-natural-end overrun below this counts as a "normal"
+// inter-track gap (keep natural decay up to kTrackEndTailCapSeconds);
+// above it we look for a real flip-gap silence block.
+static constexpr double kTrackEndSmallGapSeconds       = 5.0;
+// Maximum tail kept past the reference-implied end for "normal gap" or
+// "long gap without clear flip signature" cases. Bounds runout-groove
+// silence that would otherwise ride to end-of-file on the last track.
+static constexpr double kTrackEndTailCapSeconds        = 2.0;
+// Minimum silence-run length (within an overrun region) that we treat
+// as a real flip gap rather than a quiet passage.
+static constexpr double kTrackEndFlipMinSilenceSeconds = 8.0;
+// Pad kept after the flip-silence start so we don't cut into the
+// natural reverb tail of the preceding track.
+static constexpr double kTrackEndTailPadSeconds        = 1.0;
+// Silence-floor (dBFS) and minimum-run (seconds) used by
+// find_longest_silence within the overrun region. Tighter than the
+// flip-gap-skip threshold below because we want to be conservative
+// about declaring a region "silent enough" to trim.
+static constexpr double kTrackEndSilenceFloorDb        = -45.0;
+static constexpr double kTrackEndMinSilenceRunSeconds  = 3.0;
+
+// ----- Lead-in fade-detection (measure_fade_in_samples) ------------------
+
+// Default search/fade-length window for the fade-in detector. Real
+// fade-ins are 1-3 seconds; the cap protects against over-shifting
+// when a slow buildup would otherwise report an implausibly long fade.
+static constexpr double kFadeInMaxSearchSeconds = 20.0;
+static constexpr double kFadeInMinFadeSeconds   = 1.0;
+static constexpr double kFadeInMaxFadeSeconds   = 2.5;
+// Steady-state-RMS estimate starts at this frame index (80 = 8 s at
+// 100 ms frames). Starting past 8 s gives headroom for slow fade-ins
+// (Bicep-style ambient buildups) to reach steady before the median
+// window begins.
+static constexpr int64_t kFadeInSteadyStateStartFrame = 80;
+// "End of fade-in" target relative to steady-state RMS, expressed as a
+// linear ratio: 0.316 ≈ pow(10, -10/20) = -10 dB. Loose enough to
+// catch slow fades without requiring the signal to nearly reach
+// steady. The pre-fade GRADUAL-rise sanity check reuses the same ratio
+// (the frame `min_fade_seconds` before fade_end must still be > 10 dB
+// below steady).
+static constexpr double kFadeInTargetRatioMinus10Db = 0.316;
+
+// ----- RMS envelope / envelope-refine ------------------------------------
+
+// Default RMS-envelope frame duration. 50 ms is a compromise: short
+// enough that fade-ins and breakdowns show up clearly in the
+// envelope, long enough that the envelope vector is small (so
+// envelope cross-correlation is cheap).
+static constexpr double kEnvelopeDefaultFrameMs = 50.0;
+// Default search radius for envelope_refine_start's function
+// signature. Per-call-site values may differ (see
+// kEnvelopeRefineCallsiteRadiusSeconds for the in-loop tuning).
+static constexpr double kEnvelopeRefineDefaultRadiusSeconds = 12.0;
+// In-loop envelope-refine search radius used by align_per_track. Tighter
+// than the function default because by the time we run envelope refine
+// we've already had a coarse + multi-snippet position estimate.
+static constexpr double kEnvelopeRefineCallsiteRadiusSeconds = 5.0;
+// Minimum track length (in seconds of source audio) at which we run
+// envelope-refine. Below this the envelope vector is too short for a
+// meaningful cross-correlation peak.
+static constexpr double kEnvelopeRefineMinTrackSeconds = 10.0;
+// Envelope cross-correlation confidence floor to accept the refined
+// position. Empirically tuned; below this the envelope peak isn't
+// distinctive enough to trust.
+static constexpr double kEnvelopeRefineMinConfidence = 0.60;
+// Cap on envelope-suggested shift (seconds). Larger shifts are usually
+// spurious — envelope shapes repeat at long intervals on rhythmic
+// content too.
+static constexpr double kEnvelopeRefineMaxShiftSeconds = 4.0;
+
+// ----- Digital-silence / noise-floor estimation --------------------------
+
+// Linear-magnitude floor (~ -80 dBFS) below which a sample counts as
+// digital silence. Quiet-but-audible content (a -60 dB fade-in reads
+// ~1e-3) sits above this and is preserved.
+static constexpr double kDigitalSilenceLinearThreshold = 1e-4;
+// Percentile of 10 ms-frame RMS values used to estimate a signal's
+// noise floor (10th percentile). Sits well below typical surface-noise
+// median while ignoring the absolute quietest outliers.
+static constexpr double kNoiseFloorPercentile = 0.10;
+
+// ----- Find-music-onset call inside multi_snippet_refine -----------------
+
+// Parameters for the ref-music-onset call made by multi_snippet_refine
+// when picking Vote 1's snippet offset. Search up to 30 s into the
+// reference for the first RMS-frame above -40 dBFS sustained for at
+// least 80 ms.
+static constexpr double kMusicOnsetSearchSeconds   = 30.0;
+static constexpr double kMusicOnsetThresholdDb     = -40.0;
+static constexpr double kMusicOnsetMinSustainMs    = 80.0;
+
+// ----- Snippet correlation / multi-snippet voting ------------------------
+
+// Default snippet length (seconds) for correlate_snippet's signature
+// and the snippet length used by multi_snippet_refine / align_per_track.
+static constexpr double kSnippetDefaultSeconds = 5.0;
+// Per-vote search radius around the expected snippet position. With
+// FFT-backed correlation, wide radii are free — let the refine reach
+// the true peak even when coarse was off by many seconds.
+static constexpr double kSnippetVoteRadiusSeconds = 10.0;
+// Reference-position fractions (numerator/denominator) for Vote 2 and
+// Vote 3 within the reference track: 40% and 80% through.
+static constexpr int64_t kSnippetVote2PositionNum = 2;
+static constexpr int64_t kSnippetVote2PositionDen = 5;
+static constexpr int64_t kSnippetVote3PositionNum = 4;
+static constexpr int64_t kSnippetVote3PositionDen = 5;
+// Minimum per-vote confidence to count toward
+// MultiRefineResult::accepted_snippets and toward the spread/recovery
+// computation. 0.10 mirrors kAlignMultiRefineAcceptConfMin below.
+static constexpr double kVoteConfidenceMin = 0.10;
+// Confidence at which Vote 1 wins outright (no need to consult Votes
+// 2/3 as recovery validators).
+static constexpr double kVote1TrustConfidence = 0.20;
+// Maximum spread (seconds) between Votes 2 and 3 for the recovery
+// case to accept their result when Vote 1 is weak.
+static constexpr double kVote23RecoveryAgreementSeconds = 0.3;
+
+// ----- align_per_track inline policy -------------------------------------
+
+// Minimum coarse-correlation confidence to trust a pass-1 result.
+// Below this (or non-finite), fall back to expected_position so one
+// bad match doesn't cascade into every subsequent track.
+static constexpr double kAlignMinCorrelationConfidence = 0.05;
+// Half-window size (seconds) added on each side of the expected
+// position when slicing the vinyl for pass-1 coarse correlation. The
+// full window width is ref_duration + 2 * this value.
+static constexpr double kAlignCoarseMarginSeconds = 10.0;
+// Downsample factor for pass-1 cross_correlate_fast. 100 gives ~1 ms
+// accuracy at 44.1 kHz analysis — sufficient for the coarse pass,
+// since multi-snippet refine + envelope refine produce the final
+// sample-level position.
+static constexpr int kAlignCoarseDownsampleFactor = 100;
+// Multi-refine acceptance floor: at least one snippet must clear
+// kVoteConfidenceMin AND the top per-vote confidence must reach this.
+static constexpr double kAlignMultiRefineAcceptConfMin = 0.10;
+// Multi-refine spread above which we tag the log line [WEAK].
+// Mirrors kVote23RecoveryAgreementSeconds; same physical quantity
+// (max snippet-position spread in seconds).
+static constexpr double kAlignMultiRefineWeakSpreadSeconds = 0.3;
+
+// ----- skip_leading_silence defaults + in-loop call-site overrides ------
+
+// Defaults on skip_leading_silence's signature. Generic flip-gap
+// detection: -50 dBFS floor, 3 s minimum-gap, 180 s maximum-window,
+// 200 ms music-resumption sustain.
+static constexpr double kSkipSilenceDefaultThresholdDb     = -50.0;
+static constexpr double kSkipSilenceDefaultMinSkipSeconds  = 3.0;
+static constexpr double kSkipSilenceDefaultMaxSkipSeconds  = 180.0;
+static constexpr double kSkipSilenceDefaultMinMusicMs      = 200.0;
+// align_per_track's per-call overrides: tighter -45 dB floor (avoid
+// stylus-drop / transient clicks ending the silence) and a longer
+// 1000 ms sustain requirement (only real sustained music should end
+// the skip).
+static constexpr double kAlignSkipSilenceThresholdDb       = -45.0;
+static constexpr double kAlignSkipSilenceMinSkipSeconds    = 3.0;
+static constexpr double kAlignSkipSilenceMaxSkipSeconds    = 180.0;
+static constexpr double kAlignSkipSilenceMinMusicMs        = 1000.0;
+
 namespace {
 
 std::vector<std::filesystem::path> natural_sort(
@@ -111,12 +289,13 @@ std::vector<EndDecision> compute_track_ends(
     const std::vector<std::pair<int64_t, double>>& offsets)
 {
     const int sr = vinyl.sample_rate;
-    const int64_t SMALL_GAP        = static_cast<int64_t>(5.0 * sr);
-    const int64_t TAIL_CAP         = static_cast<int64_t>(2.0 * sr);
-    const int64_t FLIP_MIN_SILENCE = static_cast<int64_t>(8.0 * sr);
-    const int64_t TAIL_PAD         = static_cast<int64_t>(1.0 * sr);
-    const double  SILENCE_DB       = -45.0;
-    const double  MIN_RUN_S        = 3.0;
+    // Mi-5: seconds-based catalog values multiplied by runtime sr.
+    const int64_t SMALL_GAP        = static_cast<int64_t>(kTrackEndSmallGapSeconds       * sr);
+    const int64_t TAIL_CAP         = static_cast<int64_t>(kTrackEndTailCapSeconds        * sr);
+    const int64_t FLIP_MIN_SILENCE = static_cast<int64_t>(kTrackEndFlipMinSilenceSeconds * sr);
+    const int64_t TAIL_PAD         = static_cast<int64_t>(kTrackEndTailPadSeconds        * sr);
+    const double  SILENCE_DB       = kTrackEndSilenceFloorDb;
+    const double  MIN_RUN_S        = kTrackEndMinSilenceRunSeconds;
 
     std::vector<EndDecision> out(offsets.size());
 
@@ -182,9 +361,9 @@ std::vector<EndDecision> compute_track_ends(
 [[maybe_unused]] int64_t measure_fade_in_samples(
     std::span<const float> samples,
     int sample_rate,
-    double max_search_seconds = 20.0,
-    double min_fade_seconds = 1.0,
-    double max_fade_seconds = 2.5)
+    double max_search_seconds = kFadeInMaxSearchSeconds,
+    double min_fade_seconds = kFadeInMinFadeSeconds,
+    double max_fade_seconds = kFadeInMaxFadeSeconds)
 {
     if (samples.empty()) return 0;
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 10);  // 100 ms
@@ -214,7 +393,7 @@ std::vector<EndDecision> compute_track_ends(
     // Estimate steady-state RMS as the median of frames 8 s to max_search.
     // Starting past 8 s gives headroom for slow fade-ins (like Bicep-style
     // ambient buildups) to reach steady before the median window begins.
-    int64_t ss_start = std::min(n_frames - 1, static_cast<int64_t>(80));
+    int64_t ss_start = std::min(n_frames - 1, kFadeInSteadyStateStartFrame);
     std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
     if (ss_samples.empty()) return 0;
     std::nth_element(ss_samples.begin(),
@@ -225,7 +404,7 @@ std::vector<EndDecision> compute_track_ends(
 
     // Target for "end of fade-in": 10 dB below steady state. Loose enough to
     // catch slow fades without requiring the signal to nearly reach steady.
-    double target = steady_rms * 0.316;  // -10 dB
+    double target = steady_rms * kFadeInTargetRatioMinus10Db;  // -10 dB
 
     // Find first frame reaching target. If it's before `min_fade_seconds`,
     // the track doesn't have a meaningful fade-in — return 0.
@@ -255,7 +434,7 @@ std::vector<EndDecision> compute_track_ends(
     int64_t pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
     if (fade_end_frame - pre_frames >= 0) {
         double pre_rms = rms[static_cast<std::size_t>(fade_end_frame - pre_frames)];
-        if (pre_rms > steady_rms * 0.316) return 0;  // within 10 dB of steady
+        if (pre_rms > steady_rms * kFadeInTargetRatioMinus10Db) return 0;  // within 10 dB of steady
     }
 
     // M-REF-FRAME-SAMPLE-BRIDGE: envelope-frame → sample crossing
@@ -276,7 +455,7 @@ std::vector<EndDecision> compute_track_ends(
 std::vector<float> compute_rms_envelope(
     std::span<const float> samples,
     int sample_rate,
-    double frame_ms = 50.0)
+    double frame_ms = kEnvelopeDefaultFrameMs)
 {
     int64_t frame_size = std::max<int64_t>(1,
         static_cast<int64_t>(static_cast<double>(sample_rate) * frame_ms / 1000.0));
@@ -315,8 +494,8 @@ int64_t envelope_refine_start(
     std::span<const float> ref_samples,
     int sample_rate,
     int64_t expected_track_start,
-    double search_radius_s = 12.0,
-    double frame_ms = 50.0,
+    double search_radius_s = kEnvelopeRefineDefaultRadiusSeconds,
+    double frame_ms = kEnvelopeDefaultFrameMs,
     double* out_conf = nullptr)
 {
     if (out_conf) *out_conf = 0.0;
@@ -376,7 +555,7 @@ int64_t envelope_refine_start(
 // all below the cutoff; zero if the signal is audible from sample 0.
 int64_t count_leading_digital_silence(
     std::span<const float> samples,
-    double linear_threshold = 1e-4)
+    double linear_threshold = kDigitalSilenceLinearThreshold)
 {
     int64_t n = static_cast<int64_t>(samples.size());
     for (int64_t i = 0; i < n; ++i) {
@@ -444,7 +623,7 @@ int64_t find_music_onset(
     int sample_rate,
     int64_t start_sample,
     int64_t window_samples,
-    double percentile = 0.10)
+    double percentile = kNoiseFloorPercentile)
 {
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 100);
     int64_t begin = std::max<int64_t>(0, start_sample);
@@ -552,7 +731,7 @@ MultiRefineResult multi_snippet_refine(
     std::span<const float> ref_processed,
     int sample_rate,
     int64_t coarse_track_start,  // slice-local pass-1 estimate (= track start, not music)
-    double snippet_seconds = 5.0)
+    double snippet_seconds = kSnippetDefaultSeconds)
 {
     MultiRefineResult out;
 
@@ -563,7 +742,8 @@ MultiRefineResult multi_snippet_refine(
     // Wider ±2.5 s window so they can catch larger drifts, but they're
     // used only as validators or for recovery when Vote 1 is unreliable.
     int64_t onset = find_music_onset(
-        ref_processed, sample_rate, 0, 30.0, -40.0, 80.0);
+        ref_processed, sample_rate, 0,
+        kMusicOnsetSearchSeconds, kMusicOnsetThresholdDb, kMusicOnsetMinSustainMs);
     if (onset < 0) onset = 0;
 
     int64_t ref_size = static_cast<int64_t>(ref_processed.size());
@@ -573,9 +753,15 @@ MultiRefineResult multi_snippet_refine(
     // reach the true peak even when coarse was off by many seconds.
     struct SnippetSpec { int64_t offset; double radius; };
     std::vector<SnippetSpec> specs = {
-        { onset,                                        10.0 },
-        { std::max<int64_t>(onset, (ref_size * 2) / 5), 10.0 },
-        { std::max<int64_t>(onset, (ref_size * 4) / 5), 10.0 },
+        { onset, kSnippetVoteRadiusSeconds },
+        { std::max<int64_t>(
+              onset,
+              (ref_size * kSnippetVote2PositionNum) / kSnippetVote2PositionDen),
+          kSnippetVoteRadiusSeconds },
+        { std::max<int64_t>(
+              onset,
+              (ref_size * kSnippetVote3PositionNum) / kSnippetVote3PositionDen),
+          kSnippetVoteRadiusSeconds },
     };
     for (auto& s : specs) {
         if (s.offset + snippet_samples > ref_size) {
@@ -590,11 +776,8 @@ MultiRefineResult multi_snippet_refine(
         out.votes.push_back(v);
     }
 
-    constexpr double VOTE_CONF_MIN = 0.10;
-    constexpr double VOTE1_TRUST   = 0.20;  // Vote 1 wins outright above this
-
     for (auto& v : out.votes) {
-        if (v.implied_track_start >= 0 && v.snippet_conf >= VOTE_CONF_MIN) {
+        if (v.implied_track_start >= 0 && v.snippet_conf >= kVoteConfidenceMin) {
             out.accepted_snippets++;
         }
         out.top_conf = std::max(out.top_conf, v.snippet_conf);
@@ -603,7 +786,7 @@ MultiRefineResult multi_snippet_refine(
     // Compute spread across the valid votes for telemetry
     std::vector<int64_t> valid_positions;
     for (auto& v : out.votes) {
-        if (v.implied_track_start >= 0 && v.snippet_conf >= VOTE_CONF_MIN) {
+        if (v.implied_track_start >= 0 && v.snippet_conf >= kVoteConfidenceMin) {
             valid_positions.push_back(v.implied_track_start);
         }
     }
@@ -615,7 +798,7 @@ MultiRefineResult multi_snippet_refine(
 
     const SnippetVote& vote1 = out.votes[0];
     bool vote1_good = vote1.implied_track_start >= 0
-                      && vote1.snippet_conf >= VOTE1_TRUST;
+                      && vote1.snippet_conf >= kVote1TrustConfidence;
 
     if (vote1_good) {
         // Vote 1 is the primary position estimator, matching Fix-1 behavior
@@ -628,14 +811,14 @@ MultiRefineResult multi_snippet_refine(
     const SnippetVote& v2 = out.votes[1];
     const SnippetVote& v3 = out.votes[2];
     bool v23_ok = v2.implied_track_start >= 0 && v3.implied_track_start >= 0
-                  && v2.snippet_conf >= VOTE_CONF_MIN
-                  && v3.snippet_conf >= VOTE_CONF_MIN;
+                  && v2.snippet_conf >= kVoteConfidenceMin
+                  && v3.snippet_conf >= kVoteConfidenceMin;
     double v23_spread_s = v23_ok
         ? std::abs(static_cast<double>(v2.implied_track_start -
                                        v3.implied_track_start)) / sample_rate
         : 0.0;
 
-    if (v23_ok && v23_spread_s <= 0.3) {
+    if (v23_ok && v23_spread_s <= kVote23RecoveryAgreementSeconds) {
         // Recovery case: Votes 2 and 3 agree tightly; take the higher-conf one
         out.track_start = (v2.snippet_conf >= v3.snippet_conf)
             ? v2.implied_track_start
@@ -661,10 +844,10 @@ int64_t skip_leading_silence(
     std::span<const float> vinyl_samples,
     int sample_rate,
     int64_t start_sample,
-    double threshold_db = -50.0,
-    double min_skip_seconds = 3.0,
-    double max_skip_seconds = 180.0,
-    double min_music_ms = 200.0)
+    double threshold_db = kSkipSilenceDefaultThresholdDb,
+    double min_skip_seconds = kSkipSilenceDefaultMinSkipSeconds,
+    double max_skip_seconds = kSkipSilenceDefaultMaxSkipSeconds,
+    double min_music_ms = kSkipSilenceDefaultMinMusicMs)
 {
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 20);  // 50 ms
     const int64_t min_music_frames =
@@ -890,11 +1073,6 @@ std::vector<std::pair<int64_t, double>> align_per_track(
     const std::vector<ReferenceTrack>& tracks,
     int64_t music_start_sample)
 {
-    // Minimum correlation to trust a found position. Below this (or if the
-    // correlation returns non-finite), we fall back to expected_position
-    // so one bad match doesn't cascade into every subsequent track.
-    constexpr double MIN_CONFIDENCE = 0.05;
-
     std::vector<std::pair<int64_t, double>> offsets;
 
     // M-9: empty-vinyl guard. The per-track loop ends with a
@@ -936,10 +1114,10 @@ std::vector<std::pair<int64_t, double>> align_per_track(
         int64_t pre_skip_expected = expected_position;
         expected_position = skip_leading_silence(
             vinyl.samples, vinyl.sample_rate, expected_position,
-            /*threshold_db=*/-45.0,
-            /*min_skip_seconds=*/3.0,
-            /*max_skip_seconds=*/180.0,
-            /*min_music_ms=*/1000.0);
+            /*threshold_db=*/  kAlignSkipSilenceThresholdDb,
+            /*min_skip_seconds=*/kAlignSkipSilenceMinSkipSeconds,
+            /*max_skip_seconds=*/kAlignSkipSilenceMaxSkipSeconds,
+            /*min_music_ms=*/  kAlignSkipSilenceMinMusicMs);
         if (g_verbose && expected_position != pre_skip_expected) {
             double skipped = static_cast<double>(expected_position - pre_skip_expected)
                              / vinyl.sample_rate;
@@ -949,7 +1127,8 @@ std::vector<std::pair<int64_t, double>> align_per_track(
             verbose(oss.str());
         }
 
-        int64_t margin_samples = 10 * vinyl.sample_rate;
+        int64_t margin_samples =
+            static_cast<int64_t>(kAlignCoarseMarginSeconds * vinyl.sample_rate);
         int64_t window_size = track.duration_samples + margin_samples;
 
         int64_t vinyl_start_idx = std::max(int64_t{0}, expected_position - margin_samples / 2);
@@ -973,10 +1152,11 @@ std::vector<std::pair<int64_t, double>> align_per_track(
             auto vinyl_processed = preprocess_for_correlation(vinyl_slice, vinyl.sample_rate);
 
             // Downsample factor 100 gives ~1ms accuracy at 44.1kHz
-            auto result = cross_correlate_fast(ref_processed, vinyl_processed, 100);
+            auto result = cross_correlate_fast(
+                ref_processed, vinyl_processed, kAlignCoarseDownsampleFactor);
             confidence = result.peak_value;
 
-            if (std::isfinite(confidence) && confidence >= MIN_CONFIDENCE) {
+            if (std::isfinite(confidence) && confidence >= kAlignMinCorrelationConfidence) {
                 int64_t coarse_pos = vinyl_start_idx + result.lag;
 
                 // Pass 2: multi-snippet voting.
@@ -988,7 +1168,7 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                 MultiRefineResult mr = multi_snippet_refine(
                     vinyl_processed, ref_processed,
                     vinyl.sample_rate, result.lag,   // slice-local coarse track start
-                    /*snippet_seconds=*/5.0);
+                    /*snippet_seconds=*/kSnippetDefaultSeconds);
 
                 if (g_verbose) {
                     for (size_t s = 0; s < mr.votes.size(); ++s) {
@@ -1011,8 +1191,8 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                     }
                 }
 
-                constexpr double ACCEPT_CONF_MIN = 0.10;
-                bool accept = mr.accepted_snippets > 0 && mr.top_conf >= ACCEPT_CONF_MIN;
+                bool accept = mr.accepted_snippets > 0
+                              && mr.top_conf >= kAlignMultiRefineAcceptConfMin;
 
                 if (accept) {
                     int64_t refined_pos = vinyl_start_idx + mr.track_start;
@@ -1025,7 +1205,7 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                             << (static_cast<double>(delta) / vinyl.sample_rate) << "s, "
                             << "top_conf " << mr.top_conf << ", "
                             << "spread " << mr.disagreement_s << "s";
-                        if (mr.disagreement_s > 0.3) oss << " [WEAK]";
+                        if (mr.disagreement_s > kAlignMultiRefineWeakSpreadSeconds) oss << " [WEAK]";
                         verbose(oss.str());
                     }
                     chosen_pos = refined_pos;
@@ -1035,7 +1215,7 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                         std::ostringstream oss;
                         oss << std::fixed << std::setprecision(3);
                         oss << "    Multi-refine: rejected (top_conf "
-                            << mr.top_conf << " < " << ACCEPT_CONF_MIN
+                            << mr.top_conf << " < " << kAlignMultiRefineAcceptConfMin
                             << ") — keeping coarse";
                         verbose(oss.str());
                     }
@@ -1082,21 +1262,23 @@ std::vector<std::pair<int64_t, double>> align_per_track(
         // envelope shows a clear peak AND the shift from the waveform
         // result is modest, so it corrects fade-in truncation without
         // introducing new drift on well-anchored tracks.
-        if (track.duration_samples >= static_cast<int64_t>(10 * track.audio.sample_rate)) {
+        if (track.duration_samples >=
+            static_cast<int64_t>(kEnvelopeRefineMinTrackSeconds * track.audio.sample_rate)) {
             double env_conf = 0.0;
             int64_t env_start = envelope_refine_start(
                 vinyl.samples, track.audio.samples, vinyl.sample_rate,
                 chosen_pos,
-                /*search_radius_s=*/5.0,
-                /*frame_ms=*/50.0,
+                /*search_radius_s=*/kEnvelopeRefineCallsiteRadiusSeconds,
+                /*frame_ms=*/kEnvelopeDefaultFrameMs,
                 &env_conf);
 
-            if (env_start >= 0 && std::isfinite(env_conf) && env_conf >= 0.60) {
+            if (env_start >= 0 && std::isfinite(env_conf)
+                && env_conf >= kEnvelopeRefineMinConfidence) {
                 int64_t shift = env_start - chosen_pos;
                 double shift_s = static_cast<double>(shift) / vinyl.sample_rate;
                 // Only apply modest corrections; large envelope shifts are
                 // usually spurious (envelope repeats at long intervals too).
-                if (std::abs(shift_s) <= 4.0) {
+                if (std::abs(shift_s) <= kEnvelopeRefineMaxShiftSeconds) {
                     chosen_pos = env_start;
                     if (g_verbose) {
                         std::ostringstream oss;
