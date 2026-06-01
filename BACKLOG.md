@@ -2697,7 +2697,7 @@ zero-residue.**
   Resolution block; the cycle's allowed-red baseline note in
   `project_tier5_state.md` is updated to "no longer allowed-red".
 
-### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent
+### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent — **RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP** option (a)
 
 - **Origin.** Filed 2026-05-26 during M-13-POCKETFFT-ATTRIBUTION
   pre-cure state check (#65, `4e1bedd`). Surfaced via `ls LICENSE LICENSE.md` returning
@@ -2737,6 +2737,18 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP
+  close-out, option (a) (add root MIT LICENSE file). New file
+  `LICENSE` at repository root contains the canonical MIT license
+  text from `https://opensource.org/license/mit` with "Copyright (c)
+  2026 Matt Woolly" (year from project's first commit `2026-04-12`;
+  author from `git config user.name` + the project's prior README
+  acknowledgments line citing `audio-auto-chop` by `mattWoolly`).
+  `README.md:4` MIT badge claim and `README.md:205` link
+  "MIT — see [LICENSE](LICENSE)" both now resolve to a real file in
+  the tree. Adjacent-entry sweep verified no other broken
+  README/PROJECT_SPEC relative links — `THIRD_PARTY_LICENSES.md`
+  (M-13) and `docs/invariants.md` (DOC-3) both exist and resolve.
 
 ### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree
 
@@ -2872,7 +2884,7 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
-### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp`
+### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp` — **RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP** option (a)
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Pre-existing
   stale comment found by audit-agent during Mi-5 verification; NOT
@@ -2906,6 +2918,17 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit (trivially small).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP
+  close-out, option (a). Comment block at `reference_mode.cpp:738-743`
+  (post-Mi-5 line numbers) rewritten to remove the stale "±1.5 s" /
+  "±2.5 s" width annotations and instead reference the unified
+  `kSnippetVoteRadiusSeconds` (±10 s) used by all three snippet specs
+  (verified empirically: all 3 entries in the `specs` vector at lines
+  759, 763, 767 reference `kSnippetVoteRadiusSeconds`). Semantic
+  structure preserved — Snippet A (Vote 1) is still the primary
+  estimator; Snippets B, C (Votes 2, 3) are still validators / recovery.
+  Brief Mi-5 cross-reference added to the comment so future readers
+  see the radii-unification provenance.
 
 ---
 
