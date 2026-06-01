@@ -2697,7 +2697,7 @@ zero-residue.**
   Resolution block; the cycle's allowed-red baseline note in
   `project_tier5_state.md` is updated to "no longer allowed-red".
 
-### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent — **RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP** option (a)
+### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent — **RESOLVED in #68 (`90e8fc3`)** via T8-DEFERRED-PAPERWORK-SWEEP option (a)
 
 - **Origin.** Filed 2026-05-26 during M-13-POCKETFFT-ATTRIBUTION
   pre-cure state check (#65, `4e1bedd`). Surfaced via `ls LICENSE LICENSE.md` returning
@@ -2894,7 +2894,7 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
-### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp` — **RESOLVED via T8-DEFERRED-PAPERWORK-SWEEP** option (a)
+### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp` — **RESOLVED in #68 (`90e8fc3`)** via T8-DEFERRED-PAPERWORK-SWEEP option (a)
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Pre-existing
   stale comment found by audit-agent during Mi-5 verification; NOT
