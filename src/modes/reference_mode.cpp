@@ -736,11 +736,14 @@ MultiRefineResult multi_snippet_refine(
     MultiRefineResult out;
 
     // Snippet A (Vote 1): just past the reference's first music onset.
-    // Runs with a tighter ±1.5 s window to match the pass-1 single-snippet
-    // behavior — this is the *primary* position estimator.
+    // Primary position estimator (matches the pass-1 single-snippet
+    // behavior).
     // Snippets B, C (Votes 2, 3): from 40% and 80% through the track.
-    // Wider ±2.5 s window so they can catch larger drifts, but they're
-    // used only as validators or for recovery when Vote 1 is unreliable.
+    // Used as validators or for recovery when Vote 1 is unreliable.
+    // All three votes share `kSnippetVoteRadiusSeconds` (±10 s) as their
+    // search window; the radii were unified during Mi-5 catalog promotion
+    // (PR #67) after audit observed the pre-Mi-5 ±1.5/±2.5 s narration
+    // was stale relative to the in-code values.
     int64_t onset = find_music_onset(
         ref_processed, sample_rate, 0,
         kMusicOnsetSearchSeconds, kMusicOnsetThresholdDb, kMusicOnsetMinSustainMs);
