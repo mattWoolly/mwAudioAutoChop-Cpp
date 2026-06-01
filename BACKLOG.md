@@ -2749,6 +2749,16 @@ zero-residue.**
   the tree. Adjacent-entry sweep verified no other broken
   README/PROJECT_SPEC relative links — `THIRD_PARTY_LICENSES.md`
   (M-13) and `docs/invariants.md` (DOC-3) both exist and resolve.
+  **Audit fix-up note:** PR #68's first commit `ddbd4e7` shipped the
+  LICENSE with the widespread X11/classic-MIT variant phrasing
+  ("WHETHER IN CONTRACT, TORT OR OTHERWISE..."), which is
+  SPDX-recognized as MIT and legally near-equivalent to OSI canonical
+  but did NOT match the cited source. Single-audit HALT on
+  fidelity-to-cited-source axis; cure: 3-word insertion of "AN ACTION
+  OF" so paragraph 3 now reads "WHETHER IN AN ACTION OF CONTRACT,
+  TORT OR OTHERWISE..." matching the cited canonical OSI text
+  verbatim. Recorded here per cycle pattern (PR #63/#64/#66/#67
+  audit-finding inline fix-ups) so future audits see the provenance.
 
 ### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree
 
