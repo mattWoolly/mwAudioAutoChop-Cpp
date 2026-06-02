@@ -3075,7 +3075,7 @@ zero-residue.**
   Brief Mi-5 cross-reference added to the comment so future readers
   see the radii-unification provenance.
 
-### Mi-5-CORRELATION — magic threshold soup in `correlation.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORRELATION-CLEANUP**
+### Mi-5-CORRELATION — magic threshold soup in `correlation.cpp` (Mi-5 sibling) — **RESOLVED in #71 (`f4215ce`)** via Mi-5-CORRELATION-CLEANUP
 
 - **Origin.** Filed 2026-06-01 during PR #70 (Mi-5-CORE-CLEANUP)
   audit. Audit's adjacent-entry sweep flagged `correlation.cpp:130`
@@ -3116,8 +3116,8 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
-- **Status / Resolution.** RESOLVED via Mi-5-CORRELATION-CLEANUP
-  close-out. Empirical site survey: 2 sites promoted to file-scope
+- **Status / Resolution.** RESOLVED in #71 (commit `f4215ce`) via
+  Mi-5-CORRELATION-CLEANUP close-out. Empirical site survey: 2 sites promoted to file-scope
   `static constexpr`, beyond the audit's single-site suggestion
   (`:130` 80.0f highpass). The second site was identified during the
   pre-cure read of the `cross_correlate` body. Catalog (top of
@@ -3149,6 +3149,44 @@ zero-residue.**
   the audit-paraphrased site count. Behavior-preserving:
   `cmake --build` clean, ctest 14/14 (matches pre-cure baseline at
   `cd185fa`).
+
+### Mi-5 family close-out summary (PR #71 close-out)
+
+The Mi-5 family is fully closed across 5 entries / 6 files
+(2026-06-01). Empirical raw `grep -cE "^(static |inline )?constexpr"`
+totals against `main` post-#71:
+
+| Entry | File(s) | Raw constexpr (new) | PR |
+|---|---|---|---|
+| Mi-5 | `src/modes/reference_mode.cpp` | 44 (45 total — 1 pre-existing C-4 `kAnalysisToNativeRoundingTolerance`) | #67 |
+| Mi-5-BLIND | `src/modes/blind_mode.cpp` + `blind_mode.hpp` | 4 + 4 = **8** | #69 |
+| Mi-5-ANALYSIS | `src/core/analysis.cpp` | 1 | #70 |
+| Mi-5-MUSIC-DETECTION | `src/core/music_detection.cpp` | 4 | #70 |
+| Mi-5-CORRELATION | `src/core/correlation.cpp` | 2 | #71 |
+
+**Mi-5 family raw total: 44 + 8 + 1 + 4 + 2 = 59 new file-scope
+`constexpr` promotions.**
+
+Narrative semantic-decision count (where the
+`kBlindSignalReferencePercentileNumerator/Denominator` pair counts
+as one decision, not two): 44 + 7 + 1 + 4 + 2 = 58.
+
+(PR #71's commit message + PR description claimed "53 promoted
+decision constants" — an arithmetic slip from memory rather than
+the empirical count. Per `feedback_user_concrete_detail_paraphrase.md`,
+the audit's count verification surfaced this; corrected here as
+the authoritative family total.)
+
+**Across all Mi-5-family files, defensive guards (`1e-9`, `1e-10`,
+`1e-15`, `-120.0`) and formula constants (dB-to-linear math,
+`std::pow(10, db/20)`, frame-size derivations like `sample_rate / N`)
+were uniformly NOT promoted** per Mi-5's "decision threshold vs
+formula/defensive" distinction. The Mi-5 catalog cross-references
+between files (kEnvelopeDefaultFrameMs ↔ kBlindAnalysisFrameSeconds ↔
+kMusicDetAnalysisFrameSeconds for the 50ms-frame parity;
+kBlindGapThresholdNoiseFloorMultiplier ↔ kMusicOnsetNoiseFloorMultiplier
+for the 6 dB / 12 dB contrast) make the threshold landscape
+discoverable across the codebase.
 
 ---
 
