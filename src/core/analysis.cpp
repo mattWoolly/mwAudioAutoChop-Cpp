@@ -6,6 +6,26 @@
 
 namespace mwaac {
 
+// ─── Mi-5-ANALYSIS threshold catalog ───────────────────────────────
+//
+// Per the Mi-5 invariant "Every decision threshold is a `constexpr`
+// at top of translation unit with a comment citing the observation
+// or corpus that produced it." Mi-5-ANALYSIS extends Mi-5's strict
+// reading to `src/core/analysis.cpp`. Scope here is narrow because
+// `compute_rms_energy`, `compute_zero_crossing_rate`, and
+// `compute_spectral_flatness` all take frame/hop as caller-supplied
+// parameters (not local decisions); the per-function decisions live
+// elsewhere (`music_detection.cpp` for the analysis-pipeline default
+// frame/hop choices; see Mi-5-MUSIC-DETECTION).
+
+// Minimum frame length (in samples) for `compute_zero_crossing_rate`
+// to produce a defined value. The normalization divides by
+// `end - start - 1` (the count of adjacent-sample comparisons), so a
+// frame of length less than 2 has zero comparisons and would yield
+// 0 / 0 = NaN. Per the M-10 invariant "ZCR is defined as 0 for
+// frames of length less than 2", such frames return 0 instead.
+static constexpr std::size_t kZcrMinFrameSamples = 2;
+
 std::vector<float> compute_rms_energy(
     std::span<const float> samples,
     [[maybe_unused]] int sample_rate,
@@ -86,7 +106,7 @@ std::vector<float> compute_zero_crossing_rate(
         // divisor. A function-entry early-return on samples.size() < 2
         // would be coarser and would conflate frame-length with
         // input-length; the in-loop guard is the cleaner shape.
-        if (end - start < 2) {
+        if (end - start < kZcrMinFrameSamples) {
             zcr[i] = 0.0f;
             continue;
         }
