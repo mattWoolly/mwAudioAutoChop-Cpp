@@ -11,6 +11,37 @@
 
 namespace mwaac {
 
+// ─── Mi-5-BLIND threshold catalog ──────────────────────────────────
+//
+// Per the Mi-5 invariant "Every decision threshold is a `constexpr`
+// at top of translation unit with a comment citing the observation
+// or corpus that produced it." Mi-5-BLIND extends Mi-5's strict
+// reading to `src/modes/blind_mode.cpp`. BlindModeConfig defaults
+// live at file scope in `blind_mode.hpp` (`kBlindDefault*` family);
+// the constants below are the in-body decisions used by
+// `analyze_blind_mode` and its helpers.
+
+// RMS-envelope frame length, as a fraction of `analysis_sr`. 0.05 s
+// = 50 ms windows give one envelope sample per 50 ms of audio,
+// matching the project's standard envelope granularity (compare
+// `reference_mode.cpp`'s `kEnvelopeDefaultFrameMs = 50.0`).
+static constexpr float kBlindAnalysisFrameSeconds = 0.05f;
+
+// Gap-threshold multiplier above noise floor. A 2× multiplier is
+// +6 dB (`20 * log10(2) ≈ 6.02`) — frames whose RMS sits more than
+// 6 dB above the noise-floor estimate count as music, not gap.
+static constexpr float kBlindGapThresholdNoiseFloorMultiplier = 2.0f;
+
+// Signal-reference percentile for `score_gap`. NEW-BLIND-GAP uses
+// the p90 of frame RMS as the "loud reference" level so the score
+// formula `1 - gap_rms / signal_reference_rms` has a meaningful
+// denominator even on fixtures where silence dominates the signal.
+// p90 sits in the music region for any rip where music occupies
+// at least 10% of total duration (well within all realistic vinyl
+// rips).
+static constexpr std::size_t kBlindSignalReferencePercentileNumerator   = 9;
+static constexpr std::size_t kBlindSignalReferencePercentileDenominator = 10;
+
 std::vector<std::pair<size_t, size_t>> detect_gaps(
     std::span<const float> rms_values,
     float threshold,
@@ -113,7 +144,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     }
     
     // Compute RMS energy
-    int frame_length = static_cast<int>(0.05f * static_cast<float>(config.analysis_sr));  // 50ms
+    int frame_length = static_cast<int>(kBlindAnalysisFrameSeconds * static_cast<float>(config.analysis_sr));
     int hop_length = frame_length / 4;  // 12.5ms
     
     verbose("Computing RMS energy...");
@@ -133,8 +164,9 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
 
-    // Gap threshold: just above noise floor (6 dB)
-    float threshold = noise_floor * 2.0f;
+    // Gap threshold: just above noise floor (6 dB; see
+    // kBlindGapThresholdNoiseFloorMultiplier).
+    float threshold = noise_floor * kBlindGapThresholdNoiseFloorMultiplier;
 
     // NEW-BLIND-GAP: signal reference level for score_gap, separate from
     // noise floor. The previous implementation passed noise_floor itself
@@ -154,7 +186,9 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     std::vector<float> sorted_rms(rms.begin(), rms.end());
     std::sort(sorted_rms.begin(), sorted_rms.end());
     const std::size_t p90_idx =
-        std::min(sorted_rms.size() * 9 / 10, sorted_rms.size() - 1);
+        std::min(sorted_rms.size() * kBlindSignalReferencePercentileNumerator
+                     / kBlindSignalReferencePercentileDenominator,
+                 sorted_rms.size() - 1);
     const float signal_reference_rms = sorted_rms[p90_idx];
 
     if (g_verbose) {
