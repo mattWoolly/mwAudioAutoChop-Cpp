@@ -2904,7 +2904,7 @@ zero-residue.**
   `feedback_tier_boundary_preservation.md` in-tier-but-different-
   file filing.
 
-### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORE-CLEANUP**
+### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling) — **RESOLVED in #70 (`a519df0`)** via Mi-5-CORE-CLEANUP
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Same
   audit-agent adjacent-entry sweep that surfaced Mi-5-BLIND. User-
@@ -2924,7 +2924,8 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
-- **Status / Resolution.** RESOLVED via Mi-5-CORE-CLEANUP close-out
+- **Status / Resolution.** RESOLVED in #70 (commit `a519df0`) via
+  Mi-5-CORE-CLEANUP close-out
   (bundle PR with Mi-5-MUSIC-DETECTION below). Empirical site count:
   1 decision threshold + 1 non-promoted defensive value. Catalog:
   - `kZcrMinFrameSamples = 2` (`static constexpr`) — pins the M-10
@@ -2952,7 +2953,7 @@ zero-residue.**
   Behavior-preserving: `cmake --build` clean, ctest 14/14 (matches
   pre-cure baseline at `747924c`).
 
-### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORE-CLEANUP**
+### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling) — **RESOLVED in #70 (`a519df0`)** via Mi-5-CORE-CLEANUP
 
 - **Origin.** Filed 2026-06-01 during Mi-5-BLIND-CLEANUP pre-cure
   state check (#69, `1ca7249`). Surfaced by reading the call chain
@@ -2996,7 +2997,8 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
-- **Status / Resolution.** RESOLVED via Mi-5-CORE-CLEANUP close-out
+- **Status / Resolution.** RESOLVED in #70 (commit `a519df0`) via
+  Mi-5-CORE-CLEANUP close-out
   (bundle PR with Mi-5-ANALYSIS above). Empirical site count: 6
   in-body sites consolidated into 4 file-scope `static constexpr`
   declarations. Catalog (top of `music_detection.cpp`, right after
@@ -3072,6 +3074,48 @@ zero-residue.**
   estimator; Snippets B, C (Votes 2, 3) are still validators / recovery.
   Brief Mi-5 cross-reference added to the comment so future readers
   see the radii-unification provenance.
+
+### Mi-5-CORRELATION — magic threshold soup in `correlation.cpp` (Mi-5 sibling)
+
+- **Origin.** Filed 2026-06-01 during PR #70 (Mi-5-CORE-CLEANUP)
+  audit. Audit's adjacent-entry sweep flagged `correlation.cpp:130`
+  `apply_highpass(processed, sample_rate, 80.0f)` as the closest
+  remaining Mi-5-shape candidate in `src/core/`. User-ratified
+  filing via AskUserQuestion 2026-06-01.
+- **Defect (project hygiene).** `src/core/correlation.cpp:130`
+  passes a bare `80.0f` literal as the cutoff frequency to
+  `apply_highpass`. The `apply_highpass` function definition (line
+  92) takes `cutoff_hz` as a parameter, so the `80.0f` is a
+  call-site policy decision (which cutoff to use for the pre-
+  correlation highpass) — not the function's internal magic. Per
+  the Mi-5 invariant, decision thresholds belong at file scope as
+  `constexpr` with citation comments.
+- **Defensive values (informational, not in scope).** Audit noted
+  `correlation.cpp` also contains `1e-10f` and `1e-15` defensive
+  guards. Per Mi-5's precedent (compare reference_mode's `-120.0` /
+  `1e-9` in `estimate_noise_floor_db`, music_detection's `1e-10f`
+  in `detect_music_start`), defensive values stay as in-body
+  literals.
+- **Invariant established.** Inherited from Mi-5 (see Mi-5-BLIND
+  above for the invariant text).
+- **Files touched.** `src/core/correlation.cpp` (call-site
+  replacement); possibly `src/core/correlation.hpp` if API surface
+  needs the constant exported.
+- **Exit criteria.** No magic numbers remain in `correlation.cpp`
+  decision sites.
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Direct sibling of Mi-5.
+- **Effort.** ≤ 10 LOC (1 catalog block + 1 in-body replacement).
+  Possibly more if a full pre-dispatch survey surfaces other
+  correlation-domain decision thresholds (e.g. correlation-window
+  bounds, lag-search radii at call sites). Final scope to be
+  confirmed at dispatch.
+- **Filed timing.** Per `feedback_audit_suggestions_need_ratification.md`
+  audit suggestion surfaced for user ratification before filing;
+  ratified.
+- **Audit-cardinality (forward).** Single-audit by both axes.
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
 
 ---
 
