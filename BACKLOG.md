@@ -3075,7 +3075,7 @@ zero-residue.**
   Brief Mi-5 cross-reference added to the comment so future readers
   see the radii-unification provenance.
 
-### Mi-5-CORRELATION — magic threshold soup in `correlation.cpp` (Mi-5 sibling)
+### Mi-5-CORRELATION — magic threshold soup in `correlation.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORRELATION-CLEANUP**
 
 - **Origin.** Filed 2026-06-01 during PR #70 (Mi-5-CORE-CLEANUP)
   audit. Audit's adjacent-entry sweep flagged `correlation.cpp:130`
@@ -3116,6 +3116,39 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via Mi-5-CORRELATION-CLEANUP
+  close-out. Empirical site survey: 2 sites promoted to file-scope
+  `static constexpr`, beyond the audit's single-site suggestion
+  (`:130` 80.0f highpass). The second site was identified during the
+  pre-cure read of the `cross_correlate` body. Catalog (top of
+  `correlation.cpp`, right after `namespace mwaac {`):
+  - `kCorrelationHighpassCutoffHz = 80.0f` — pre-correlation 80 Hz
+    highpass cutoff applied via `apply_highpass` in
+    `preprocess_for_correlation`. Citation: 80 Hz attenuates vinyl
+    rumble + turntable mechanical noise below the lowest pitched
+    musical content (cellos ~65 Hz; lowest piano note ~27 Hz; the
+    80 Hz cutoff removes infrasonic / sub-bass content dominated
+    by playback-mechanism noise).
+  - `kCorrelationRefineRadiusDownsampleMultiplier = 2` — Stage-2
+    refinement window width as a multiplier of `downsample_factor`.
+    The `2` means the refiner searches ±2 × downsample_factor
+    samples around the coarse peak. Encodes a policy choice on
+    how much over-search to do beyond the coarse stage's
+    quantization error.
+  - **NOT promoted (deliberate):** `1e-10f` at `:120` (normalize_rms
+    zero-RMS guard); `1e-10` at `:206` and `:250`
+    (cross_correlate per-lag normalization zero-norm guards);
+    `1e-15` at `:284` and `:345` (cross_correlate_fft FFT-path
+    zero-energy short-circuits). All defensive guards against
+    division by tiny values, not tunable policy. Matches the
+    Mi-5 / Mi-5-BLIND / Mi-5-MUSIC-DETECTION precedent of leaving
+    defensive defaults alone.
+  Audit's single-site suggestion (80.0f only) was followed-plus-one:
+  per `feedback_user_concrete_detail_paraphrase.md`, orchestrator
+  did its own empirical site survey rather than propagating only
+  the audit-paraphrased site count. Behavior-preserving:
+  `cmake --build` clean, ctest 14/14 (matches pre-cure baseline at
+  `cd185fa`).
 
 ---
 
