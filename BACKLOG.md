@@ -2836,7 +2836,7 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
-### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-BLIND-CLEANUP**
+### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling) — **RESOLVED in #69 (`1ca7249`)** via Mi-5-BLIND-CLEANUP
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Surfaced
   by audit-agent's adjacent-entry sweep on `src/modes/blind_mode.cpp`
@@ -2872,7 +2872,8 @@ zero-residue.**
   hook clear; blast-radius small-to-medium given smaller scope).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
-- **Status / Resolution.** RESOLVED via Mi-5-BLIND-CLEANUP close-out.
+- **Status / Resolution.** RESOLVED in #69 (commit `1ca7249`) via
+  Mi-5-BLIND-CLEANUP close-out.
   Empirical site survey: 7 sites across 2 files (4 in
   `src/modes/blind_mode.hpp` BlindModeConfig defaults; 3 in
   `src/modes/blind_mode.cpp` in-body). Catalog structure:
@@ -2927,7 +2928,7 @@ zero-residue.**
 ### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling)
 
 - **Origin.** Filed 2026-06-01 during Mi-5-BLIND-CLEANUP pre-cure
-  state check. Surfaced by reading the call chain
+  state check (#69, `1ca7249`). Surfaced by reading the call chain
   `analyze_blind_mode` → `estimate_noise_floor` in
   `src/core/music_detection.cpp:31`.
 - **Defect (project hygiene).** `src/core/music_detection.cpp` has
