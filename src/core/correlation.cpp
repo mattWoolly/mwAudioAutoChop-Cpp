@@ -25,6 +25,32 @@
 
 namespace mwaac {
 
+// ─── Mi-5-CORRELATION threshold catalog ────────────────────────────
+//
+// Per the Mi-5 invariant "Every decision threshold is a `constexpr`
+// at top of translation unit with a comment citing the observation
+// or corpus that produced it." Mi-5-CORRELATION extends Mi-5's
+// strict reading to `src/core/correlation.cpp`.
+
+// Pre-correlation highpass filter cutoff (Hz). 80 Hz attenuates
+// vinyl rumble + turntable mechanical noise below the lowest
+// pitched musical content (the lowest piano note is ~27 Hz; cellos
+// reach ~65 Hz; the 80 Hz cutoff removes infrasonic / sub-bass
+// content that's dominated by playback-mechanism noise rather than
+// musical signal). Applied via `apply_highpass` in
+// `preprocess_for_correlation` before both coarse and refined
+// correlation passes.
+static constexpr float kCorrelationHighpassCutoffHz = 80.0f;
+
+// Refinement window radius as a multiplier of the downsample factor
+// used in coarse correlation. After the coarse pass locates a peak
+// at downsample-rate resolution, Stage 2 refines at full resolution
+// within ±N × downsample_factor samples around the coarse lag. N=2
+// gives the refiner two downsample-units of search radius — enough
+// to cover the worst-case quantization error of the coarse stage
+// (which has resolution = downsample_factor) plus a safety margin.
+static constexpr int64_t kCorrelationRefineRadiusDownsampleMultiplier = 2;
+
 CorrelationResult cross_correlate(
     std::span<const float> reference,
     std::span<const float> target)
@@ -127,7 +153,7 @@ std::vector<float> preprocess_for_correlation(
     int sample_rate)
 {
     std::vector<float> processed(samples.begin(), samples.end());
-    apply_highpass(processed, sample_rate, 80.0f);
+    apply_highpass(processed, sample_rate, kCorrelationHighpassCutoffHz);
     normalize_rms(processed);
     return processed;
 }
@@ -215,7 +241,8 @@ CorrelationResult cross_correlate_fast(
 
     // Stage 2: Refine around coarse position at full resolution.
     int64_t max_valid_lag = static_cast<int64_t>(target.size()) - static_cast<int64_t>(reference.size());
-    int64_t refine_radius = static_cast<int64_t>(downsample_factor) * 2;
+    int64_t refine_radius = static_cast<int64_t>(downsample_factor)
+                          * kCorrelationRefineRadiusDownsampleMultiplier;
     int64_t refine_start = std::max(int64_t{0}, coarse_lag - refine_radius);
     int64_t refine_end = std::min(max_valid_lag, coarse_lag + refine_radius);
 
