@@ -2930,16 +2930,24 @@ zero-residue.**
   state check. Surfaced by reading the call chain
   `analyze_blind_mode` → `estimate_noise_floor` in
   `src/core/music_detection.cpp:31`.
-- **Defect (project hygiene).** `src/core/music_detection.cpp:31`
-  contains `sorted_rms.size() / 10` (10th-percentile noise floor
-  estimate) with the same magic-number pattern Mi-5 / Mi-5-BLIND
-  cured. The "/ 10" encodes a policy choice (which percentile to
-  use as noise floor) and has an inline comment "Sort RMS values
-  and take the 10th percentile as noise floor estimate" (line 26)
-  that should port to a constexpr citation. The same function is
-  called by both `blind_mode.cpp` (via `estimate_noise_floor`) and
-  `reference_mode.cpp` (transitively), so the policy is shared
-  cross-pipeline.
+- **Defect (project hygiene).** `src/core/music_detection.cpp` has
+  ≥ 2 known sites with the same magic-number pattern Mi-5 /
+  Mi-5-BLIND cured (PR #69 audit-corrected from initial single-site
+  filing):
+  - `:31` — `sorted_rms.size() / 10` (10th-percentile noise floor
+    estimate inside `estimate_noise_floor`). The "/ 10" encodes a
+    policy choice (which percentile to use as noise floor) and has
+    an inline comment "Sort RMS values and take the 10th percentile
+    as noise floor estimate" (line 26) that should port to a
+    constexpr citation. Called by both `blind_mode.cpp` (via
+    `estimate_noise_floor`) and `reference_mode.cpp` (transitively),
+    so the policy is shared cross-pipeline.
+  - `:54` — `noise_floor * 4.0f` (12 dB-above-noise-floor music-
+    onset threshold inside `detect_music_start`). Inline comment at
+    `:53` reads "Threshold: 12 dB above noise floor (factor of 4)".
+    Surfaced by PR #69 audit; same shape as the
+    `kBlindGapThresholdNoiseFloorMultiplier = 2.0f` (+6 dB) constant
+    promoted in this PR — same family, different dB choice.
 - **Invariant established.** Inherited from Mi-5 (see Mi-5-BLIND
   above for the invariant text).
 - **Files touched.** `src/core/music_detection.cpp` (and
@@ -2949,8 +2957,9 @@ zero-residue.**
   `music_detection.cpp` decision sites.
 - **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
   Direct sibling of Mi-5.
-- **Effort.** Site count not yet empirically enumerated; likely 1-5
-  sites given file size and scope.
+- **Effort.** ≥ 2 sites enumerated above (PR #69 audit empirical
+  count); full pre-dispatch survey may surface 1-3 more given file
+  size and scope. Final site count to be confirmed at dispatch.
 - **Filed timing.** Per `feedback_tier_boundary_preservation.md`
   in-tier-but-different-file filing — surfaced during Mi-5-BLIND
   state-check; filed as own item rather than folded because
