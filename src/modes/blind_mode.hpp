@@ -10,11 +10,45 @@
 
 namespace mwaac {
 
+// ─── BlindModeConfig defaults (Mi-5-BLIND catalog) ─────────────────
+//
+// Decision thresholds for the blind-mode pipeline's user-configurable
+// inputs. Each value encodes a policy choice that the CLI default
+// inherits unless overridden at construction time. Per the Mi-5
+// invariant "Every decision threshold is a `constexpr` at top of
+// translation unit with a comment citing the observation or corpus
+// that produced it" — extended to the .hpp / config-defaults case
+// per Mi-5-BLIND.
+
+// Minimum gap duration in seconds — gaps shorter than this are
+// treated as intra-track pauses, not track boundaries. Empirical:
+// 2 s discriminates inter-track silence from typical musical
+// pauses (sustained chords, breath gaps) on the vinyl corpus.
+inline constexpr float kBlindDefaultMinGapSeconds = 2.0f;
+
+// Maximum gap duration in seconds — gaps longer than this are
+// treated as lead-in / lead-out / side-flip artifacts, not track
+// boundaries.
+inline constexpr float kBlindDefaultMaxGapSeconds = 30.0f;
+
+// Score_gap confidence gate. Per NEW-BLIND-GAP's docstring on
+// score_gap, the formula `1 - gap_rms / signal_reference_rms`
+// gates candidates above this threshold. 0.6 was the original
+// hand-tuned value; preserved by NEW-BLIND-GAP after re-deriving
+// the formula's denominator semantics.
+inline constexpr float kBlindDefaultConfidenceThreshold = 0.6f;
+
+// Analysis-rate sample rate (Hz). Most vinyl rips arrive at
+// 44.1 kHz native; the analysis pipeline downsamples to this rate
+// for envelope and correlation work. 44100 is the de-facto CD-rate
+// audio analysis standard.
+inline constexpr int kBlindDefaultAnalysisSampleRate = 44100;
+
 struct BlindModeConfig {
-    float min_gap_seconds{2.0f};   // Minimum gap to detect as boundary
-    float max_gap_seconds{30.0f};  // Maximum gap (longer = lead-in/out)
-    float confidence_threshold{0.6f};
-    int analysis_sr{44100};
+    float min_gap_seconds{kBlindDefaultMinGapSeconds};
+    float max_gap_seconds{kBlindDefaultMaxGapSeconds};
+    float confidence_threshold{kBlindDefaultConfidenceThreshold};
+    int analysis_sr{kBlindDefaultAnalysisSampleRate};
 };
 
 enum class BlindError {

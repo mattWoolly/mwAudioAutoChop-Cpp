@@ -2836,7 +2836,7 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
 
-### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling)
+### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-BLIND-CLEANUP**
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Surfaced
   by audit-agent's adjacent-entry sweep on `src/modes/blind_mode.cpp`
@@ -2872,6 +2872,36 @@ zero-residue.**
   hook clear; blast-radius small-to-medium given smaller scope).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via Mi-5-BLIND-CLEANUP close-out.
+  Empirical site survey: 7 sites across 2 files (4 in
+  `src/modes/blind_mode.hpp` BlindModeConfig defaults; 3 in
+  `src/modes/blind_mode.cpp` in-body). Catalog structure:
+  - `blind_mode.hpp` (BlindModeConfig defaults, 4 constants):
+    `kBlindDefaultMinGapSeconds` (2.0 s), `kBlindDefaultMaxGapSeconds`
+    (30.0 s), `kBlindDefaultConfidenceThreshold` (0.6, score_gap gate
+    per NEW-BLIND-GAP), `kBlindDefaultAnalysisSampleRate` (44100 Hz).
+    `inline constexpr` at file scope (header) so the struct's member
+    defaults can reference them without ODR issues across TUs.
+  - `blind_mode.cpp` (in-body decisions, 3 constants):
+    `kBlindAnalysisFrameSeconds` (0.05, 50 ms envelope frame),
+    `kBlindGapThresholdNoiseFloorMultiplier` (2.0×, 6 dB above noise
+    floor), and the percentile pair
+    `kBlindSignalReferencePercentileNumerator/Denominator` (9/10 =
+    p90 per NEW-BLIND-GAP's "signal reference RMS, not noise floor"
+    cure). `static constexpr` at file scope above the first function.
+  Citations on each constant ported from existing inline comments
+  (`// 50ms`, `// 6 dB above noise floor`, the NEW-BLIND-GAP
+  rationale block at lines 139-153 pre-cure) so the comment chain
+  matches Mi-5's pattern. Behavior-preserving: `cmake --build`
+  clean, ctest 14/14 (matches pre-cure baseline at `af3a259`).
+- **Adjacent finding (filed-separately).** Surfaced during pre-cure
+  state check: `src/core/music_detection.cpp:31` contains
+  `sorted_rms.size() / 10` (10th-percentile noise floor estimate)
+  with the same magic-number pattern. The file is in `src/core/`,
+  separate from both Mi-5's `reference_mode.cpp` and this entry's
+  `blind_mode.cpp`. Filed as `Mi-5-MUSIC-DETECTION` below per
+  `feedback_tier_boundary_preservation.md` in-tier-but-different-
+  file filing.
 
 ### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling)
 
@@ -2890,6 +2920,51 @@ zero-residue.**
   Direct sibling of Mi-5.
 - **Effort.** Unknown until empirical site survey; likely 5-15 sites.
 - **Filed timing.** Per same discipline as Mi-5-BLIND above.
+- **Audit-cardinality (forward).** Single-audit by both axes.
+- **Cure-attribution.** When cured, this entry receives a Status /
+  Resolution block.
+
+### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling)
+
+- **Origin.** Filed 2026-06-01 during Mi-5-BLIND-CLEANUP pre-cure
+  state check. Surfaced by reading the call chain
+  `analyze_blind_mode` → `estimate_noise_floor` in
+  `src/core/music_detection.cpp:31`.
+- **Defect (project hygiene).** `src/core/music_detection.cpp` has
+  ≥ 2 known sites with the same magic-number pattern Mi-5 /
+  Mi-5-BLIND cured (PR #69 audit-corrected from initial single-site
+  filing):
+  - `:31` — `sorted_rms.size() / 10` (10th-percentile noise floor
+    estimate inside `estimate_noise_floor`). The "/ 10" encodes a
+    policy choice (which percentile to use as noise floor) and has
+    an inline comment "Sort RMS values and take the 10th percentile
+    as noise floor estimate" (line 26) that should port to a
+    constexpr citation. Called by both `blind_mode.cpp` (via
+    `estimate_noise_floor`) and `reference_mode.cpp` (transitively),
+    so the policy is shared cross-pipeline.
+  - `:54` — `noise_floor * 4.0f` (12 dB-above-noise-floor music-
+    onset threshold inside `detect_music_start`). Inline comment at
+    `:53` reads "Threshold: 12 dB above noise floor (factor of 4)".
+    Surfaced by PR #69 audit; same shape as the
+    `kBlindGapThresholdNoiseFloorMultiplier = 2.0f` (+6 dB) constant
+    promoted in this PR — same family, different dB choice.
+- **Invariant established.** Inherited from Mi-5 (see Mi-5-BLIND
+  above for the invariant text).
+- **Files touched.** `src/core/music_detection.cpp` (and
+  `src/core/music_detection.hpp` if other thresholds are present at
+  the API surface — to be confirmed at dispatch time).
+- **Exit criteria.** No magic numbers remain in
+  `music_detection.cpp` decision sites.
+- **Tier rationale.** Tier 8 (Documentation / attribution / hygiene).
+  Direct sibling of Mi-5.
+- **Effort.** ≥ 2 sites enumerated above (PR #69 audit empirical
+  count); full pre-dispatch survey may surface 1-3 more given file
+  size and scope. Final site count to be confirmed at dispatch.
+- **Filed timing.** Per `feedback_tier_boundary_preservation.md`
+  in-tier-but-different-file filing — surfaced during Mi-5-BLIND
+  state-check; filed as own item rather than folded because
+  Mi-5-BLIND's mandate was strictly `blind_mode.cpp` (the calling
+  site, not the callee's implementation).
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
