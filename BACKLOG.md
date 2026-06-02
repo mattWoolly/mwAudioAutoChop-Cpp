@@ -2904,7 +2904,7 @@ zero-residue.**
   `feedback_tier_boundary_preservation.md` in-tier-but-different-
   file filing.
 
-### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling)
+### Mi-5-ANALYSIS — magic threshold soup in `analysis.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORE-CLEANUP**
 
 - **Origin.** Filed 2026-05-31 during PR #67 (Mi-5) audit. Same
   audit-agent adjacent-entry sweep that surfaced Mi-5-BLIND. User-
@@ -2924,8 +2924,35 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via Mi-5-CORE-CLEANUP close-out
+  (bundle PR with Mi-5-MUSIC-DETECTION below). Empirical site count:
+  1 decision threshold + 1 non-promoted defensive value. Catalog:
+  - `kZcrMinFrameSamples = 2` (`static constexpr`) — pins the M-10
+    invariant "ZCR is defined as 0 for frames of length less than 2"
+    at file scope, replacing the in-body literal `< 2` at the
+    `compute_zero_crossing_rate` degenerate-length guard.
+  - **NOT promoted (deliberate):** `0.5f` placeholder at line 118
+    (`compute_spectral_flatness` stub). This isn't a decision
+    threshold — it's a TODO/placeholder return value while the
+    function awaits FFT implementation. The accompanying inline
+    comment `"return zeros (placeholder)"` contradicts the actual
+    value, but that's C-5's scope (the function is on the backlog
+    for either implementation or removal); not Mi-5-ANALYSIS's
+    cure to make.
+  - **NOT promoted (deliberate):** `num_frames = 1` single-frame
+    fallback at lines 21, 62, 117. Structural special-case for
+    short signals, not a policy threshold.
+  Narrow scope vs the BACKLOG's "5-15 sites likely" estimate:
+  `analysis.cpp`'s three public functions take `frame_length` and
+  `hop_length` as CALLER-SUPPLIED parameters, not local decisions.
+  The per-pipeline default frame/hop choices live in
+  `music_detection.cpp` (per Mi-5-MUSIC-DETECTION) and in the
+  algorithmic call-sites that invoke these analyzers — there's no
+  in-`analysis.cpp` magic-number cluster of the Mi-5 shape.
+  Behavior-preserving: `cmake --build` clean, ctest 14/14 (matches
+  pre-cure baseline at `747924c`).
 
-### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling)
+### Mi-5-MUSIC-DETECTION — magic threshold soup in `music_detection.cpp` (Mi-5 sibling) — **RESOLVED via Mi-5-CORE-CLEANUP**
 
 - **Origin.** Filed 2026-06-01 during Mi-5-BLIND-CLEANUP pre-cure
   state check (#69, `1ca7249`). Surfaced by reading the call chain
@@ -2969,6 +2996,36 @@ zero-residue.**
 - **Audit-cardinality (forward).** Single-audit by both axes.
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via Mi-5-CORE-CLEANUP close-out
+  (bundle PR with Mi-5-ANALYSIS above). Empirical site count: 6
+  in-body sites consolidated into 4 file-scope `static constexpr`
+  declarations. Catalog (top of `music_detection.cpp`, right after
+  `namespace mwaac {`):
+  - `kMusicDetAnalysisFrameSeconds = 0.05f` — 50 ms envelope frame
+    duration (parity with `reference_mode.cpp`'s
+    `kEnvelopeDefaultFrameMs = 50.0` and `blind_mode.cpp`'s
+    `kBlindAnalysisFrameSeconds = 0.05f`).
+  - `kMusicDetAnalysisHopFrameDenominator = 4` — 25% hop = 12.5 ms
+    at 50 ms frame (75% overlap, project-standard analysis hop).
+  - `kNoiseFloorPercentileDenominator = 10` — 10th percentile of
+    frame RMS as noise-floor estimate. Cross-pipeline policy
+    (called by both blind_mode and reference_mode pathways).
+  - `kMusicOnsetNoiseFloorMultiplier = 4.0f` — +12.04 dB above noise
+    floor for sustained-music labeling. Contrasts with
+    `kBlindGapThresholdNoiseFloorMultiplier = 2.0f` (+6 dB) which
+    is gap-vs-music; the higher 12 dB cutoff here is music-vs-
+    surface-noise on lead-in regions.
+  - **NOT promoted (deliberate):** `1e-10f` defensive floor at the
+    `estimate_noise_floor < 1e-10f` guard in `detect_music_start`.
+    Defensive value against near-zero noise floors causing
+    downstream division issues, not a tunable policy. Matches
+    Mi-5's precedent of leaving defensive defaults alone (compare
+    `reference_mode.cpp`'s `-120.0` / `1e-9` in `estimate_noise_floor_db`).
+  Bonus dedup: `estimate_noise_floor` (lines 65-66 pre-cure) and
+  `detect_music_start` (lines 88-89 pre-cure) both held private
+  copies of the 50 ms / 25% hop values; promoting to file scope
+  consolidates them. Behavior-preserving: `cmake --build` clean,
+  ctest 14/14 (matches pre-cure baseline at `747924c`).
 
 ### DOC-VOTE-RADIUS-COMMENT — stale ±1.5/±2.5s vote-window comment in `reference_mode.cpp` — **RESOLVED in #68 (`90e8fc3`)** via T8-DEFERRED-PAPERWORK-SWEEP option (a)
 
