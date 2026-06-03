@@ -980,7 +980,7 @@ bool natural_less(const std::string& a, const std::string& b) {
         std::string current;
         bool is_digit = false;
         for (char c : s) {
-            bool digit = std::isdigit(static_cast<unsigned char>(c));
+            bool digit = std::isdigit(static_cast<unsigned char>(c)) != 0;
             if (!current.empty() && digit != is_digit) {
                 parts.emplace_back(is_digit, current);
                 current.clear();

@@ -2702,7 +2702,20 @@ zero-residue.**
   files. Post-cure local clang-tidy on `src/**/*.cpp` (excluding
   vendored `pocketfft_hdronly.h` per workflow's `-not -path
   '*/pocketfft*'`): **0 errors**, matching the CI workflow's expected
-  exit status. 14/14 ctest binaries pass on `build-clang-tidy/` Debug
+  exit status (**after PR #73 audit-fix-up** — initial commit `c41cb2c`
+  shipped with one `readability-implicit-bool-conversion` site at
+  `reference_mode.cpp:983` that Ubuntu CI's clang-tidy caught but the
+  fix-agent's local Homebrew LLVM 20 missed due to degraded
+  `<cstdint>`/`<cctype>` resolution. Both parallel audits independently
+  converged on the same single-site HALT. Per
+  `feedback_fix_agent_stale_baseline.md` extended to a new tool axis:
+  fix-agent's "local clang-tidy 0 errors" claim was not verified
+  against CI's Ubuntu toolchain before PR-body propagation. Fix-up
+  adds `!= 0` to convert the `std::isdigit` int return to bool
+  explicitly. Audit 2 also caught a stale `(dead; Mi-11 pending
+  deletion)` annotation at `PROJECT_SPEC.md:94` — cross-doc drift per
+  `feedback_cross_doc_reconciliation.md`; removed in the same fix-up.)
+  14/14 ctest binaries pass on `build-clang-tidy/` Debug
   config (no test modifications). Files modified: the 13 remaining
   `.cpp` files from the BACKLOG list (test_deps.cpp deleted; see Mi-11
   below), plus `src/core/audio_file.hpp` (signature change matched a
