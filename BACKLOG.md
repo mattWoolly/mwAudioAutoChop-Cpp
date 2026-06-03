@@ -2760,7 +2760,7 @@ zero-residue.**
   verbatim. Recorded here per cycle pattern (PR #63/#64/#66/#67
   audit-finding inline fix-ups) so future audits see the provenance.
 
-### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree — **RESOLVED via T8-SPEC-ARCH-DRIFT-CLEANUP** option (a)
+### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree — **RESOLVED in #72 (`070446e`)** via T8-SPEC-ARCH-DRIFT-CLEANUP option (a)
 
 - **Origin.** Filed 2026-05-28 during DOC-2-SPEC-RECONCILIATION
   pre-cure state check (#66, `cd98294`). Surfaced by direct read of `PROJECT_SPEC.md` lines
@@ -2835,8 +2835,9 @@ zero-residue.**
   CMakeLists.txt + #include paths).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
-- **Status / Resolution.** RESOLVED via T8-SPEC-ARCH-DRIFT-CLEANUP
-  close-out, option (a) (match spec to current tree). User-ratified
+- **Status / Resolution.** RESOLVED in #72 (commit `070446e`) via
+  T8-SPEC-ARCH-DRIFT-CLEANUP close-out, option (a) (match spec to
+  current tree). User-ratified
   via AskUserQuestion 2026-06-02. The `PROJECT_SPEC.md` Architecture
   section was rewritten to enumerate the actual `src/` tree as of
   cure time:
