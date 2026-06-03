@@ -70,26 +70,44 @@ Full-screen terminal interface inspired by hardware samplers (Elektron, MPC, vin
 - Comprehensive unit tests (Catch2 or GoogleTest)
 
 ### Architecture
+
+The diagram below matches the actual `src/` tree as of T8-SPEC-ARCH-DRIFT close-out (2026-06-02). It describes current state, not aspiration; when the tree changes substantively, this section is the canonical home for the updated description (per the DOC-3 living-document discipline applied to PROJECT_SPEC.md).
+
 ```
 src/
-├── main.cpp              # Entry point
-├── cli/                  # Command-line parsing
-├── core/                 # Core audio processing
-│   ├── audio_file.hpp    # Audio I/O abstraction
-│   ├── correlation.hpp   # Cross-correlation
-│   ├── analysis.hpp      # Feature extraction (RMS, spectral)
-│   ├── alignment.hpp     # Reference alignment
-│   └── split_points.hpp  # Data structures
-├── modes/
-│   ├── reference.hpp     # Reference mode pipeline
-│   └── blind.hpp         # Blind mode pipeline
-├── tui/                  # Terminal UI
-│   ├── waveform.hpp      # Waveform rendering
-│   ├── editor.hpp        # Chop point editor
-│   └── app.hpp           # Main TUI application
-└── utils/                # Utilities
-    └── dsp.hpp           # DSP helpers
+├── main.cpp                       # Entry point + CLI parsing
+├── cli/                           # (reserved placeholder; .gitkeep-only)
+├── core/                          # Core audio processing
+│   ├── alignment_result.hpp       # AlignPerTrackResult struct
+│   ├── analysis.{cpp,hpp}         # RMS / ZCR / spectral-flatness analyzers
+│   ├── analysis_result.hpp        # AnalysisResult struct
+│   ├── audio_buffer.{cpp,hpp}     # AudioBuffer container + ops
+│   ├── audio_file.{cpp,hpp}       # libsndfile + parser-validated I/O
+│   ├── audio_info.hpp             # AudioInfo metadata struct
+│   ├── core.hpp                   # (dead; Mi-12 pending deletion)
+│   ├── correlation.{cpp,hpp}      # Cross-correlation (time-domain + FFT)
+│   ├── drift_model.cpp            # DriftModel impl (struct in modes/reference_mode.hpp)
+│   ├── frame_sample_bridge.hpp    # Typed sample/frame index discipline
+│   ├── music_detection.{cpp,hpp}  # estimate_noise_floor + detect_music_start
+│   ├── pocketfft_hdronly.h        # Vendored BSD-3 FFT (see THIRD_PARTY_LICENSES.md)
+│   ├── split_point.hpp            # SplitPoint data structure
+│   ├── test_deps.cpp              # (dead; Mi-11 pending deletion)
+│   └── verbose.hpp                # `g_verbose` + `verbose()` log helpers
+├── modes/                         # Mode pipelines
+│   ├── blind_mode.{cpp,hpp}       # Blind-mode pipeline + BlindModeConfig
+│   ├── reaper_export.{cpp,hpp}    # REAPER project (.rpp) writer
+│   └── reference_mode.{cpp,hpp}   # Reference-mode pipeline + DriftModel struct
+├── tui/                           # Terminal UI (FTXUI-based)
+│   ├── app.{cpp,hpp}              # FTXUI screen loop + run_tui entry
+│   ├── app_handlers.{cpp,hpp}     # State-mutator harness (Tier 7)
+│   └── waveform.{cpp,hpp}         # render_waveform Unicode rendering
+└── utils/                         # (reserved placeholder; .gitkeep-only)
 ```
+
+Notes on the legacy diagram (pre-T8-SPEC-ARCH-DRIFT):
+- `src/cli/` and `src/utils/` were scaffolded at project init but never populated; CLI parsing lives in `main.cpp` and DSP helpers folded into `src/core/*` modules. The placeholder directories are preserved for narrative continuity.
+- Earlier diagrams cited file-level stubs (`alignment.hpp`, `editor.hpp`, `src/utils/dsp.hpp`) that never landed; the corresponding functionality was either absorbed into existing modules (alignment → reference_mode; editor → app + app_handlers) or never required (DSP helpers).
+- The legacy `*.hpp`-only stub naming (`reference.hpp`, `blind.hpp`) was superseded by the `*_mode.{cpp,hpp}` convention during Tier 5/6 cycle work.
 
 ## Workflow Process
 
