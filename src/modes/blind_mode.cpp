@@ -25,12 +25,12 @@ namespace mwaac {
 // = 50 ms windows give one envelope sample per 50 ms of audio,
 // matching the project's standard envelope granularity (compare
 // `reference_mode.cpp`'s `kEnvelopeDefaultFrameMs = 50.0`).
-static constexpr float kBlindAnalysisFrameSeconds = 0.05f;
+static constexpr float kBlindAnalysisFrameSeconds = 0.05F;
 
 // Gap-threshold multiplier above noise floor. A 2× multiplier is
 // +6 dB (`20 * log10(2) ≈ 6.02`) — frames whose RMS sits more than
 // 6 dB above the noise-floor estimate count as music, not gap.
-static constexpr float kBlindGapThresholdNoiseFloorMultiplier = 2.0f;
+static constexpr float kBlindGapThresholdNoiseFloorMultiplier = 2.0F;
 
 // Signal-reference percentile for `score_gap`. NEW-BLIND-GAP uses
 // the p90 of frame RMS as the "loud reference" level so the score
@@ -52,8 +52,8 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
 {
     std::vector<std::pair<size_t, size_t>> gaps;
     
-    size_t min_gap_frames = static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
-    size_t max_gap_frames = static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
+    auto min_gap_frames = static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
+    auto max_gap_frames = static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
     
     bool in_gap = false;
     size_t gap_start = 0;
@@ -69,7 +69,7 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
             // End of gap
             size_t gap_len = i - gap_start;
             if (gap_len >= min_gap_frames && gap_len <= max_gap_frames) {
-                gaps.push_back({gap_start, i});
+                gaps.emplace_back(gap_start, i);
             }
             in_gap = false;
         }
@@ -79,7 +79,7 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
     if (in_gap) {
         size_t gap_len = rms_values.size() - gap_start;
         if (gap_len >= min_gap_frames && gap_len <= max_gap_frames) {
-            gaps.push_back({gap_start, rms_values.size()});
+            gaps.emplace_back(gap_start, rms_values.size());
         }
     }
     
@@ -93,7 +93,7 @@ float score_gap(
     float signal_reference_rms)
 {
     if (end_sample <= start_sample || samples.empty()) {
-        return 0.0f;
+        return 0.0F;
     }
 
     // Clamp to valid range
@@ -105,7 +105,7 @@ float score_gap(
                                     samples.begin() + static_cast<std::ptrdiff_t>(end_sample));
 
     // Compute RMS of gap
-    float sum_sq = 0.0f;
+    float sum_sq = 0.0F;
     for (float s : gap_samples) {
         sum_sq += s * s;
     }
@@ -114,13 +114,13 @@ float score_gap(
     // Confidence: how much quieter the gap is than the signal reference.
     // Reference must be a loud level (typical music loudness, e.g. p90 of
     // frame RMS) — see header docstring for the NEW-BLIND-GAP rationale.
-    float energy_score = 0.0f;
-    if (signal_reference_rms > 1e-10f) {
+    float energy_score = 0.0F;
+    if (signal_reference_rms > 1e-10F) {
         float ratio = gap_rms / signal_reference_rms;
-        energy_score = std::max(0.0f, 1.0f - ratio);
+        energy_score = std::max(0.0F, 1.0F - ratio);
     }
 
-    return std::clamp(energy_score, 0.0f, 1.0f);
+    return std::clamp(energy_score, 0.0F, 1.0F);
 }
 
 Expected<AnalysisResult, BlindError> analyze_blind_mode(
@@ -184,7 +184,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     // which are dominated by music with only short gaps), giving the
     // score_gap formula a meaningful denominator.
     std::vector<float> sorted_rms(rms.begin(), rms.end());
-    std::sort(sorted_rms.begin(), sorted_rms.end());
+    std::ranges::sort(sorted_rms);
     const std::size_t p90_idx =
         std::min(sorted_rms.size() * kBlindSignalReferencePercentileNumerator
                      / kBlindSignalReferencePercentileDenominator,

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <numbers>
 #include <numeric>
 #include <cmath>
 
@@ -40,7 +41,7 @@ namespace mwaac {
 // musical signal). Applied via `apply_highpass` in
 // `preprocess_for_correlation` before both coarse and refined
 // correlation passes.
-static constexpr float kCorrelationHighpassCutoffHz = 80.0f;
+static constexpr float kCorrelationHighpassCutoffHz = 80.0F;
 
 // Refinement window radius as a multiplier of the downsample factor
 // used in coarse correlation. After the coarse pass locates a peak
@@ -56,14 +57,14 @@ CorrelationResult cross_correlate(
     std::span<const float> target)
 {
     if (reference.empty() || target.empty()) {
-        return {0, 0.0};
+        return {.lag=0, .peak_value=0.0};
     }
     
     // Normalize signals (zero mean)
     auto normalize = [](std::span<const float> sig) {
-        float mean = std::accumulate(sig.begin(), sig.end(), 0.0f) / static_cast<float>(sig.size());
+        float mean = std::accumulate(sig.begin(), sig.end(), 0.0F) / static_cast<float>(sig.size());
         std::vector<float> normalized(sig.size());
-        std::transform(sig.begin(), sig.end(), normalized.begin(),
+        std::ranges::transform(sig, normalized.begin(),
                       [mean](float s) { return s - mean; });
         return normalized;
     };
@@ -72,20 +73,23 @@ CorrelationResult cross_correlate(
     auto tgt_norm = normalize(target);
     
     // Compute normalization factors
-    float ref_energy = 0.0f, tgt_energy = 0.0f;
-    for (auto v : ref_norm) ref_energy += v * v;
-    for (auto v : tgt_norm) tgt_energy += v * v;
+    float ref_energy = 0.0F;
+    float tgt_energy = 0.0F;
+    for (auto v : ref_norm) { ref_energy += v * v;
+}
+    for (auto v : tgt_norm) { tgt_energy += v * v;
+}
     
     float norm_factor = std::sqrt(ref_energy * tgt_energy);
-    if (norm_factor < 1e-10f) {
-        return {0, 0.0};
+    if (norm_factor < 1e-10F) {
+        return {.lag=0, .peak_value=0.0};
     }
     
     // Naive O(n*m) walk over lags -(ref.size-1)..(target.size-1).
     // FFT-based alternative is cross_correlate_fft; this naive form is
     // retained as a testing-only verification shim — see header docstring.
     int64_t min_lag = -static_cast<int64_t>(ref_norm.size() - 1);
-    int64_t max_lag = static_cast<int64_t>(tgt_norm.size() - 1);
+    auto max_lag = static_cast<int64_t>(tgt_norm.size() - 1);
     
     double best_corr = -std::numeric_limits<double>::infinity();
     int64_t best_lag = 0;
@@ -112,7 +116,7 @@ CorrelationResult cross_correlate(
         }
     }
     
-    return {best_lag, best_corr / static_cast<double>(norm_factor)};
+    return {.lag=best_lag, .peak_value=best_corr / static_cast<double>(norm_factor)};
 }
 
 void apply_highpass(std::vector<float>& samples, int sample_rate, float cutoff_hz) {
@@ -120,12 +124,12 @@ void apply_highpass(std::vector<float>& samples, int sample_rate, float cutoff_h
     // y[n] = alpha * (y[n-1] + x[n] - x[n-1])
     // alpha = RC / (RC + dt), RC = 1/(2*pi*fc)
     
-    float rc = 1.0f / (2.0f * static_cast<float>(M_PI) * cutoff_hz);
-    float dt = 1.0f / static_cast<float>(sample_rate);
+    float rc = 1.0F / (2.0F * std::numbers::pi_v<float> * cutoff_hz);
+    float dt = 1.0F / static_cast<float>(sample_rate);
     float alpha = rc / (rc + dt);
     
-    float prev_x = 0.0f;
-    float prev_y = 0.0f;
+    float prev_x = 0.0F;
+    float prev_y = 0.0F;
     
     for (auto& sample : samples) {
         float x = sample;
@@ -137,14 +141,17 @@ void apply_highpass(std::vector<float>& samples, int sample_rate, float cutoff_h
 }
 
 void normalize_rms(std::vector<float>& samples) {
-    if (samples.empty()) return;
+    if (samples.empty()) { return;
+}
     
-    float sum_sq = 0.0f;
-    for (float s : samples) sum_sq += s * s;
+    float sum_sq = 0.0F;
+    for (float s : samples) { sum_sq += s * s;
+}
     float rms = std::sqrt(sum_sq / static_cast<float>(samples.size()));
     
-    if (rms > 1e-10f) {
-        for (float& s : samples) s /= rms;
+    if (rms > 1e-10F) {
+        for (float& s : samples) { s /= rms;
+}
     }
 }
 
@@ -160,14 +167,14 @@ std::vector<float> preprocess_for_correlation(
 
 std::vector<float> downsample(std::span<const float> samples, int factor) {
     if (factor <= 1 || samples.empty()) {
-        return std::vector<float>(samples.begin(), samples.end());
+        return {samples.begin(), samples.end()};
     }
     
     size_t output_size = samples.size() / static_cast<std::size_t>(factor);
     std::vector<float> result(output_size);
 
     for (size_t i = 0; i < output_size; ++i) {
-        float sum = 0.0f;
+        float sum = 0.0F;
         size_t start = i * static_cast<std::size_t>(factor);
         for (int j = 0; j < factor && start + static_cast<std::size_t>(j) < samples.size(); ++j) {
             sum += samples[start + static_cast<std::size_t>(j)];
@@ -184,7 +191,7 @@ CorrelationResult cross_correlate_fast(
     int downsample_factor)
 {
     if (reference.empty() || target.empty() || reference.size() > target.size()) {
-        return {0, 0.0};
+        return {.lag=0, .peak_value=0.0};
     }
 
     // Stage 1: Coarse search on downsampled signals.
@@ -197,16 +204,17 @@ CorrelationResult cross_correlate_fast(
     auto tgt_ds = downsample(target, downsample_factor);
 
     if (ref_ds.empty() || tgt_ds.empty() || ref_ds.size() > tgt_ds.size()) {
-        return {0, 0.0};
+        return {.lag=0, .peak_value=0.0};
     }
 
     double ref_ds_mean = std::accumulate(ref_ds.begin(), ref_ds.end(), 0.0) / static_cast<double>(ref_ds.size());
     std::vector<float> ref_ds_norm(ref_ds.size());
-    std::transform(ref_ds.begin(), ref_ds.end(), ref_ds_norm.begin(),
+    std::ranges::transform(ref_ds, ref_ds_norm.begin(),
                    [ref_ds_mean](float s) { return s - static_cast<float>(ref_ds_mean); });
 
     double ref_ds_energy = 0.0;
-    for (float v : ref_ds_norm) ref_ds_energy += static_cast<double>(v) * static_cast<double>(v);
+    for (float v : ref_ds_norm) { ref_ds_energy += static_cast<double>(v) * static_cast<double>(v);
+}
 
     int64_t ds_max_lag = static_cast<int64_t>(tgt_ds.size()) - static_cast<int64_t>(ref_ds_norm.size());
 
@@ -248,11 +256,12 @@ CorrelationResult cross_correlate_fast(
 
     double ref_mean = std::accumulate(reference.begin(), reference.end(), 0.0) / static_cast<double>(reference.size());
     std::vector<float> ref_norm(reference.size());
-    std::transform(reference.begin(), reference.end(), ref_norm.begin(),
+    std::ranges::transform(reference, ref_norm.begin(),
                    [ref_mean](float s) { return s - static_cast<float>(ref_mean); });
 
     double ref_energy = 0.0;
-    for (float v : ref_norm) ref_energy += static_cast<double>(v) * static_cast<double>(v);
+    for (float v : ref_norm) { ref_energy += static_cast<double>(v) * static_cast<double>(v);
+}
 
     // Fall back to coarse result if refine can't improve on it.
     double best_corr = best_coarse_corr;
@@ -282,7 +291,7 @@ CorrelationResult cross_correlate_fast(
         }
     }
 
-    return {best_lag, best_corr};
+    return {.lag=best_lag, .peak_value=best_corr};
 }
 
 CorrelationResult cross_correlate_fft(
@@ -291,14 +300,16 @@ CorrelationResult cross_correlate_fft(
 {
     const size_t N = reference.size();
     const size_t M = target.size();
-    if (N == 0 || M == 0 || N > M) return {0, 0.0};
+    if (N == 0 || M == 0 || N > M) { return {.lag=0, .peak_value=0.0};
+}
 
     // Zero-mean the reference. After this, raw_corr[lag] = sum_i ref_c[i] *
     // target[lag+i] is already the centered cross product on the ref side.
     // (The constant tgt_slice_mean * sum(ref_c) = 0 drops out.) We still
     // need to center the target per-lag for the normalization denominator.
     double ref_mean = 0.0;
-    for (float v : reference) ref_mean += static_cast<double>(v);
+    for (float v : reference) { ref_mean += static_cast<double>(v);
+}
     ref_mean /= static_cast<double>(N);
 
     std::vector<double> ref_c(N);
@@ -308,10 +319,12 @@ CorrelationResult cross_correlate_fft(
         ref_c[i] = v;
         ref_energy += v * v;
     }
-    if (ref_energy < 1e-15) return {0, 0.0};
+    if (ref_energy < 1e-15) { return {.lag=0, .peak_value=0.0};
+}
 
     std::vector<double> tgt_d(M);
-    for (size_t i = 0; i < M; ++i) tgt_d[i] = static_cast<double>(target[i]);
+    for (size_t i = 0; i < M; ++i) { tgt_d[i] = static_cast<double>(target[i]);
+}
 
     // FFT length: at least N+M-1 so linear (non-circular) correlation fits.
     // pocketfft handles arbitrary sizes efficiently, but prefers smooth
@@ -322,12 +335,13 @@ CorrelationResult cross_correlate_fft(
     // Zero-pad both signals to length L.
     std::vector<double> ref_padded(L, 0.0);
     std::vector<double> tgt_padded(L, 0.0);
-    std::copy(ref_c.begin(), ref_c.end(), ref_padded.begin());
-    std::copy(tgt_d.begin(), tgt_d.end(), tgt_padded.begin());
+    std::ranges::copy(ref_c, ref_padded.begin());
+    std::ranges::copy(tgt_d, tgt_padded.begin());
 
     // Real-to-complex forward FFT. Output length is L/2 + 1.
-    const size_t K = L / 2 + 1;
-    std::vector<std::complex<double>> Ref_f(K), Tgt_f(K);
+    const size_t K = (L / 2) + 1;
+    std::vector<std::complex<double>> Ref_f(K);
+    std::vector<std::complex<double>> Tgt_f(K);
     pocketfft::shape_t shape = {L};
     pocketfft::stride_t stride_real = {sizeof(double)};
     pocketfft::stride_t stride_cplx = {sizeof(std::complex<double>)};
@@ -343,7 +357,8 @@ CorrelationResult cross_correlate_fft(
     // Cross-correlation in frequency domain: R_xy = IFFT(conj(X) * Y)
     // This yields R[k] = sum_i x[i] * y[i + k].
     std::vector<std::complex<double>> Prod(K);
-    for (size_t i = 0; i < K; ++i) Prod[i] = std::conj(Ref_f[i]) * Tgt_f[i];
+    for (size_t i = 0; i < K; ++i) { Prod[i] = std::conj(Ref_f[i]) * Tgt_f[i];
+}
 
     // Inverse FFT back to time domain.
     std::vector<double> corr(L);
@@ -352,7 +367,8 @@ CorrelationResult cross_correlate_fft(
                    Prod.data(), corr.data(), 1.0 / static_cast<double>(L));
 
     // Precompute target prefix sums for per-lag slice mean/energy.
-    std::vector<double> psum(M + 1, 0.0), psum_sq(M + 1, 0.0);
+    std::vector<double> psum(M + 1, 0.0);
+    std::vector<double> psum_sq(M + 1, 0.0);
     for (size_t i = 0; i < M; ++i) {
         double v = tgt_d[i];
         psum[i + 1]    = psum[i]    + v;
@@ -368,8 +384,9 @@ CorrelationResult cross_correlate_fft(
         double tgt_sum    = psum[lag + N]    - psum[lag];
         double tgt_sum_sq = psum_sq[lag + N] - psum_sq[lag];
         // Centered tgt energy = sum (tgt_i - mean)^2 = sum_sq - N*mean^2.
-        double tgt_energy = tgt_sum_sq - (tgt_sum * tgt_sum) / static_cast<double>(N);
-        if (tgt_energy < 1e-15) continue;
+        double tgt_energy = tgt_sum_sq - ((tgt_sum * tgt_sum) / static_cast<double>(N));
+        if (tgt_energy < 1e-15) { continue;
+}
 
         // raw_corr is the centered ref X uncentered target cross product.
         // Since ref_c is zero-mean, the tgt_mean term drops out:
@@ -385,7 +402,7 @@ CorrelationResult cross_correlate_fft(
         }
     }
 
-    return {best_lag, best_corr};
+    return {.lag=best_lag, .peak_value=best_corr};
 }
 
 } // namespace mwaac

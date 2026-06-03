@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace mwaac {
 
@@ -212,7 +213,7 @@ namespace {
 std::vector<std::filesystem::path> natural_sort(
     std::vector<std::filesystem::path> paths)
 {
-    std::sort(paths.begin(), paths.end(), [](const auto& a, const auto& b) {
+    std::ranges::sort(paths, [](const auto& a, const auto& b) {
         return natural_less(a.filename().string(), b.filename().string());
     });
     return paths;
@@ -224,7 +225,7 @@ std::vector<std::filesystem::path> natural_sort(
 struct SilenceRun {
     int64_t start{0};
     int64_t end{0};  // exclusive
-    int64_t duration() const { return end - start; }
+    [[nodiscard]] int64_t duration() const { return end - start; }
 };
 
 std::optional<SilenceRun> find_longest_silence(
@@ -237,28 +238,30 @@ std::optional<SilenceRun> find_longest_silence(
 {
     search_start = std::max(int64_t{0}, search_start);
     search_end   = std::min(static_cast<int64_t>(audio.size()), search_end);
-    if (search_end - search_start <= 0) return std::nullopt;
+    if (search_end - search_start <= 0) { return std::nullopt;
+}
 
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 10);  // 100 ms
-    const int64_t min_duration_samples = static_cast<int64_t>(min_duration_s * sample_rate);
+    const auto min_duration_samples = static_cast<int64_t>(min_duration_s * sample_rate);
     // Convert dBFS threshold to linear RMS (samples are already normalized to ~[-1, 1])
     const double threshold_linear = std::pow(10.0, threshold_db / 20.0);
 
-    SilenceRun best{0, 0};
+    SilenceRun best{.start=0, .end=0};
     int64_t run_start = -1;
 
     for (int64_t frame_start = search_start; frame_start < search_end; frame_start += frame_size) {
         int64_t frame_end = std::min(frame_start + frame_size, search_end);
         double sum_sq = 0.0;
         for (int64_t i = frame_start; i < frame_end; ++i) {
-            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
+            auto s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
         double rms = std::sqrt(sum_sq / static_cast<double>(frame_end - frame_start));
 
         bool is_silent = rms < threshold_linear;
         if (is_silent) {
-            if (run_start < 0) run_start = frame_start;
+            if (run_start < 0) { run_start = frame_start;
+}
             // Track the current run's end; update best when it grows past previous best
             int64_t run_len = frame_end - run_start;
             if (run_len > best.duration()) {
@@ -270,7 +273,8 @@ std::optional<SilenceRun> find_longest_silence(
         }
     }
 
-    if (best.duration() >= min_duration_samples) return best;
+    if (best.duration() >= min_duration_samples) { return best;
+}
     return std::nullopt;
 }
 
@@ -290,10 +294,10 @@ std::vector<EndDecision> compute_track_ends(
 {
     const int sr = vinyl.sample_rate;
     // Mi-5: seconds-based catalog values multiplied by runtime sr.
-    const int64_t SMALL_GAP        = static_cast<int64_t>(kTrackEndSmallGapSeconds       * sr);
-    const int64_t TAIL_CAP         = static_cast<int64_t>(kTrackEndTailCapSeconds        * sr);
-    const int64_t FLIP_MIN_SILENCE = static_cast<int64_t>(kTrackEndFlipMinSilenceSeconds * sr);
-    const int64_t TAIL_PAD         = static_cast<int64_t>(kTrackEndTailPadSeconds        * sr);
+    const auto SMALL_GAP        = static_cast<int64_t>(kTrackEndSmallGapSeconds       * sr);
+    const auto TAIL_CAP         = static_cast<int64_t>(kTrackEndTailCapSeconds        * sr);
+    const auto FLIP_MIN_SILENCE = static_cast<int64_t>(kTrackEndFlipMinSilenceSeconds * sr);
+    const auto TAIL_PAD         = static_cast<int64_t>(kTrackEndTailPadSeconds        * sr);
     const double  SILENCE_DB       = kTrackEndSilenceFloorDb;
     const double  MIN_RUN_S        = kTrackEndMinSilenceRunSeconds;
 
@@ -310,7 +314,7 @@ std::vector<EndDecision> compute_track_ends(
         int64_t natural_end_excl = next_start;  // exclusive
         int64_t extra = natural_end_excl - ref_end;
 
-        int64_t chosen_end;  // exclusive
+        int64_t chosen_end = 0;  // exclusive
         std::string reason;
 
         if (extra <= SMALL_GAP) {
@@ -365,12 +369,14 @@ std::vector<EndDecision> compute_track_ends(
     double min_fade_seconds = kFadeInMinFadeSeconds,
     double max_fade_seconds = kFadeInMaxFadeSeconds)
 {
-    if (samples.empty()) return 0;
+    if (samples.empty()) { return 0;
+}
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 10);  // 100 ms
     int64_t n_frames = std::min(
         static_cast<int64_t>(samples.size()) / frame_size,
         static_cast<int64_t>(max_search_seconds * 10));
-    if (n_frames < 20) return 0;
+    if (n_frames < 20) { return 0;
+}
 
     // Compute 100 ms-frame RMS values. M-REF-FRAME-SAMPLE-BRIDGE: the
     // envelope-frame → sample-base crossing (`f * frame_size`) goes
@@ -384,7 +390,7 @@ std::vector<EndDecision> compute_track_ends(
         const int64_t base = detail::env_frame_to_sample(
             detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
         for (int64_t i = 0; i < frame_size; ++i) {
-            double s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
+            auto s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
             ss += s * s;
         }
         rms[static_cast<std::size_t>(f)] = std::sqrt(ss / static_cast<double>(frame_size));
@@ -395,12 +401,14 @@ std::vector<EndDecision> compute_track_ends(
     // ambient buildups) to reach steady before the median window begins.
     int64_t ss_start = std::min(n_frames - 1, kFadeInSteadyStateStartFrame);
     std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
-    if (ss_samples.empty()) return 0;
+    if (ss_samples.empty()) { return 0;
+}
     std::nth_element(ss_samples.begin(),
                      ss_samples.begin() + static_cast<std::ptrdiff_t>(ss_samples.size() / 2),
                      ss_samples.end());
     double steady_rms = ss_samples[ss_samples.size() / 2];
-    if (steady_rms < 1e-6) return 0;
+    if (steady_rms < 1e-6) { return 0;
+}
 
     // Target for "end of fade-in": 10 dB below steady state. Loose enough to
     // catch slow fades without requiring the signal to nearly reach steady.
@@ -412,10 +420,12 @@ std::vector<EndDecision> compute_track_ends(
     for (int64_t f = 0; f < ss_start; ++f) {
         if (rms[static_cast<std::size_t>(f)] >= target) { fade_end_frame = f; break; }
     }
-    if (fade_end_frame < 0) return 0;
+    if (fade_end_frame < 0) { return 0;
+}
 
     double fade_end_s = static_cast<double>(fade_end_frame) * 0.1;
-    if (fade_end_s < min_fade_seconds) return 0;
+    if (fade_end_s < min_fade_seconds) { return 0;
+}
 
     // Cap the reported fade-in at max_fade_seconds. Tracks with very slow
     // multi-second buildups (loud steady state, gradual approach) would
@@ -423,7 +433,6 @@ std::vector<EndDecision> compute_track_ends(
     // past the real track boundary. Real fade-ins are 1-3 seconds.
     if (fade_end_s > max_fade_seconds) {
         fade_end_frame = static_cast<int64_t>(max_fade_seconds * 10);
-        fade_end_s = max_fade_seconds;
     }
 
     // Sanity check: the rise must be GRADUAL, not a sudden step.
@@ -431,10 +440,11 @@ std::vector<EndDecision> compute_track_ends(
     // 10 dB quieter than steady. A "digital-silence then loud" intro
     // (like ROLA) fails this: the frame just before fade_end is already
     // loud (only separated by silence), so it's not a true fade-in.
-    int64_t pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
+    auto pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
     if (fade_end_frame - pre_frames >= 0) {
         double pre_rms = rms[static_cast<std::size_t>(fade_end_frame - pre_frames)];
-        if (pre_rms > steady_rms * kFadeInTargetRatioMinus10Db) return 0;  // within 10 dB of steady
+        if (pre_rms > steady_rms * kFadeInTargetRatioMinus10Db) { return 0;  // within 10 dB of steady
+}
     }
 
     // M-REF-FRAME-SAMPLE-BRIDGE: envelope-frame → sample crossing
@@ -470,7 +480,7 @@ std::vector<float> compute_rms_envelope(
         int64_t base = detail::env_frame_to_sample(
             detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
         for (int64_t i = 0; i < frame_size; ++i) {
-            double s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
+            auto s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
             ss += s * s;
         }
         env[static_cast<size_t>(f)] = static_cast<float>(std::sqrt(ss / static_cast<double>(frame_size)));
@@ -498,14 +508,16 @@ int64_t envelope_refine_start(
     double frame_ms = kEnvelopeDefaultFrameMs,
     double* out_conf = nullptr)
 {
-    if (out_conf) *out_conf = 0.0;
-    if (ref_samples.empty() || vinyl_samples.empty()) return -1;
+    if (out_conf != nullptr) { *out_conf = 0.0;
+}
+    if (ref_samples.empty() || vinyl_samples.empty()) { return -1;
+}
 
     int64_t frame_size = std::max<int64_t>(1,
         static_cast<int64_t>(sample_rate * frame_ms / 1000.0));
 
     // Build the vinyl window
-    int64_t radius = static_cast<int64_t>(search_radius_s * sample_rate);
+    auto radius = static_cast<int64_t>(search_radius_s * sample_rate);
     int64_t window_start = std::max<int64_t>(0, expected_track_start - radius);
     int64_t window_end = std::min(
         static_cast<int64_t>(vinyl_samples.size()),
@@ -520,10 +532,12 @@ int64_t envelope_refine_start(
         static_cast<size_t>(window_end - window_start));
     std::vector<float> vinyl_env = compute_rms_envelope(window_span, sample_rate, frame_ms);
 
-    if (ref_env.size() < 2 || vinyl_env.size() < ref_env.size() + 1) return -1;
+    if (ref_env.size() < 2 || vinyl_env.size() < ref_env.size() + 1) { return -1;
+}
 
     CorrelationResult r = cross_correlate_fft(ref_env, vinyl_env);
-    if (out_conf) *out_conf = r.peak_value;
+    if (out_conf != nullptr) { *out_conf = r.peak_value;
+}
 
     // Envelope-frame lag -> sample position. The envelope starts at sample 0
     // of the window, so frame `r.lag` is at sample `r.lag * frame_size`
@@ -557,9 +571,10 @@ int64_t count_leading_digital_silence(
     std::span<const float> samples,
     double linear_threshold = kDigitalSilenceLinearThreshold)
 {
-    int64_t n = static_cast<int64_t>(samples.size());
+    auto n = static_cast<int64_t>(samples.size());
     for (int64_t i = 0; i < n; ++i) {
-        if (static_cast<double>(std::abs(samples[static_cast<std::size_t>(i)])) > linear_threshold) return i;
+        if (static_cast<double>(std::abs(samples[static_cast<std::size_t>(i)])) > linear_threshold) { return i;
+}
     }
     return n;
 }
@@ -596,13 +611,14 @@ int64_t find_music_onset(
     {
         double sum_sq = 0.0;
         for (int64_t i = frame_start; i < frame_start + frame_size; ++i) {
-            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
+            auto s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
         double rms = std::sqrt(sum_sq / static_cast<double>(frame_size));
 
         if (rms > threshold_linear) {
-            if (consecutive_above == 0) first_above_frame = frame_start;
+            if (consecutive_above == 0) { first_above_frame = frame_start;
+}
             ++consecutive_above;
             if (consecutive_above >= min_sustain_frames) {
                 return first_above_frame;
@@ -632,18 +648,19 @@ int64_t find_music_onset(
         begin + window_samples);
 
     std::vector<double> frame_rms;
-    frame_rms.reserve(static_cast<std::size_t>((end - begin) / frame_size + 1));
+    frame_rms.reserve(static_cast<std::size_t>(((end - begin) / frame_size) + 1));
     for (int64_t f = begin; f + frame_size <= end; f += frame_size) {
         double sum_sq = 0.0;
         for (int64_t i = f; i < f + frame_size; ++i) {
-            double s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
+            auto s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
             sum_sq += s * s;
         }
         frame_rms.push_back(std::sqrt(sum_sq / static_cast<double>(frame_size)));
     }
-    if (frame_rms.empty()) return -120.0;
+    if (frame_rms.empty()) { return -120.0;
+}
 
-    size_t k = static_cast<size_t>(percentile * static_cast<double>(frame_rms.size() - 1));
+    auto k = static_cast<size_t>(percentile * static_cast<double>(frame_rms.size() - 1));
     std::nth_element(frame_rms.begin(), frame_rms.begin() + static_cast<std::ptrdiff_t>(k), frame_rms.end());
     double floor_linear = std::max(frame_rms[k], 1e-9);
     return 20.0 * std::log10(floor_linear);
@@ -679,20 +696,23 @@ SnippetVote correlate_snippet(
     SnippetVote vote;
     vote.snippet_offset_in_ref = snippet_offset_in_ref;
 
-    if (snippet_offset_in_ref < 0) return vote;
+    if (snippet_offset_in_ref < 0) { return vote;
+}
     int64_t snippet_len = std::min(
         static_cast<int64_t>(snippet_seconds * sample_rate),
         static_cast<int64_t>(ref_processed.size()) - snippet_offset_in_ref);
-    if (snippet_len < sample_rate / 2) return vote;  // need ≥0.5 s
+    if (snippet_len < sample_rate / 2) { return vote;  // need ≥0.5 s
+}
 
     // Build a wide vinyl window centered on where we expect the snippet.
     int64_t expected_snippet_pos = expected_track_start + snippet_offset_in_ref;
-    int64_t search_radius = static_cast<int64_t>(search_radius_s * sample_rate);
+    auto search_radius = static_cast<int64_t>(search_radius_s * sample_rate);
     int64_t window_start = std::max<int64_t>(0, expected_snippet_pos - search_radius);
     int64_t window_end = std::min(
         static_cast<int64_t>(vinyl_processed.size()),
         expected_snippet_pos + search_radius + snippet_len);
-    if (window_end - window_start < snippet_len + 1) return vote;
+    if (window_end - window_start < snippet_len + 1) { return vote;
+}
 
     // Slice views for the FFT routine.
     std::span<const float> ref_span(
@@ -747,24 +767,24 @@ MultiRefineResult multi_snippet_refine(
     int64_t onset = find_music_onset(
         ref_processed, sample_rate, 0,
         kMusicOnsetSearchSeconds, kMusicOnsetThresholdDb, kMusicOnsetMinSustainMs);
-    if (onset < 0) onset = 0;
+    onset = std::max<int64_t>(onset, 0);
 
-    int64_t ref_size = static_cast<int64_t>(ref_processed.size());
-    int64_t snippet_samples = static_cast<int64_t>(snippet_seconds * sample_rate);
+    auto ref_size = static_cast<int64_t>(ref_processed.size());
+    auto snippet_samples = static_cast<int64_t>(snippet_seconds * sample_rate);
 
     // With FFT-backed correlation, wide radii are free — let the refine
     // reach the true peak even when coarse was off by many seconds.
     struct SnippetSpec { int64_t offset; double radius; };
     std::vector<SnippetSpec> specs = {
-        { onset, kSnippetVoteRadiusSeconds },
-        { std::max<int64_t>(
+        { .offset=onset, .radius=kSnippetVoteRadiusSeconds },
+        { .offset=std::max<int64_t>(
               onset,
               (ref_size * kSnippetVote2PositionNum) / kSnippetVote2PositionDen),
-          kSnippetVoteRadiusSeconds },
-        { std::max<int64_t>(
+          .radius=kSnippetVoteRadiusSeconds },
+        { .offset=std::max<int64_t>(
               onset,
               (ref_size * kSnippetVote3PositionNum) / kSnippetVote3PositionDen),
-          kSnippetVoteRadiusSeconds },
+          .radius=kSnippetVoteRadiusSeconds },
     };
     for (auto& s : specs) {
         if (s.offset + snippet_samples > ref_size) {
@@ -794,8 +814,8 @@ MultiRefineResult multi_snippet_refine(
         }
     }
     if (!valid_positions.empty()) {
-        int64_t mn = *std::min_element(valid_positions.begin(), valid_positions.end());
-        int64_t mx = *std::max_element(valid_positions.begin(), valid_positions.end());
+        int64_t mn = *std::ranges::min_element(valid_positions);
+        int64_t mx = *std::ranges::max_element(valid_positions);
         out.disagreement_s = static_cast<double>(mx - mn) / sample_rate;
     }
 
@@ -855,7 +875,7 @@ int64_t skip_leading_silence(
     const int64_t frame_size = std::max<int64_t>(1, sample_rate / 20);  // 50 ms
     const int64_t min_music_frames =
         std::max<int64_t>(1, static_cast<int64_t>(min_music_ms / 50.0));
-    const int64_t min_skip_samples =
+    const auto min_skip_samples =
         static_cast<int64_t>(min_skip_seconds * sample_rate);
     const double threshold_linear = std::pow(10.0, threshold_db / 20.0);
 
@@ -867,9 +887,10 @@ int64_t skip_leading_silence(
     auto frame_rms = [&](int64_t f) {
         double ss = 0.0;
         int64_t n = std::min(frame_size, end - f);
-        if (n <= 0) return 0.0;
+        if (n <= 0) { return 0.0;
+}
         for (int64_t i = 0; i < n; ++i) {
-            double s = static_cast<double>(vinyl_samples[static_cast<std::size_t>(f + i)]);
+            auto s = static_cast<double>(vinyl_samples[static_cast<std::size_t>(f + i)]);
             ss += s * s;
         }
         return std::sqrt(ss / static_cast<double>(n));
@@ -879,8 +900,8 @@ int64_t skip_leading_silence(
     double head_ss = 0.0;
     int64_t head_samples = 0;
     for (int64_t i = 0; i < 4 && start_sample + (i + 1) * frame_size <= end; ++i) {
-        head_ss += frame_rms(start_sample + i * frame_size) *
-                   frame_rms(start_sample + i * frame_size);
+        head_ss += frame_rms(start_sample + (i * frame_size)) *
+                   frame_rms(start_sample + (i * frame_size));
         ++head_samples;
     }
     double head_avg_rms = head_samples > 0
@@ -897,7 +918,8 @@ int64_t skip_leading_silence(
     for (int64_t f = start_sample; f + frame_size <= end; f += frame_size) {
         double r = frame_rms(f);
         if (r > threshold_linear) {
-            if (music_run == 0) music_start = f;
+            if (music_run == 0) { music_start = f;
+}
             ++music_run;
             if (music_run >= min_music_frames) {
                 int64_t silence_length = music_start - start_sample;
@@ -920,8 +942,8 @@ bool is_audio_file(const std::filesystem::path& p) {
         ".wav", ".aiff", ".aif", ".flac", ".mp3", ".ogg", ".m4a"
     };
     auto ext = p.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    return std::find(exts.begin(), exts.end(), ext) != exts.end();
+    std::ranges::transform(ext, ext.begin(), ::tolower);
+    return std::ranges::find(exts, ext) != exts.end();
 }
 
 } // anonymous namespace
@@ -940,12 +962,17 @@ bool natural_less(const std::string& a, const std::string& b) {
                              const std::string& y) -> int {
         auto strip = [](const std::string& s) -> std::string_view {
             std::size_t i = 0;
-            while (i + 1 < s.size() && s[i] == '0') ++i;
-            return std::string_view(s.data() + i, s.size() - i);
+            while (i + 1 < s.size() && s[i] == '0') { ++i;
+}
+            return {s.data() + i, s.size() - i};
         };
-        auto sx = strip(x), sy = strip(y);
-        if (sx.size() != sy.size()) return sx.size() < sy.size() ? -1 : 1;
-        return sx < sy ? -1 : (sx > sy ? 1 : 0);
+        auto sx = strip(x);
+        auto sy = strip(y);
+        if (sx.size() != sy.size()) { return sx.size() < sy.size() ? -1 : 1;
+}
+        if (sx < sy) { return -1; }
+        if (sx > sy) { return 1; }
+        return 0;
     };
 
     auto get_parts = [](const std::string& s) -> std::vector<std::pair<bool, std::string>> {
@@ -955,14 +982,14 @@ bool natural_less(const std::string& a, const std::string& b) {
         for (char c : s) {
             bool digit = std::isdigit(static_cast<unsigned char>(c));
             if (!current.empty() && digit != is_digit) {
-                parts.push_back({is_digit, current});
+                parts.emplace_back(is_digit, current);
                 current.clear();
             }
             current += c;
             is_digit = digit;
         }
         if (!current.empty()) {
-            parts.push_back({is_digit, current});
+            parts.emplace_back(is_digit, current);
         }
         return parts;
     };
@@ -973,7 +1000,8 @@ bool natural_less(const std::string& a, const std::string& b) {
     for (std::size_t i = 0; i < std::min(a_parts.size(), b_parts.size()); ++i) {
         if (a_parts[i].first && b_parts[i].first) {
             int c = cmp_digit_runs(a_parts[i].second, b_parts[i].second);
-            if (c != 0) return c < 0;
+            if (c != 0) { return c < 0;
+}
         } else {
             if (a_parts[i].second != b_parts[i].second) {
                 return a_parts[i].second < b_parts[i].second;
@@ -1022,8 +1050,8 @@ int64_t analysis_to_native_sample(int64_t analysis_sample,
     // NDEBUG, letting integer div-by-zero UB through in Release builds).
     MWAAC_ASSERT_PRECONDITION(native_sr > 0);
     MWAAC_ASSERT_PRECONDITION(analysis_sr > 0);
-    const int64_t num     = static_cast<int64_t>(native_sr);
-    const int64_t den     = static_cast<int64_t>(analysis_sr);
+    const auto num     = static_cast<int64_t>(native_sr);
+    const auto den     = static_cast<int64_t>(analysis_sr);
     const int64_t product = analysis_sample * num;
     const int64_t bias    = (product >= 0) ? (den / 2) : -(den / 2);
     return (product + bias) / den;
@@ -1071,6 +1099,7 @@ Expected<std::vector<ReferenceTrack>, ReferenceError> load_reference_tracks(
     return tracks;
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) — multi-pass alignment pipeline; decomposition tracked separately.
 std::vector<std::pair<int64_t, double>> align_per_track(
     const AudioBuffer& vinyl,
     const std::vector<ReferenceTrack>& tracks,
@@ -1130,20 +1159,20 @@ std::vector<std::pair<int64_t, double>> align_per_track(
             verbose(oss.str());
         }
 
-        int64_t margin_samples =
+        auto margin_samples =
             static_cast<int64_t>(kAlignCoarseMarginSeconds * vinyl.sample_rate);
         int64_t window_size = track.duration_samples + margin_samples;
 
-        int64_t vinyl_start_idx = std::max(int64_t{0}, expected_position - margin_samples / 2);
+        int64_t vinyl_start_idx = std::max(int64_t{0}, expected_position - (margin_samples / 2));
         int64_t vinyl_end_idx = std::min(
             static_cast<int64_t>(vinyl.samples.size()),
             expected_position + window_size
         );
 
-        int64_t chosen_pos;
+        int64_t chosen_pos = 0;
         double confidence = 0.0;
 
-        if (vinyl_start_idx >= static_cast<int64_t>(vinyl.samples.size()) ||
+        if (std::cmp_greater_equal(vinyl_start_idx, vinyl.samples.size()) ||
             vinyl_end_idx - vinyl_start_idx < track.duration_samples) {
             // No room left (or not enough) for a real search — use expected position
             chosen_pos = expected_position;
@@ -1208,7 +1237,8 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                             << (static_cast<double>(delta) / vinyl.sample_rate) << "s, "
                             << "top_conf " << mr.top_conf << ", "
                             << "spread " << mr.disagreement_s << "s";
-                        if (mr.disagreement_s > kAlignMultiRefineWeakSpreadSeconds) oss << " [WEAK]";
+                        if (mr.disagreement_s > kAlignMultiRefineWeakSpreadSeconds) { oss << " [WEAK]";
+}
                         verbose(oss.str());
                     }
                     chosen_pos = refined_pos;
@@ -1310,7 +1340,7 @@ std::vector<std::pair<int64_t, double>> align_per_track(
                                 int64_t{0},
                                 static_cast<int64_t>(vinyl.samples.size()) - 1);
 
-        offsets.push_back({chosen_pos, confidence});
+        offsets.emplace_back(chosen_pos, confidence);
         expected_position = chosen_pos + track.duration_samples;
     }
 

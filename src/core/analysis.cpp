@@ -36,7 +36,7 @@ std::vector<float> compute_rms_energy(
         return {};
     }
 
-    size_t num_frames = 1 + (samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length);
+    size_t num_frames = 1 + ((samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length));
     if (samples.size() < static_cast<size_t>(frame_length)) {
         num_frames = 1;  // Single frame for short signals
     }
@@ -57,7 +57,7 @@ std::vector<float> compute_rms_energy(
             detail::frame_to_sample(detail::FrameIdx{i}, hop_length).value);
         size_t end = std::min(start + static_cast<std::size_t>(frame_length), samples.size());
 
-        float sum_sq = 0.0f;
+        float sum_sq = 0.0F;
         for (size_t j = start; j < end; ++j) {
             sum_sq += samples[j] * samples[j];
         }
@@ -77,7 +77,7 @@ std::vector<float> compute_zero_crossing_rate(
         return {};
     }
     
-    size_t num_frames = 1 + (samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length);
+    size_t num_frames = 1 + ((samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length));
     if (samples.size() < static_cast<size_t>(frame_length)) {
         num_frames = 1;
     }
@@ -107,7 +107,7 @@ std::vector<float> compute_zero_crossing_rate(
         // would be coarser and would conflate frame-length with
         // input-length; the in-loop guard is the cleaner shape.
         if (end - start < kZcrMinFrameSamples) {
-            zcr[i] = 0.0f;
+            zcr[i] = 0.0F;
             continue;
         }
 
@@ -134,8 +134,10 @@ std::vector<float> compute_spectral_flatness(
 {
     // TODO: Implement with FFT
     // For now, return zeros (placeholder)
-    size_t num_frames = 1 + (samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length);
-    return std::vector<float>(num_frames, 0.5f);  // Placeholder
+    size_t num_frames = 1 + ((samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length));
+    // `{count, value}` would be parsed as a 2-element initializer_list<float>,
+    // not the (size, value) ctor — keep the explicit type.
+    return std::vector<float>(num_frames, 0.5F);  // NOLINT(modernize-return-braced-init-list)
 }
 
 } // namespace mwaac

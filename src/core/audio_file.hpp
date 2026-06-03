@@ -169,7 +169,7 @@ private:
 // Audio file with header parsing support
 class AudioFile {
 public:
-    explicit AudioFile(const std::filesystem::path& path, AudioInfo info) noexcept;
+    explicit AudioFile(std::filesystem::path  path, AudioInfo info) noexcept;
 
     // Prevent copying
     AudioFile(const AudioFile&) = delete;

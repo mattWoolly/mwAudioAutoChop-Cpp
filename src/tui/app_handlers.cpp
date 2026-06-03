@@ -12,7 +12,7 @@ namespace {
 bool selected_marker_in_range(const AppState& state) {
     return !state.split_points.empty() &&
            state.selected_marker >= 0 &&
-           state.selected_marker < static_cast<int>(state.split_points.size());
+           std::cmp_less(state.selected_marker, state.split_points.size());
 }
 
 } // namespace
@@ -22,7 +22,7 @@ void nudge_marker_right(AppState& state) {
         return;
     }
 
-    const std::size_t idx = static_cast<std::size_t>(state.selected_marker);
+    const auto idx = static_cast<std::size_t>(state.selected_marker);
 
     // Mi-MARKER-NUDGE-SEMANTIC: boundary-shift. The boundary BEFORE the
     // selected marker (between markers[idx-1] and markers[idx]) moves
@@ -61,7 +61,7 @@ void nudge_marker_left(AppState& state) {
         return;
     }
 
-    const std::size_t idx = static_cast<std::size_t>(state.selected_marker);
+    const auto idx = static_cast<std::size_t>(state.selected_marker);
 
     // Mi-MARKER-NUDGE-SEMANTIC: symmetric to nudge_marker_right.
     if (idx == 0) {
@@ -168,7 +168,7 @@ bool commit_normalized_view(AppState& state,
 } // namespace
 
 void zoom_in(AppState& state) {
-    const std::int64_t total = static_cast<std::int64_t>(state.audio.samples.size());
+    const auto total = static_cast<std::int64_t>(state.audio.samples.size());
     if (total <= 0) {
         return;
     }
@@ -181,16 +181,16 @@ void zoom_in(AppState& state) {
         return;
     }
 
-    const std::int64_t center = cur_start + cur_range / 2;
+    const std::int64_t center = cur_start + (cur_range / 2);
     const std::int64_t new_range = std::max<std::int64_t>(cur_range / 2, MIN_VIEW_RANGE);
-    const std::int64_t new_start = center - new_range / 2;
+    const std::int64_t new_start = center - (new_range / 2);
     const std::int64_t new_end = new_start + new_range;
 
     commit_normalized_view(state, new_start, new_end, total);
 }
 
 void zoom_out(AppState& state) {
-    const std::int64_t total = static_cast<std::int64_t>(state.audio.samples.size());
+    const auto total = static_cast<std::int64_t>(state.audio.samples.size());
     if (total <= 0) {
         return;
     }
@@ -198,16 +198,16 @@ void zoom_out(AppState& state) {
     const auto [cur_start, cur_end] = resolve_view_range(state, total);
     const std::int64_t cur_range = cur_end - cur_start;
 
-    const std::int64_t center = cur_start + cur_range / 2;
+    const std::int64_t center = cur_start + (cur_range / 2);
     const std::int64_t new_range = std::min<std::int64_t>(cur_range * 2, total);
-    const std::int64_t new_start = center - new_range / 2;
+    const std::int64_t new_start = center - (new_range / 2);
     const std::int64_t new_end = new_start + new_range;
 
     commit_normalized_view(state, new_start, new_end, total);
 }
 
 void pan_to_start(AppState& state) {
-    const std::int64_t total = static_cast<std::int64_t>(state.audio.samples.size());
+    const auto total = static_cast<std::int64_t>(state.audio.samples.size());
     if (total <= 0) {
         return;
     }
@@ -219,7 +219,7 @@ void pan_to_start(AppState& state) {
 }
 
 void pan_to_end(AppState& state) {
-    const std::int64_t total = static_cast<std::int64_t>(state.audio.samples.size());
+    const auto total = static_cast<std::int64_t>(state.audio.samples.size());
     if (total <= 0) {
         return;
     }

@@ -34,8 +34,8 @@ int64_t DriftModel::ref_to_vinyl_sample(
     double offset = 0.0;
     double t_power = 1.0;
 
-    for (size_t i = 0; i < coefficients.size(); ++i) {
-        offset += coefficients[i] * t_power;
+    for (double coefficient : coefficients) {
+        offset += coefficient * t_power;
         t_power *= t;
     }
 

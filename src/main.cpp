@@ -66,6 +66,8 @@ void print_help() {
               << "  -h, --help               Show this help\n";
 }
 
+// NOLINTBEGIN(bugprone-exception-escape, readability-function-cognitive-complexity)
+// — argument-parsing main; refactor into smaller helpers tracked separately.
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_help();
@@ -171,7 +173,7 @@ int main(int argc, char* argv[]) {
                       << std::setw(2) << start_min << ":" << std::setw(2) << start_s << " - "
                       << std::setw(2) << end_min << ":" << std::setw(2) << end_s
                       << " (" << static_cast<int>(duration / 60) << "m " 
-                      << static_cast<int>(static_cast<int>(duration) % 60) << "s)"
+                      << (static_cast<int>(duration) % 60) << "s)"
                       << " — confidence: " << std::fixed << std::setprecision(2) << sp.confidence
                       << "\n";
         }
@@ -322,7 +324,7 @@ int main(int argc, char* argv[]) {
                       << std::setw(2) << start_min << ":" << std::setw(2) << start_s << " - "
                       << std::setw(2) << end_min << ":" << std::setw(2) << end_s
                       << " (" << static_cast<int>(duration / 60) << "m " 
-                      << static_cast<int>(static_cast<int>(duration) % 60) << "s)"
+                      << (static_cast<int>(duration) % 60) << "s)"
                       << " — confidence: " << std::fixed << std::setprecision(2) << sp.confidence
                       << "\n";
         }
@@ -402,3 +404,4 @@ int main(int argc, char* argv[]) {
     print_help();
     return 1;
 }
+// NOLINTEND(bugprone-exception-escape, readability-function-cognitive-complexity)
