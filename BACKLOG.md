@@ -2626,7 +2626,7 @@ zero-residue.**
   additions through the cycle), confirming the per-3-to-5-item
   maintenance cadence.
 
-### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7 — **RESOLVED via T8-CLANG-TIDY-BASELINE-CLEANUP option (a)**
+### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7 — **RESOLVED in #73 (`c5939d1`)** via T8-CLANG-TIDY-BASELINE-CLEANUP option (a)
 
 - **Origin.** Filed 2026-05-21 during T8-PAPERWORK-SWEEP (#64,
   `760f19e`). The
@@ -2711,10 +2711,13 @@ zero-residue.**
   `feedback_fix_agent_stale_baseline.md` extended to a new tool axis:
   fix-agent's "local clang-tidy 0 errors" claim was not verified
   against CI's Ubuntu toolchain before PR-body propagation. Fix-up
-  adds `!= 0` to convert the `std::isdigit` int return to bool
-  explicitly. Audit 2 also caught a stale `(dead; Mi-11 pending
-  deletion)` annotation at `PROJECT_SPEC.md:94` — cross-doc drift per
-  `feedback_cross_doc_reconciliation.md`; removed in the same fix-up.)
+  commit `ede6782` adds `!= 0` to convert the `std::isdigit` int
+  return to bool explicitly. Audit 2 also caught a stale `(dead;
+  Mi-11 pending deletion)` annotation at `PROJECT_SPEC.md:94` —
+  cross-doc drift per `feedback_cross_doc_reconciliation.md`; removed
+  in the same fix-up. **Post-fix-up CI: 6/6 green including clang-tidy
+  — first all-green PR since the allowed-red baseline was set in
+  PR #56 (2026-05-19).**)
   14/14 ctest binaries pass on `build-clang-tidy/` Debug
   config (no test modifications). Files modified: the 13 remaining
   `.cpp` files from the BACKLOG list (test_deps.cpp deleted; see Mi-11
@@ -3400,7 +3403,7 @@ discoverable across the codebase.
 ### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`.
 ### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`. — **RESOLVED in #33 (`8af5793`)** via structural cure (deviation from original "early return {}" spec; see `docs/deviations.md` Mi-3 entry for reasoning).
 ### Mi-6 — `min` identifier shadows std::min — `src/main.cpp`, `src/modes/reference_mode.cpp`.
-### Mi-11 — test_deps.cpp is dead — delete or compile. — **RESOLVED via T8-CLANG-TIDY-BASELINE-CLEANUP (delete option).** The file was deleted as part of the clang-tidy baseline clean-up because (a) it was not referenced in CMakeLists.txt and was never compiled into any target, (b) the file's absence from `compile_commands.json` produced a `clang-diagnostic-error` under clang-tidy, and (c) the file's only contents were `#include` statements verifying header availability — there was no behavior to preserve. Verified no other references in the source tree before deletion. See T8-CLANG-TIDY-BASELINE entry's Status / Resolution block for the closure details.
+### Mi-11 — test_deps.cpp is dead — delete or compile. — **RESOLVED in #73 (`c5939d1`)** via T8-CLANG-TIDY-BASELINE-CLEANUP (delete option). The file was deleted as part of the clang-tidy baseline clean-up because (a) it was not referenced in CMakeLists.txt and was never compiled into any target, (b) the file's absence from `compile_commands.json` produced a `clang-diagnostic-error` under clang-tidy, and (c) the file's only contents were `#include` statements verifying header availability — there was no behavior to preserve. Verified no other references in the source tree before deletion. See T8-CLANG-TIDY-BASELINE entry's Status / Resolution block for the closure details.
 ### Mi-12 — src/core/core.hpp is dead — delete.
 ### Mi-13 — verbose.hpp g_timer_start is unused — delete.
 ### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&.
