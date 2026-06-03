@@ -2872,6 +2872,26 @@ zero-residue.**
     and tree should be cured by updating this section (matching
     DOC-3's living-document discipline), not by re-introducing
     aspirational stubs.
+  - **Audit fix-up note.** PR #72's first commit `4603b22` shipped
+    the diagram with two struct-location slips: `drift_model.cpp`
+    was annotated "struct in modes/reference_mode.hpp" and
+    `reference_mode.{cpp,hpp}` annotated "+ DriftModel struct", but
+    `grep -n DriftModel src/` shows `struct DriftModel` is declared
+    at `src/core/alignment_result.hpp:9` with zero references in
+    `reference_mode.hpp`. Also `alignment_result.hpp` was
+    mis-annotated "AlignPerTrackResult struct" — actual contents
+    are `AlignmentResult` + `TrackOffset` + `DriftModel`. Single-
+    audit HALT on the very claim-vs-reality axis the PR exists to
+    close. Fix-up reconciled inline: line 81 annotation lists all
+    three structs in alignment_result.hpp; line 89 points
+    drift_model.cpp's struct-location to alignment_result.hpp;
+    line 99 drops the false DriftModel claim from
+    reference_mode.{cpp,hpp}. Same fix-up pattern as PR #68 LICENSE
+    fidelity HALT (recorded in BACKLOG so future audits see the
+    cure's correction provenance). Mirrors
+    `feedback_user_concrete_detail_paraphrase.md` — orchestrator
+    paraphrased struct locations from memory rather than greping
+    the source; audit's empirical verification caught the slip.
 
 ### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling) — **RESOLVED in #69 (`1ca7249`)** via Mi-5-BLIND-CLEANUP
 

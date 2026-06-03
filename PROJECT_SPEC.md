@@ -78,7 +78,7 @@ src/
 ├── main.cpp                       # Entry point + CLI parsing
 ├── cli/                           # (reserved placeholder; .gitkeep-only)
 ├── core/                          # Core audio processing
-│   ├── alignment_result.hpp       # AlignPerTrackResult struct
+│   ├── alignment_result.hpp       # AlignmentResult + TrackOffset + DriftModel structs
 │   ├── analysis.{cpp,hpp}         # RMS / ZCR / spectral-flatness analyzers
 │   ├── analysis_result.hpp        # AnalysisResult struct
 │   ├── audio_buffer.{cpp,hpp}     # AudioBuffer container + ops
@@ -86,7 +86,7 @@ src/
 │   ├── audio_info.hpp             # AudioInfo metadata struct
 │   ├── core.hpp                   # (dead; Mi-12 pending deletion)
 │   ├── correlation.{cpp,hpp}      # Cross-correlation (time-domain + FFT)
-│   ├── drift_model.cpp            # DriftModel impl (struct in modes/reference_mode.hpp)
+│   ├── drift_model.cpp            # DriftModel impl (struct in core/alignment_result.hpp)
 │   ├── frame_sample_bridge.hpp    # Typed sample/frame index discipline
 │   ├── music_detection.{cpp,hpp}  # estimate_noise_floor + detect_music_start
 │   ├── pocketfft_hdronly.h        # Vendored BSD-3 FFT (see THIRD_PARTY_LICENSES.md)
@@ -96,7 +96,7 @@ src/
 ├── modes/                         # Mode pipelines
 │   ├── blind_mode.{cpp,hpp}       # Blind-mode pipeline + BlindModeConfig
 │   ├── reaper_export.{cpp,hpp}    # REAPER project (.rpp) writer
-│   └── reference_mode.{cpp,hpp}   # Reference-mode pipeline + DriftModel struct
+│   └── reference_mode.{cpp,hpp}   # Reference-mode pipeline
 ├── tui/                           # Terminal UI (FTXUI-based)
 │   ├── app.{cpp,hpp}              # FTXUI screen loop + run_tui entry
 │   ├── app_handlers.{cpp,hpp}     # State-mutator harness (Tier 7)
