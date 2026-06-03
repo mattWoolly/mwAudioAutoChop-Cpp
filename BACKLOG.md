@@ -2626,7 +2626,7 @@ zero-residue.**
   additions through the cycle), confirming the per-3-to-5-item
   maintenance cadence.
 
-### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7
+### T8-CLANG-TIDY-BASELINE — allowed-red clang-tidy baseline carried across Tier 5/6/7 — **RESOLVED via T8-CLANG-TIDY-BASELINE-CLEANUP option (a)**
 
 - **Origin.** Filed 2026-05-21 during T8-PAPERWORK-SWEEP (#64,
   `760f19e`). The
@@ -2696,6 +2696,153 @@ zero-residue.**
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block; the cycle's allowed-red baseline note in
   `project_tier5_state.md` is updated to "no longer allowed-red".
+- **Status / Resolution.** RESOLVED via T8-CLANG-TIDY-BASELINE-CLEANUP,
+  option (a) mechanical batch-fix across all affected files. Pre-cure
+  baseline: ~270 `[*,-warnings-as-errors]` diagnostics across the 14
+  files. Post-cure local clang-tidy on `src/**/*.cpp` (excluding
+  vendored `pocketfft_hdronly.h` per workflow's `-not -path
+  '*/pocketfft*'`): **0 errors**, matching the CI workflow's expected
+  exit status (**after PR #73 audit-fix-up** — initial commit `c41cb2c`
+  shipped with one `readability-implicit-bool-conversion` site at
+  `reference_mode.cpp:983` that Ubuntu CI's clang-tidy caught but the
+  fix-agent's local Homebrew LLVM 20 missed due to degraded
+  `<cstdint>`/`<cctype>` resolution. Both parallel audits independently
+  converged on the same single-site HALT. Per
+  `feedback_fix_agent_stale_baseline.md` extended to a new tool axis:
+  fix-agent's "local clang-tidy 0 errors" claim was not verified
+  against CI's Ubuntu toolchain before PR-body propagation. Fix-up
+  adds `!= 0` to convert the `std::isdigit` int return to bool
+  explicitly. Audit 2 also caught a stale `(dead; Mi-11 pending
+  deletion)` annotation at `PROJECT_SPEC.md:94` — cross-doc drift per
+  `feedback_cross_doc_reconciliation.md`; removed in the same fix-up.)
+  14/14 ctest binaries pass on `build-clang-tidy/` Debug
+  config (no test modifications). Files modified: the 13 remaining
+  `.cpp` files from the BACKLOG list (test_deps.cpp deleted; see Mi-11
+  below), plus `src/core/audio_file.hpp` (signature change matched a
+  ctor body fix-up; see "header touched" note).
+  - **Cure technique mix.**
+    - Auto-fix via `clang-tidy --fix --fix-errors` cleared the four
+      high-volume mechanical classes
+      (`readability-braces-around-statements`,
+      `readability-uppercase-literal-suffix`,
+      `modernize-return-braced-init-list`,
+      `modernize-use-auto`) plus several long-tail classes
+      (`modernize-use-ranges`, `modernize-use-designated-initializers`,
+      `readability-implicit-bool-conversion`,
+      `readability-math-missing-parentheses`,
+      `modernize-use-integer-sign-comparison`,
+      `cppcoreguidelines-init-variables`,
+      `modernize-use-emplace`, `modernize-pass-by-value`, etc.).
+    - **Hand-corrections.** `modernize-use-integer-sign-comparison`
+      auto-fix produced malformed expressions at 3 sites
+      (`reference_mode.cpp`, `app.cpp`, `app_handlers.cpp`) by losing
+      a `static_cast` wrapping paren; corrected manually preserving
+      the `std::cmp_*` rewrite (the cure-intent of the check). Build
+      failure caught the fault; post-cure ctest 14/14.
+    - **C-array → std::array conversion (audio_file.cpp magic
+      bytes).** 11 file-scope `static constexpr uint8_t NAME[]`
+      declarations became `static constexpr std::array<uint8_t, 4>
+      NAME`. `compare_bytes` helper retyped to take
+      `std::span<const uint8_t>` (drops the explicit `len` param at 17
+      call sites). Added `<span>` include. One additional c-array site
+      in `audio_file.cpp` (`std::byte float80[10]`) and one in
+      `reaper_export.cpp` (`static const char hex[] = "..."`)
+      converted to `std::array<std::byte, 10>` and
+      `std::string_view` respectively.
+    - **`bugprone-misplaced-widening-cast` (2 sites).** Cast moved
+      inside the addition: `static_cast<int64_t>(chunk_offset + 8)` →
+      `static_cast<int64_t>(chunk_offset) + 8` (size_t is already
+      64-bit on the target platforms so behavior preserved).
+    - **`bugprone-implicit-widening-of-multiplication-result` (1
+      site).** `kTailWindow = 1 * 1024 * 1024` →
+      `size_t{1} * 1024 * 1024` (widens at the first factor).
+    - **`performance-enum-size` (1 site).** Local `enum class
+      AudioFormat` retyped to `: std::uint8_t` (internal-only enum,
+      no ABI concern).
+    - **`readability-avoid-nested-conditional-operator` (1 site).**
+      Nested ternary `sx < sy ? -1 : (sx > sy ? 1 : 0)` expanded into
+      explicit `if`-return sequence.
+    - **`clang-analyzer-deadcode.DeadStores` (1 site).** Removed dead
+      `fade_end_s = max_fade_seconds;` write in
+      `reference_mode.cpp:436` (variable not read after; only
+      `fade_end_frame` flows downstream — confirmed by grep). Caught
+      by the analyzer; not in the original error-class taxonomy in
+      this BACKLOG entry but surfaced once the high-volume mechanical
+      noise was removed.
+  - **NOLINT annotations added (15 total).** Per check class:
+    - `cppcoreguidelines-pro-type-reinterpret-cast` (5 sites) — all
+      load-bearing: 3 `fstream::read`/`write` calls on `uint8_t`/
+      `std::byte` buffers (binary IO is the canonical Core
+      Guidelines exception), 1 `reinterpret_cast<uintptr_t>` for
+      intentional pointer-bits-as-entropy in RNG seed
+      (`audio_file.cpp:828`).
+    - `readability-function-cognitive-complexity` (4 functions) —
+      `parse_wav_header`, `main`, `align_per_track`, `run_tui`.
+      All are pipeline/wiring functions whose decomposition is a
+      separate refactor (annotation explicitly cites "tracked
+      separately").
+    - `bugprone-exception-escape` (1 site, `main`) — paired with
+      cog-complexity NOLINTBEGIN/END block. Wrapping `main` in
+      try/catch is the standard cure but out of scope for this
+      mechanical fix-up.
+    - `bugprone-branch-clone` (3 NOLINTs covering 4 logical sites)
+      — explicit default-to-WAV fallback in `write_output_file`
+      and 2 placeholder TUI rendering branches in `waveform.cpp`
+      (intent is to preserve the structure for future
+      glyph/column-format differentiation).
+    - `modernize-return-braced-init-list` (1 site,
+      `analysis.cpp:140`) — `return std::vector<float>(num_frames,
+      0.5F)` cannot be safely rewritten as `return {num_frames,
+      0.5F}` because that would be parsed as a 2-element
+      `initializer_list<float>` rather than the (size, value)
+      constructor.
+  - **`src/core/test_deps.cpp` decision (Mi-11).** **Deleted.** The
+    file was not referenced by `CMakeLists.txt`, was not compiled
+    into any target, and its only content was a header-availability
+    probe (`<sndfile.h>`, `<ftxui/component/component.hpp>`,
+    `<catch2/catch_test_macros.hpp>`) without any executable code.
+    Per Mi-11 ("test_deps.cpp is dead — delete or compile"),
+    deletion was the user-ratified-equivalent cleaner option.
+    Side-effect: removes the `clang-tidy` `clang-diagnostic-error`
+    that the file produced because it was absent from
+    `compile_commands.json` (the file had no compile DB entry,
+    so clang-tidy could not resolve the FTXUI include path).
+    **This PR therefore also resolves Mi-11**; orchestrator
+    decides whether to record the Mi-11 closure in the same
+    paperwork close-out or split.
+  - **Header touched.** `src/core/audio_file.hpp:172` — clang-tidy's
+    `modernize-pass-by-value` auto-fix changed the
+    `AudioFile::AudioFile` ctor parameter from `const
+    std::filesystem::path&` to `std::filesystem::path` (matching
+    the existing `: path_(std::move(path))` in the body). One-line
+    signature change; the corresponding `.cpp` ctor definition was
+    updated in the same auto-fix pass. Mandate authorised
+    "you may touch the corresponding .hpp file in the same scope"
+    so this fits the scope envelope.
+  - **Pre-existing local LLVM-20-only noise.** Brew Homebrew LLVM
+    20.1.4 surfaces 5 `clang-analyzer-cplusplus.NewDeleteLeaks`
+    warnings against `src/core/pocketfft_hdronly.h:2659,2666,2668,
+    2696,2703` (vendored third-party FFT, M-13). These appear in
+    BOTH pre-cure and post-cure local logs and are NOT in the CI
+    workflow's clang-tidy baseline (the workflow excludes pocketfft
+    .cpp via `-not -path '*/pocketfft*'` but the HeaderFilterRegex
+    `^src/.*\.(hpp|h)$` does technically match the header; Ubuntu
+    CI's older clang-tidy LLVM doesn't enable
+    `clang-analyzer-cplusplus.NewDeleteLeaks` by default for this
+    code path). Mandate explicitly forbids touching pocketfft;
+    these errors are deferred to future tier if Ubuntu CI ever
+    starts reporting them.
+  - **Pre-dispatch checklist re-verification.**
+    - Scope-claim (14 files): verified by `find src -name '*.cpp'
+      -not -path '*/pocketfft*'` against working tree.
+    - Test-identity (existing tests are the regression-guard):
+      verified by ctest 14/14 pass pre-cure and post-cure on
+      `build-clang-tidy/` Debug config without test modifications.
+    - Cure-attribution sweep on `docs/known-failing-tests.md`:
+      Active section remained `(empty)`; no entries to update.
+    - Adjacent-entry sweep: Mi-11 (test_deps.cpp) is in-scope per
+      mandate explicit allowance; surfaced and closed by this PR.
+      No other adjacent items expanded scope.
 
 ### T8-LICENSE-FILE-MISSING — root LICENSE file referenced but absent — **RESOLVED in #68 (`90e8fc3`)** via T8-DEFERRED-PAPERWORK-SWEEP option (a)
 
@@ -3253,7 +3400,7 @@ discoverable across the codebase.
 ### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`.
 ### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`. — **RESOLVED in #33 (`8af5793`)** via structural cure (deviation from original "early return {}" spec; see `docs/deviations.md` Mi-3 entry for reasoning).
 ### Mi-6 — `min` identifier shadows std::min — `src/main.cpp`, `src/modes/reference_mode.cpp`.
-### Mi-11 — test_deps.cpp is dead — delete or compile.
+### Mi-11 — test_deps.cpp is dead — delete or compile. — **RESOLVED via T8-CLANG-TIDY-BASELINE-CLEANUP (delete option).** The file was deleted as part of the clang-tidy baseline clean-up because (a) it was not referenced in CMakeLists.txt and was never compiled into any target, (b) the file's absence from `compile_commands.json` produced a `clang-diagnostic-error` under clang-tidy, and (c) the file's only contents were `#include` statements verifying header availability — there was no behavior to preserve. Verified no other references in the source tree before deletion. See T8-CLANG-TIDY-BASELINE entry's Status / Resolution block for the closure details.
 ### Mi-12 — src/core/core.hpp is dead — delete.
 ### Mi-13 — verbose.hpp g_timer_start is unused — delete.
 ### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&.

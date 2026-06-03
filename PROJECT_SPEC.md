@@ -91,7 +91,6 @@ src/
 │   ├── music_detection.{cpp,hpp}  # estimate_noise_floor + detect_music_start
 │   ├── pocketfft_hdronly.h        # Vendored BSD-3 FFT (see THIRD_PARTY_LICENSES.md)
 │   ├── split_point.hpp            # SplitPoint data structure
-│   ├── test_deps.cpp              # (dead; Mi-11 pending deletion)
 │   └── verbose.hpp                # `g_verbose` + `verbose()` log helpers
 ├── modes/                         # Mode pipelines
 │   ├── blind_mode.{cpp,hpp}       # Blind-mode pipeline + BlindModeConfig

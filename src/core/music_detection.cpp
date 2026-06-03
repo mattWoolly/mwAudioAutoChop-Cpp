@@ -25,7 +25,7 @@ namespace mwaac {
 // standard envelope granularity (compare `reference_mode.cpp`'s
 // `kEnvelopeDefaultFrameMs = 50.0` and `blind_mode.cpp`'s
 // `kBlindAnalysisFrameSeconds = 0.05f`).
-static constexpr float kMusicDetAnalysisFrameSeconds = 0.05f;
+static constexpr float kMusicDetAnalysisFrameSeconds = 0.05F;
 
 // Hop length as a denominator of frame length — frame / 4 = 12.5 ms
 // hop at 50 ms frame (75% frame overlap). The 25% hop is the
@@ -52,25 +52,27 @@ static constexpr std::size_t kNoiseFloorPercentileDenominator = 10;
 // labeling gap vs music; the music-onset detector uses 12 dB
 // because it's labeling sustained-music vs leading silence (which
 // can include vinyl surface noise above the noise floor).
-static constexpr float kMusicOnsetNoiseFloorMultiplier = 4.0f;
+static constexpr float kMusicOnsetNoiseFloorMultiplier = 4.0F;
 
 float estimate_noise_floor(
     std::span<const float> samples,
     int sample_rate,
     [[maybe_unused]] float window_seconds)
 {
-    if (samples.empty()) return 0.0f;
+    if (samples.empty()) { return 0.0F;
+}
 
     // Use 50ms frames with 25% hop
     int frame_length = static_cast<int>(kMusicDetAnalysisFrameSeconds * static_cast<float>(sample_rate));
     int hop_length = frame_length / kMusicDetAnalysisHopFrameDenominator;
     
     auto rms = compute_rms_energy(samples, sample_rate, frame_length, hop_length);
-    if (rms.empty()) return 0.0f;
+    if (rms.empty()) { return 0.0F;
+}
     
     // Sort RMS values and take the 10th percentile as noise floor estimate
     std::vector<float> sorted_rms = rms;
-    std::sort(sorted_rms.begin(), sorted_rms.end());
+    std::ranges::sort(sorted_rms);
     
     // Take the 10th percentile (or first element if too few; see
     // kNoiseFloorPercentileDenominator).
@@ -84,18 +86,21 @@ int64_t detect_music_start(
     int sample_rate,
     float min_music_seconds)
 {
-    if (samples.empty()) return 0;
+    if (samples.empty()) { return 0;
+}
     
     // Frame parameters: 50ms frame, 12.5ms hop
     int frame_length = static_cast<int>(kMusicDetAnalysisFrameSeconds * static_cast<float>(sample_rate));
     int hop_length = frame_length / kMusicDetAnalysisHopFrameDenominator;
     
     auto rms = compute_rms_energy(samples, sample_rate, frame_length, hop_length);
-    if (rms.empty()) return 0;
+    if (rms.empty()) { return 0;
+}
     
     // Estimate noise floor
     float noise_floor = estimate_noise_floor(samples, sample_rate);
-    if (noise_floor < 1e-10f) return 0;
+    if (noise_floor < 1e-10F) { return 0;
+}
     
     // Threshold: 12 dB above noise floor (factor of 4; see
     // kMusicOnsetNoiseFloorMultiplier).

@@ -11,6 +11,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace mwaac {
 
@@ -39,21 +40,22 @@ bool is_audio_file(const std::filesystem::path& p) {
         ".wav", ".aiff", ".aif", ".flac", ".mp3", ".ogg", ".m4a"
     };
     auto ext = p.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    return std::find(exts.begin(), exts.end(), ext) != exts.end();
+    std::ranges::transform(ext, ext.begin(), ::tolower);
+    return std::ranges::find(exts, ext) != exts.end();
 }
 
 std::vector<std::filesystem::path> list_reference_paths(
     const std::filesystem::path& dir)
 {
     std::vector<std::filesystem::path> out;
-    if (!std::filesystem::is_directory(dir)) return out;
+    if (!std::filesystem::is_directory(dir)) { return out;
+}
     for (const auto& e : std::filesystem::directory_iterator(dir)) {
         if (e.is_regular_file() && is_audio_file(e.path())) {
             out.push_back(e.path());
         }
     }
-    std::sort(out.begin(), out.end(), natural_less_filename);
+    std::ranges::sort(out, natural_less_filename);
     return out;
 }
 
@@ -64,7 +66,8 @@ std::vector<std::filesystem::path> list_reference_paths(
 double audio_duration_seconds(const std::filesystem::path& p) {
     SF_INFO info = {};
     SNDFILE* f = sf_open(p.string().c_str(), SFM_READ, &info);
-    if (!f) return 0.0;
+    if (f == nullptr) { return 0.0;
+}
     double d = (info.samplerate > 0)
         ? static_cast<double>(info.frames) / info.samplerate
         : 0.0;
@@ -75,13 +78,13 @@ double audio_duration_seconds(const std::filesystem::path& p) {
 // Deterministic-ish GUID from an index so project files diff cleanly
 // across runs while items still have unique IDs.
 std::string pseudo_guid(uint64_t seed) {
-    static const char hex[] = "0123456789ABCDEF";
-    uint64_t s = seed * 0x9E3779B97F4A7C15ull + 0xDEADBEEFCAFEBABEull;
+    static constexpr std::string_view hex = "0123456789ABCDEF";
+    uint64_t s = (seed * 0x9E3779B97F4A7C15ULL) + 0xDEADBEEFCAFEBABEULL;
     auto rand_hex = [&](int n) {
         std::string r;
         for (int i = 0; i < n; ++i) {
-            s ^= s >> 33; s *= 0xff51afd7ed558ccdull;
-            s ^= s >> 33; s *= 0xc4ceb9fe1a85ec53ull;
+            s ^= s >> 33; s *= 0xff51afd7ed558ccdULL;
+            s ^= s >> 33; s *= 0xc4ceb9fe1a85ec53ULL;
             r += hex[s & 0xF];
         }
         return r;
@@ -96,8 +99,9 @@ std::string rpp_string(const std::string& s) {
     bool has_dq = s.find('"') != std::string::npos;
     bool has_sq = s.find('\'') != std::string::npos;
     char quote = '"';
-    if (has_dq && !has_sq) quote = '\'';
-    else if (has_dq && has_sq) quote = '`';  // last resort, usually unused
+    if (has_dq && !has_sq) { quote = '\'';
+    } else if (has_dq && has_sq) { quote = '`';  // last resort, usually unused
+}
     return std::string(1, quote) + s + quote;
 }
 
@@ -127,14 +131,14 @@ void write_item(
     os << indent << "  FADEOUT 1 0 0 1 0 0 0\n";
     os << indent << "  MUTE 0 0\n";
     os << indent << "  SEL 0\n";
-    os << indent << "  IGUID " << pseudo_guid(static_cast<uint64_t>(item_id) * 11u) << "\n";
+    os << indent << "  IGUID " << pseudo_guid(static_cast<uint64_t>(item_id) * 11U) << "\n";
     os << indent << "  IID " << item_id << "\n";
     os << indent << "  NAME " << rpp_string(name) << "\n";
     os << indent << "  VOLPAN 1 0 1 -1\n";
     os << indent << "  SOFFS " << fmt(soffs_s) << "\n";
     os << indent << "  PLAYRATE 1 1 0 -1 0 0.0025\n";
     os << indent << "  CHANMODE 0\n";
-    os << indent << "  GUID " << pseudo_guid(static_cast<uint64_t>(item_id) * 17u + 1u) << "\n";
+    os << indent << "  GUID " << pseudo_guid((static_cast<uint64_t>(item_id) * 17U) + 1U) << "\n";
     os << indent << "  <SOURCE WAVE\n";
     os << indent << "    FILE " << rpp_string(source.string()) << "\n";
     os << indent << "  >\n";
@@ -147,7 +151,7 @@ void write_track_header(
     const std::string& name,
     int track_index)
 {
-    os << indent << "<TRACK " << pseudo_guid(static_cast<uint64_t>(track_index) * 101u) << "\n";
+    os << indent << "<TRACK " << pseudo_guid(static_cast<uint64_t>(track_index) * 101U) << "\n";
     os << indent << "  NAME " << rpp_string(name) << "\n";
     os << indent << "  PEAKCOL 16576\n";
     os << indent << "  BEAT -1\n";
@@ -167,7 +171,7 @@ void write_track_header(
     os << indent << "  INQ 0 0 0 0.5 100 0 0 100\n";
     os << indent << "  NCHAN 2\n";
     os << indent << "  FX 1\n";
-    os << indent << "  TRACKID " << pseudo_guid(static_cast<uint64_t>(track_index) * 103u) << "\n";
+    os << indent << "  TRACKID " << pseudo_guid(static_cast<uint64_t>(track_index) * 103U) << "\n";
     os << indent << "  PERF 0\n";
     os << indent << "  MIDIOUT -1\n";
     os << indent << "  MAINSEND 1 0\n";
@@ -183,13 +187,15 @@ bool write_reaper_project(
     int native_sample_rate)
 {
     auto ref_paths = list_reference_paths(reference_dir);
-    if (ref_paths.empty() || chops.empty()) return false;
+    if (ref_paths.empty() || chops.empty()) { return false;
+}
 
     // Use absolute paths so the project opens correctly regardless of
     // where the user moves it on disk.
     std::error_code ec;
     auto abs_vinyl = std::filesystem::absolute(vinyl_path, ec);
-    if (ec) abs_vinyl = vinyl_path;
+    if (ec) { abs_vinyl = vinyl_path;
+}
 
     std::vector<std::filesystem::path> abs_refs;
     abs_refs.reserve(ref_paths.size());
@@ -210,7 +216,8 @@ bool write_reaper_project(
     size_t pairs = std::min(abs_refs.size(), chops.size());
 
     std::ofstream os(rpp_path);
-    if (!os) return false;
+    if (!os) { return false;
+}
 
     os << "<REAPER_PROJECT 0.1 \"7.00/auto-chop\" 0\n";
     os << "  RIPPLE 0\n";
@@ -271,7 +278,7 @@ bool write_reaper_project(
         // Clamp so adjacent chop items never overlap on the timeline; if
         // a chop turned out longer than its ref, cap at ref duration
         // (the user can extend in REAPER — the source data is there).
-        if (chop_length_s > ref_durs[i]) chop_length_s = ref_durs[i];
+        chop_length_s = std::min(chop_length_s, ref_durs[i]);
         std::string name = std::string("Chop ") +
             (i < 9 ? "0" : "") + std::to_string(i + 1);
         write_item(os, "    ",

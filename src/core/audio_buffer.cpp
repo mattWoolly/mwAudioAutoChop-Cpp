@@ -11,7 +11,7 @@ Expected<AudioBuffer, AudioError> load_audio_mono(
 {
     SF_INFO info{};
     SNDFILE* file = sf_open(path.c_str(), SFM_READ, &info);
-    if (!file) {
+    if (file == nullptr) {
         return AudioError::FileNotFound;
     }
 
@@ -34,9 +34,9 @@ Expected<AudioBuffer, AudioError> load_audio_mono(
         // Average channels to mono
         buffer.samples.resize(static_cast<std::size_t>(info.frames));
         for (sf_count_t i = 0; i < info.frames; ++i) {
-            float sum = 0.0f;
+            float sum = 0.0F;
             for (int ch = 0; ch < info.channels; ++ch) {
-                sum += raw_samples[static_cast<std::size_t>(i * info.channels + ch)];
+                sum += raw_samples[static_cast<std::size_t>((i * info.channels) + ch)];
             }
             buffer.samples[static_cast<std::size_t>(i)] = sum / static_cast<float>(info.channels);
         }
@@ -78,7 +78,7 @@ Expected<AudioBuffer, AudioError> resample_linear(
         expected_double > static_cast<double>(std::numeric_limits<size_t>::max())) {
         return AudioError::ResampleError;
     }
-    size_t output_size = static_cast<size_t>(expected_double);
+    auto output_size = static_cast<size_t>(expected_double);
 
     AudioBuffer output;
     output.sample_rate = target_rate;
@@ -86,13 +86,13 @@ Expected<AudioBuffer, AudioError> resample_linear(
 
     for (size_t i = 0; i < output_size; ++i) {
         double src_pos = static_cast<double>(i) / ratio;
-        size_t src_idx = static_cast<size_t>(src_pos);
+        auto src_idx = static_cast<size_t>(src_pos);
         double frac = src_pos - static_cast<double>(src_idx);
 
         if (src_idx + 1 < input.samples.size()) {
             output.samples[i] = static_cast<float>(
-                static_cast<double>(input.samples[src_idx]) * (1.0 - frac)
-                + static_cast<double>(input.samples[src_idx + 1]) * frac);
+                (static_cast<double>(input.samples[src_idx]) * (1.0 - frac))
+                + (static_cast<double>(input.samples[src_idx + 1]) * frac));
         } else if (src_idx < input.samples.size()) {
             output.samples[i] = input.samples[src_idx];
         }

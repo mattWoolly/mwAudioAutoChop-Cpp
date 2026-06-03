@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <utility>
 
 namespace mwaac::tui {
 
@@ -17,14 +18,15 @@ std::vector<std::pair<float, float>> downsample_for_display(
     
     // Samples per column
     size_t samples_per_col = samples.size() / static_cast<size_t>(display_width);
-    if (samples_per_col == 0) samples_per_col = 1;
+    if (samples_per_col == 0) { samples_per_col = 1;
+}
     
     for (int col = 0; col < display_width; ++col) {
         size_t start = static_cast<size_t>(col) * samples_per_col;
         size_t end = std::min(start + samples_per_col, samples.size());
         
-        float min_val = 0.0f;
-        float max_val = 0.0f;
+        float min_val = 0.0F;
+        float max_val = 0.0F;
         for (size_t i = start; i < end; ++i) {
             min_val = std::min(min_val, samples[i]);
             max_val = std::max(max_val, samples[i]);
@@ -39,7 +41,8 @@ std::vector<std::pair<float, float>> downsample_for_display(
 // Helper to find marker at a given column position
 const MarkerInfo* find_marker_at_column(const std::vector<MarkerInfo>& markers, int col) {
     for (const auto& m : markers) {
-        if (m.column == col) return &m;
+        if (m.column == col) { return &m;
+}
     }
     return nullptr;
 }
@@ -71,29 +74,32 @@ std::vector<std::string> render_waveform(
         auto [min_val, max_val] = peaks[col];
         
         // Map [-1, 1] to [0, waveform_height]
-        int min_row = static_cast<int>((1.0f - min_val) * static_cast<float>(half_height));
-        int max_row = static_cast<int>((1.0f - max_val) * static_cast<float>(half_height));
+        int min_row = static_cast<int>((1.0F - min_val) * static_cast<float>(half_height));
+        int max_row = static_cast<int>((1.0F - max_val) * static_cast<float>(half_height));
         
         min_row = std::clamp(min_row, 0, waveform_height - 1);
         max_row = std::clamp(max_row, 0, waveform_height - 1);
         
-        bool is_cursor = (static_cast<int64_t>(col) == cursor_pos);
+        bool is_cursor = (std::cmp_equal(col, cursor_pos));
         
         // Check for marker at this column
         const MarkerInfo* marker_info = find_marker_at_column(markers, static_cast<int>(col));
         bool is_marker = marker_info != nullptr;
-        bool is_selected = marker_info && marker_info->selected;
+        bool is_selected = (marker_info != nullptr) && marker_info->selected;
         
         for (int row = 0; row < waveform_height; ++row) {
             char ch = ' ';
             
             if (row >= max_row && row <= min_row) {
-                // This row is within the waveform
+                // This row is within the waveform. The three '|' branches
+                // are kept distinct so future glyph differentiation
+                // (selected/marker/cursor/sample) can be added without
+                // re-deriving the condition structure.
                 if (is_selected) {
                     ch = '#';  // Highlighted marker
-                } else if (is_marker) {
+                } else if (is_marker) {  // NOLINT(bugprone-branch-clone)
                     ch = '|';
-                } else if (is_cursor) {
+                } else if (is_cursor) {  // NOLINT(bugprone-branch-clone)
                     ch = '|';
                 } else {
                     ch = '|';  // Simplified waveform
@@ -110,14 +116,18 @@ std::vector<std::string> render_waveform(
         }
         
         // Track number row (last row)
-        if (marker_info && marker_info->track_number > 0) {
+        if ((marker_info != nullptr) && marker_info->track_number > 0) {
             std::ostringstream oss;
             oss << marker_info->track_number;
             std::string num_str = oss.str();
             // Center the number in the column
+            // Both branches take the first character of num_str; the col==0
+            // branch is kept as a placeholder for future column-relative
+            // formatting (multi-digit track numbers across columns).
+            // NOLINTNEXTLINE(bugprone-branch-clone) — placeholder for future per-column formatting.
             if (col == 0) {
                 rows[static_cast<size_t>(waveform_height)] += num_str.substr(0, 1);
-            } else if (num_str.length() > 0) {
+            } else if (!num_str.empty()) {
                 rows[static_cast<size_t>(waveform_height)] += num_str.substr(0, 1);
             } else {
                 rows[static_cast<size_t>(waveform_height)] += " ";

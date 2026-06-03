@@ -12,9 +12,11 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <span>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #include <process.h>
@@ -30,17 +32,17 @@ namespace mwaac {
 
 // Magic bytes for audio formats
 namespace magic {
-static constexpr uint8_t RIFF[] = {'R', 'I', 'F', 'F'};
-static constexpr uint8_t RF64[] = {'R', 'F', '6', '4'};
-static constexpr uint8_t WAVE[] = {'W', 'A', 'V', 'E'};
-static constexpr uint8_t FORM[] = {'F', 'O', 'R', 'M'};
-static constexpr uint8_t AIFF[] = {'A', 'I', 'F', 'F'};
-static constexpr uint8_t AIFC[] = {'A', 'I', 'F', 'C'};
-static constexpr uint8_t COMM[] = {'C', 'O', 'M', 'M'};
-static constexpr uint8_t SSND[] = {'S', 'S', 'N', 'D'};
-static constexpr uint8_t fmt_[] = {'f', 'm', 't', ' '};
-static constexpr uint8_t data[] = {'d', 'a', 't', 'a'};
-static constexpr uint8_t ds64[] = {'d', 's', '6', '4'};
+static constexpr std::array<uint8_t, 4> RIFF = {'R', 'I', 'F', 'F'};
+static constexpr std::array<uint8_t, 4> RF64 = {'R', 'F', '6', '4'};
+static constexpr std::array<uint8_t, 4> WAVE = {'W', 'A', 'V', 'E'};
+static constexpr std::array<uint8_t, 4> FORM = {'F', 'O', 'R', 'M'};
+static constexpr std::array<uint8_t, 4> AIFF = {'A', 'I', 'F', 'F'};
+static constexpr std::array<uint8_t, 4> AIFC = {'A', 'I', 'F', 'C'};
+static constexpr std::array<uint8_t, 4> COMM = {'C', 'O', 'M', 'M'};
+static constexpr std::array<uint8_t, 4> SSND = {'S', 'S', 'N', 'D'};
+static constexpr std::array<uint8_t, 4> fmt_ = {'f', 'm', 't', ' '};
+static constexpr std::array<uint8_t, 4> data = {'d', 'a', 't', 'a'};
+static constexpr std::array<uint8_t, 4> ds64 = {'d', 's', '6', '4'};
 
 // Microsoft KSDATAFORMAT_SUBTYPE_* GUIDs for WAVE_FORMAT_EXTENSIBLE.
 // 16-byte wire layout: little-endian Data1 (4) + little-endian Data2 (2)
@@ -69,16 +71,18 @@ static constexpr std::array<uint8_t, 16> KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = {
 // block-local constant inside AudioFile::open so both the splice site
 // and the tail-scan reference the same value (no magic-number coupling).
 static constexpr size_t kHeadSize = 65536;
-static constexpr size_t kTailWindow = 1 * 1024 * 1024;  // 1 MiB
+static constexpr size_t kTailWindow = size_t{1} * 1024 * 1024;  // 1 MiB
 
 // Helper: compare bytes at position
-static bool compare_bytes(const std::vector<uint8_t>& data, size_t offset, const uint8_t* magic, size_t len) {
-    if (offset + len > data.size()) return false;
-    return std::memcmp(data.data() + offset, magic, len) == 0;
+static bool compare_bytes(const std::vector<uint8_t>& data, size_t offset, std::span<const uint8_t> magic) {
+    if (offset + magic.size() > data.size()) { return false;
+}
+    return std::memcmp(data.data() + offset, magic.data(), magic.size()) == 0;
 }
 
 static uint32_t read_le_u32(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 4 > data.size()) return 0;
+    if (offset + 4 > data.size()) { return 0;
+}
     return static_cast<uint32_t>(data[offset]) |
            (static_cast<uint32_t>(data[offset + 1]) << 8) |
            (static_cast<uint32_t>(data[offset + 2]) << 16) |
@@ -86,14 +90,16 @@ static uint32_t read_le_u32(const std::vector<uint8_t>& data, size_t offset) {
 }
 
 static uint64_t read_le_u64(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 8 > data.size()) return 0;
+    if (offset + 8 > data.size()) { return 0;
+}
     uint64_t lo = read_le_u32(data, offset);
     uint64_t hi = read_le_u32(data, offset + 4);
     return lo | (hi << 32);
 }
 
 static uint32_t read_be_u32(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 4 > data.size()) return 0;
+    if (offset + 4 > data.size()) { return 0;
+}
     return (static_cast<uint32_t>(data[offset]) << 24) |
            (static_cast<uint32_t>(data[offset + 1]) << 16) |
            (static_cast<uint32_t>(data[offset + 2]) << 8) |
@@ -101,14 +107,16 @@ static uint32_t read_be_u32(const std::vector<uint8_t>& data, size_t offset) {
 }
 
 static uint16_t read_le_u16(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 2 > data.size()) return 0;
+    if (offset + 2 > data.size()) { return 0;
+}
     return static_cast<uint16_t>(
         static_cast<uint16_t>(data[offset]) |
         (static_cast<uint16_t>(data[offset + 1]) << 8));
 }
 
 static uint16_t read_be_u16(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 2 > data.size()) return 0;
+    if (offset + 2 > data.size()) { return 0;
+}
     return static_cast<uint16_t>(
         (static_cast<uint16_t>(data[offset]) << 8) |
         static_cast<uint16_t>(data[offset + 1]));
@@ -138,16 +146,18 @@ static uint16_t read_be_u16(const std::vector<uint8_t>& data, size_t offset) {
 // shifted-out low bits are zero.
 static std::optional<uint64_t>
 decode_float80_to_u64(const std::vector<uint8_t>& data, size_t offset) {
-    if (offset + 10 > data.size()) return std::nullopt;
+    if (offset + 10 > data.size()) { return std::nullopt;
+}
 
     const uint8_t b0 = data[offset];
     const uint8_t b1 = data[offset + 1];
 
     // Sign bit must be clear; AIFF sample rates are non-negative.
-    if ((b0 & 0x80u) != 0) return std::nullopt;
+    if ((b0 & 0x80U) != 0) { return std::nullopt;
+}
 
-    const uint16_t biased_exp =
-        static_cast<uint16_t>((static_cast<uint16_t>(b0 & 0x7Fu) << 8) |
+    const auto biased_exp =
+        static_cast<uint16_t>((static_cast<uint16_t>(b0 & 0x7FU) << 8) |
                                static_cast<uint16_t>(b1));
 
     uint64_t mantissa = 0;
@@ -157,31 +167,37 @@ decode_float80_to_u64(const std::vector<uint8_t>& data, size_t offset) {
     }
 
     // All-zero encoding -> 0.
-    if (biased_exp == 0 && mantissa == 0) return uint64_t{0};
+    if (biased_exp == 0 && mantissa == 0) { return uint64_t{0};
+}
 
     // Subnormal (biased=0, mantissa!=0): not produced by encode_float80
     // for non-zero finite values; reject for parser strictness.
-    if (biased_exp == 0) return std::nullopt;
+    if (biased_exp == 0) { return std::nullopt;
+}
 
     // Inf / NaN: biased exponent of all 1s.
     constexpr uint16_t kAllOnesExp = 0x7FFF;
-    if (biased_exp == kAllOnesExp) return std::nullopt;
+    if (biased_exp == kAllOnesExp) { return std::nullopt;
+}
 
     constexpr int kBias = 16383;
     const int unbiased = static_cast<int>(biased_exp) - kBias;
 
     // Negative unbiased exponent: value < 1, can't be a positive integer.
-    if (unbiased < 0) return std::nullopt;
+    if (unbiased < 0) { return std::nullopt;
+}
 
     // Unbiased exponent > 63: value >= 2^64, overflows uint64_t.
-    if (unbiased > 63) return std::nullopt;
+    if (unbiased > 63) { return std::nullopt;
+}
 
     const int shift = 63 - unbiased;
     // Low `shift` bits of the mantissa are the fractional part; for an
     // integer result they must be zero.
     if (shift > 0) {
         const uint64_t frac_mask = (uint64_t{1} << shift) - 1;
-        if ((mantissa & frac_mask) != 0) return std::nullopt;
+        if ((mantissa & frac_mask) != 0) { return std::nullopt;
+}
     }
     const uint64_t value =
         (shift == 64) ? uint64_t{0} : (mantissa >> shift);
@@ -193,7 +209,8 @@ decode_float80_to_u64(const std::vector<uint8_t>& data, size_t offset) {
 static std::optional<uint32_t>
 decode_float80_to_u32(const std::vector<uint8_t>& data, size_t offset) {
     auto v = decode_float80_to_u64(data, offset);
-    if (!v.has_value()) return std::nullopt;
+    if (!v.has_value()) { return std::nullopt;
+}
     if (v.value() >
         static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
         return std::nullopt;
@@ -202,8 +219,8 @@ decode_float80_to_u32(const std::vector<uint8_t>& data, size_t offset) {
 }
 
 // AudioFile implementation
-AudioFile::AudioFile(const std::filesystem::path& path, AudioInfo info) noexcept
-    : path_(path), info_(std::move(info)), valid_(true) {
+AudioFile::AudioFile(std::filesystem::path  path, AudioInfo info) noexcept
+    : path_(std::move(path)), info_(std::move(info)), valid_(true) {
 }
 
 AudioFile::AudioFile(AudioFile&& other) noexcept
@@ -224,22 +241,22 @@ AudioFile& AudioFile::operator=(AudioFile&& other) noexcept {
 AudioFile::~AudioFile() = default;
 
 // Detect format from magic bytes
-enum class AudioFormat { Unknown, WAV, RF64, AIFF, AIFC };
+enum class AudioFormat : std::uint8_t { Unknown, WAV, RF64, AIFF, AIFC };
 
 static AudioFormat detect_format(const std::vector<uint8_t>& header) {
     if (header.size() >= 12) {
-        if (compare_bytes(header, 0, magic::RIFF, 4) &&
-            compare_bytes(header, 8, magic::WAVE, 4)) {
+        if (compare_bytes(header, 0, magic::RIFF) &&
+            compare_bytes(header, 8, magic::WAVE)) {
             return AudioFormat::WAV;
         }
-        if (compare_bytes(header, 0, magic::RF64, 4) &&
-            compare_bytes(header, 8, magic::WAVE, 4)) {
+        if (compare_bytes(header, 0, magic::RF64) &&
+            compare_bytes(header, 8, magic::WAVE)) {
             return AudioFormat::RF64;
         }
-        if (compare_bytes(header, 0, magic::FORM, 4)) {
-            if (compare_bytes(header, 8, magic::AIFF, 4) ||
-                compare_bytes(header, 8, magic::AIFC, 4)) {
-                return compare_bytes(header, 8, magic::AIFF, 4) ? AudioFormat::AIFF : AudioFormat::AIFC;
+        if (compare_bytes(header, 0, magic::FORM)) {
+            if (compare_bytes(header, 8, magic::AIFF) ||
+                compare_bytes(header, 8, magic::AIFC)) {
+                return compare_bytes(header, 8, magic::AIFF) ? AudioFormat::AIFF : AudioFormat::AIFC;
             }
         }
     }
@@ -249,13 +266,13 @@ static AudioFormat detect_format(const std::vector<uint8_t>& header) {
 Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& path) {
     // Check if file exists
     if (!std::filesystem::exists(path)) {
-        return Expected<AudioFile, AudioError>(AudioError::FileNotFound);
+        return {AudioError::FileNotFound};
     }
 
     // Open file and read header
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        return Expected<AudioFile, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
 
     // Read first 64 KiB for header parsing (or entire file if smaller).
@@ -276,23 +293,25 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
     // (see top of file). parse_wav_header references kHeadSize for its
     // tail-scan lower bound so the two sites cannot drift apart.
     std::vector<uint8_t> header(kHeadSize);
-    file.read(reinterpret_cast<char*>(header.data()), kHeadSize);
+    // `std::ifstream::read` requires `char*`; the byte buffer is `uint8_t`.
+    // Binary IO is the canonical exception cited in the C++ Core Guidelines.
+    file.read(reinterpret_cast<char*>(header.data()), kHeadSize);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
 
     // Check for actual read errors (badbit), not just EOF (failbit)
     if (file.bad()) {
-        return Expected<AudioFile, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
     header.resize(static_cast<size_t>(file.gcount()));
 
     // Minimum valid audio file size
     if (header.size() < 44) {
-        return Expected<AudioFile, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     // Detect format from the head magic bytes.
     AudioFormat format = detect_format(header);
     if (format == AudioFormat::Unknown) {
-        return Expected<AudioFile, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     // For RF64 inputs, append the file's tail bytes so parse_wav_header's
@@ -308,7 +327,7 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
         std::error_code size_ec;
         const auto file_size_u = std::filesystem::file_size(path, size_ec);
         if (size_ec) {
-            return Expected<AudioFile, AudioError>(AudioError::ReadError);
+            return {AudioError::ReadError};
         }
         // Only splice in a tail when there are file bytes that the head
         // window did not already cover.
@@ -320,21 +339,22 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
             const std::uintmax_t tail_offset = file_size_u - tail_len;
             file.seekg(static_cast<std::streamoff>(tail_offset));
             if (!file) {
-                return Expected<AudioFile, AudioError>(AudioError::ReadError);
+                return {AudioError::ReadError};
             }
             const size_t old_size = header.size();
             header.resize(old_size + tail_len);
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — binary IO; see rationale above.
             file.read(reinterpret_cast<char*>(header.data() + old_size),
                       static_cast<std::streamsize>(tail_len));
             if (file.bad()) {
-                return Expected<AudioFile, AudioError>(AudioError::ReadError);
+                return {AudioError::ReadError};
             }
             const auto got = static_cast<size_t>(file.gcount());
             if (got != tail_len) {
                 // Tail short-read: file shrank between size query and read
                 // (or some other I/O anomaly). InvalidFormat would over-
                 // claim — the bytes-vs-claim mismatch is at the I/O layer.
-                return Expected<AudioFile, AudioError>(AudioError::ReadError);
+                return {AudioError::ReadError};
             }
         }
     }
@@ -345,7 +365,7 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
         : parse_aiff_header(header);
 
     if (!info_result.has_value()) {
-        return Expected<AudioFile, AudioError>(info_result.error());
+        return {info_result.error()};
     }
 
     AudioInfo info = std::move(info_result.value());
@@ -353,7 +373,7 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
     // Cross-validate with libsndfile
     SF_INFO sf_info = {};
     auto* sf = sf_open(path.string().c_str(), SFM_READ, &sf_info);
-    if (!sf) {
+    if (sf == nullptr) {
         // M-4-FU-LIBSNDFILE-GATE: libsndfile 1.2.2 returns "Unspecified
         // internal error" on RF64 ds64-after-data files even when the
         // project's parse_wav_header (M-4-cured) successfully recovers
@@ -365,7 +385,7 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
         // continue with the AudioInfo populated by parse_wav_header.
         // Non-RF64 libsndfile-failure remains a real error.
         if (format != AudioFormat::RF64) {
-            return Expected<AudioFile, AudioError>(AudioError::ReadError);
+            return {AudioError::ReadError};
         }
         // Parser path already populates: format ("RF64"), channels,
         // sample_rate, bits_per_sample, data_offset, data_size, and
@@ -422,44 +442,46 @@ Expected<AudioFile, AudioError> AudioFile::open(const std::filesystem::path& pat
 Expected<std::vector<uint8_t>, AudioError>
 AudioFile::read_raw_samples(int64_t offset, int64_t size) const {
     if (!valid_) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
     if (offset < 0 || size < 0) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::InvalidRange);
+        return {AudioError::InvalidRange};
     }
     if (offset + size > info_.data_size) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::InvalidRange);
+        return {AudioError::InvalidRange};
     }
 
     std::ifstream file(path_, std::ios::binary);
     if (!file) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
 
     file.seekg(static_cast<std::streamoff>(info_.data_offset + offset));
     if (!file) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
 
     std::vector<uint8_t> buffer(static_cast<size_t>(size));
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — binary IO; `ifstream::read` requires `char*`.
     file.read(reinterpret_cast<char*>(buffer.data()), size);
     if (!file) {
-        return Expected<std::vector<uint8_t>, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
 
     return buffer;
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) — RIFF/RF64 chunk walker; refactor tracked separately.
 Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& data) {
     // Check minimum size
     if (data.size() < 44) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     AudioInfo info;
     info.format = "WAV";
 
-    bool is_rf64 = compare_bytes(data, 0, magic::RF64, 4);
+    bool is_rf64 = compare_bytes(data, 0, magic::RF64);
     if (is_rf64) {
         info.format = "RF64";
     }
@@ -480,7 +502,7 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
         size_t chunk_end = chunk_offset + 8 + chunk_size;
 
         // Check for fmt chunk
-        if (compare_bytes(data, chunk_offset, magic::fmt_, 4)) {
+        if (compare_bytes(data, chunk_offset, magic::fmt_)) {
             if (chunk_size >= 16) {
                 // fmt chunk data starts at chunk_offset + 8 (after ID and size)
                 size_t fmt_data = chunk_offset + 8;
@@ -511,17 +533,17 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
                     // detects -> InvalidFormat (per parser-errors.md
                     // local-view rule).
                     if (chunk_size < 40) {
-                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                        return {AudioError::InvalidFormat};
                     }
                     uint16_t cb_size = read_le_u16(data, fmt_data + 16);
                     if (cb_size < 22) {
-                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                        return {AudioError::InvalidFormat};
                     }
                     // SubFormat GUID lives at fmt_data + 16 (cbSize) + 2
                     // + 2 (wValidBitsPerSample) + 4 (dwChannelMask) = +24.
                     size_t guid_offset = fmt_data + 24;
                     if (guid_offset + 16 > data.size()) {
-                        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+                        return {AudioError::InvalidFormat};
                     }
                     bool guid_pcm = std::memcmp(data.data() + guid_offset,
                                                 magic::KSDATAFORMAT_SUBTYPE_PCM.data(),
@@ -538,17 +560,17 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
                     } else {
                         // Well-formed EXTENSIBLE chunk, SubFormat we don't
                         // decode -> UnsupportedFormat (local-view rule).
-                        return Expected<AudioInfo, AudioError>(AudioError::UnsupportedFormat);
+                        return {AudioError::UnsupportedFormat};
                     }
                 } else {
-                    return Expected<AudioInfo, AudioError>(AudioError::UnsupportedFormat);
+                    return {AudioError::UnsupportedFormat};
                 }
             }
         }
         // Check for data chunk
-        else if (compare_bytes(data, chunk_offset, magic::data, 4)) {
+        else if (compare_bytes(data, chunk_offset, magic::data)) {
             found_data = true;
-            data_offset = static_cast<int64_t>(chunk_offset + 8);
+            data_offset = static_cast<int64_t>(chunk_offset) + 8;
             // For RF64, data chunk size is 0xFFFFFFFF placeholder - actual size comes from ds64
             // For regular WAV, use the chunk size directly
             if (!is_rf64) {
@@ -561,12 +583,12 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
             // the walker here for RF64; the trailing-ds64 case is handled by
             // the tail-scan below. Non-RF64 inputs continue walking so any
             // post-data chunks (LIST, etc.) keep being skipped over as today.
-            if (is_rf64 && chunk_size == 0xFFFFFFFFu) {
+            if (is_rf64 && chunk_size == 0xFFFFFFFFU) {
                 break;
             }
         }
         // Check for ds64 chunk (RF64)
-        else if (compare_bytes(data, chunk_offset, magic::ds64, 4)) {
+        else if (compare_bytes(data, chunk_offset, magic::ds64)) {
             found_ds64 = true;
             // ds64 chunk layout (after 8-byte header):
             //   bytes 0-7:   RIFF size (64-bit)
@@ -614,7 +636,7 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
     if (is_rf64 && !found_ds64 && found_data && data.size() >= 36) {
         const size_t scan_end = data.size() - 36;
         for (size_t i = kHeadSize; i <= scan_end; ++i) {
-            if (compare_bytes(data, i, magic::ds64, 4)) {
+            if (compare_bytes(data, i, magic::ds64)) {
                 uint32_t tail_chunk_size = read_le_u32(data, i + 4);
                 if (tail_chunk_size < 24) {
                     // ds64 found in tail but the body claim is too small
@@ -648,18 +670,18 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
     // the blob lacked a fmt/data chunk. The explicit check makes the
     // rejection robust to corpus changes.
     if (is_rf64 && ds64_truncated) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     // M-4 hardening: a well-formed RF64 always carries a ds64 chunk. After
     // both the head walker and the tail-scan have run, an RF64 file with
     // no ds64 is structurally inconsistent -> InvalidFormat.
     if (is_rf64 && !found_ds64) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     if (!found_fmt || !found_data) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     info.data_offset = data_offset;
@@ -676,13 +698,13 @@ Expected<AudioInfo, AudioError> parse_wav_header(const std::vector<uint8_t>& dat
 Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& data) {
     // Check minimum size
     if (data.size() < 54) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     AudioInfo info;
     info.format = "AIFF";
 
-    bool is_aifc = compare_bytes(data, 8, magic::AIFC, 4);
+    bool is_aifc = compare_bytes(data, 8, magic::AIFC);
 
     // Parse chunks
     int64_t data_offset = 0;
@@ -696,7 +718,7 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
         size_t chunk_end = chunk_offset + 8 + chunk_size;
 
         // Check for COMM chunk
-        if (compare_bytes(data, chunk_offset, magic::COMM, 4)) {
+        if (compare_bytes(data, chunk_offset, magic::COMM)) {
             if (chunk_size >= 18) {
                 // COMM body layout (AIFF 1.3, "Audio IFF Specification",
                 // Apple, 1989):
@@ -720,22 +742,21 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
                 // range) returns InvalidFormat per parser-errors.md.
                 auto sr = decode_float80_to_u32(data, chunk_offset + 16);
                 if (!sr.has_value()) {
-                    return Expected<AudioInfo, AudioError>(
-                        AudioError::InvalidFormat);
+                    return {AudioError::InvalidFormat};
                 }
                 info.sample_rate = static_cast<int>(sr.value());
                 found_comm = true;
             }
         }
         // Check for SSND chunk
-        else if (compare_bytes(data, chunk_offset, magic::SSND, 4)) {
+        else if (compare_bytes(data, chunk_offset, magic::SSND)) {
             found_ssnd = true;
             // SSND body layout (AIFF 1.3):
             //   u32 offset | u32 block_size | <offset bytes of pad> | sample bytes
             // Sample data begins at (SSND body start) + 8 + offset; the
             // offset value is alignment padding the writer may insert.
             // Available sample-byte budget is chunk_size - 8 - offset.
-            data_offset = static_cast<int64_t>(chunk_offset + 8);
+            data_offset = static_cast<int64_t>(chunk_offset) + 8;
             if (chunk_size >= 8) {
                 // Read the 4-byte big-endian SSND offset field. M-5: the
                 // pre-fix code skipped past these bytes without reading
@@ -748,8 +769,7 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
                 // inconsistency the local check detects -> InvalidFormat.
                 if (static_cast<uint64_t>(ssnd_offset) >
                     static_cast<uint64_t>(chunk_size - 8)) {
-                    return Expected<AudioInfo, AudioError>(
-                        AudioError::InvalidFormat);
+                    return {AudioError::InvalidFormat};
                 }
                 data_size = static_cast<int64_t>(chunk_size - 8 - ssnd_offset);
                 data_offset += 8; // Skip the offset and block_size fields
@@ -765,7 +785,7 @@ Expected<AudioInfo, AudioError> parse_aiff_header(const std::vector<uint8_t>& da
     }
 
     if (!found_comm || !found_ssnd) {
-        return Expected<AudioInfo, AudioError>(AudioError::InvalidFormat);
+        return {AudioError::InvalidFormat};
     }
 
     info.data_offset = data_offset;
@@ -806,6 +826,7 @@ make_temp_sibling_path(const std::filesystem::path& target) {
 #endif
     static thread_local std::mt19937_64 rng{
         std::random_device{}() ^
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — intentional pointer-bits-as-entropy for the RNG seed.
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&pid))
     };
     uint64_t r = rng();
@@ -948,8 +969,8 @@ static void encode_float80(double value, std::byte* out) {
     int biased_exp = exp + kExponentBias;
     // Clamp to representable range. (Beyond 80-bit precision we lose bits,
     // but for AIFF sample rates this never triggers.)
-    if (biased_exp < kMinBiasedExp) biased_exp = kMinBiasedExp;
-    if (biased_exp > kMaxBiasedExp) biased_exp = kMaxBiasedExp;
+    biased_exp = std::max(biased_exp, kMinBiasedExp);
+    biased_exp = std::min(biased_exp, kMaxBiasedExp);
 
     // Build the 64-bit mantissa, MSB first, *including* the explicit
     // leading 1 bit (mant ∈ [1, 2) so the first iteration emits 1).
@@ -961,7 +982,7 @@ static void encode_float80(double value, std::byte* out) {
     uint64_t mantissa = 0;
     for (int i = 0; i < kMantissaBits; ++i) {
         const int bit = (mant >= 1.0) ? 1 : 0;
-        if (bit) {
+        if (bit != 0) {
             mant -= 1.0;
         }
         mantissa = (mantissa << 1) | static_cast<uint64_t>(bit);
@@ -969,21 +990,21 @@ static void encode_float80(double value, std::byte* out) {
     }
 
     // Pack per the byte-layout invariant above.
-    const uint8_t exp_high = static_cast<uint8_t>(
+    const auto exp_high = static_cast<uint8_t>(
         (static_cast<unsigned>(biased_exp) >> kExpHighShift) & kExpHighMask);
-    const uint8_t exp_low  = static_cast<uint8_t>(
-        static_cast<unsigned>(biased_exp) & 0xFFu);
+    const auto exp_low  = static_cast<uint8_t>(
+        static_cast<unsigned>(biased_exp) & 0xFFU);
 
     out[0] = std::byte{static_cast<uint8_t>(sign_bits | exp_high)};
     out[1] = std::byte{exp_low};
-    out[2] = std::byte{static_cast<uint8_t>((mantissa >> 56) & 0xFFu)};
-    out[3] = std::byte{static_cast<uint8_t>((mantissa >> 48) & 0xFFu)};
-    out[4] = std::byte{static_cast<uint8_t>((mantissa >> 40) & 0xFFu)};
-    out[5] = std::byte{static_cast<uint8_t>((mantissa >> 32) & 0xFFu)};
-    out[6] = std::byte{static_cast<uint8_t>((mantissa >> 24) & 0xFFu)};
-    out[7] = std::byte{static_cast<uint8_t>((mantissa >> 16) & 0xFFu)};
-    out[8] = std::byte{static_cast<uint8_t>((mantissa >>  8) & 0xFFu)};
-    out[9] = std::byte{static_cast<uint8_t>( mantissa        & 0xFFu)};
+    out[2] = std::byte{static_cast<uint8_t>((mantissa >> 56) & 0xFFU)};
+    out[3] = std::byte{static_cast<uint8_t>((mantissa >> 48) & 0xFFU)};
+    out[4] = std::byte{static_cast<uint8_t>((mantissa >> 40) & 0xFFU)};
+    out[5] = std::byte{static_cast<uint8_t>((mantissa >> 32) & 0xFFU)};
+    out[6] = std::byte{static_cast<uint8_t>((mantissa >> 24) & 0xFFU)};
+    out[7] = std::byte{static_cast<uint8_t>((mantissa >> 16) & 0xFFU)};
+    out[8] = std::byte{static_cast<uint8_t>((mantissa >>  8) & 0xFFU)};
+    out[9] = std::byte{static_cast<uint8_t>( mantissa        & 0xFFU)};
     // Invariant: exactly 10 bytes written (out[0] through out[9]).
 }
 
@@ -1009,7 +1030,7 @@ std::vector<std::byte> build_wav_header(
     int bytes_per_sample = (bits_per_sample + 7) / 8;
     int bytes_per_frame = channels * bytes_per_sample;
     int bytes_per_second = sample_rate * bytes_per_frame;
-    uint16_t block_align = static_cast<uint16_t>(bytes_per_frame);
+    auto block_align = static_cast<uint16_t>(bytes_per_frame);
     uint16_t audio_format = 1;  // PCM
     
     // RIFF header
@@ -1019,7 +1040,7 @@ std::vector<std::byte> build_wav_header(
     header.push_back(std::byte{'F'});
     
     // File size - 8 (little-endian)
-    uint32_t file_size = static_cast<uint32_t>(data_size + 36);
+    auto file_size = static_cast<uint32_t>(data_size + 36);
     header.push_back(std::byte{static_cast<uint8_t>(file_size & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>((file_size >> 8) & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>((file_size >> 16) & 0xFF)});
@@ -1152,7 +1173,7 @@ std::vector<std::byte> build_aiff_header(
     // remainder of the COMM payload out of the chunk and make libsndfile
     // (and any other conformant decoder) reject the file). See AIFF 1.3
     // spec, COMM chunk, "numSampleFrames" field.
-    const uint32_t nsf = static_cast<uint32_t>(num_frames);
+    const auto nsf = static_cast<uint32_t>(num_frames);
     header.push_back(std::byte{static_cast<uint8_t>((nsf >> 24) & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>((nsf >> 16) & 0xFF)});
     header.push_back(std::byte{static_cast<uint8_t>((nsf >>  8) & 0xFF)});
@@ -1163,10 +1184,10 @@ std::vector<std::byte> build_aiff_header(
     header.push_back(std::byte{static_cast<uint8_t>(bits_per_sample & 0xFF)});
 
     // Sample rate as 80-bit float (big-endian, exactly 10 bytes)
-    std::byte float80[10];
-    encode_float80(static_cast<double>(sample_rate), float80);
-    for (int i = 0; i < 10; ++i) {
-        header.push_back(float80[i]);
+    std::array<std::byte, 10> float80{};
+    encode_float80(static_cast<double>(sample_rate), float80.data());
+    for (auto i : float80) {
+        header.push_back(i);
     }
     
     // SSND chunk
@@ -1262,7 +1283,7 @@ write_track(
 
     // Validate sample range
     if (start_sample < 0 || end_sample < start_sample || end_sample >= info.frames) {
-        return Expected<std::filesystem::path, AudioError>(AudioError::InvalidRange);
+        return {AudioError::InvalidRange};
     }
 
     // Calculate the number of frames
@@ -1273,20 +1294,21 @@ write_track(
     int64_t byte_offset = start_sample * info.bytes_per_frame();
     auto raw_result = source.read_raw_samples(byte_offset, bytes_to_read);
     if (!raw_result.has_value()) {
-        return Expected<std::filesystem::path, AudioError>(AudioError::ReadError);
+        return {AudioError::ReadError};
     }
 
     // Determine output format
     std::string out_fmt = (output_format.empty()) ? info.format : std::string(output_format);
 
-    // Build header based on format
+    // Build header based on format. The else branch intentionally duplicates
+    // the WAV/RF64 body so unknown formats default to WAV.
     std::vector<std::byte> header;
+    // NOLINTNEXTLINE(bugprone-branch-clone) — explicit default-to-WAV fallback.
     if (out_fmt == "WAV" || out_fmt == "RF64") {
         header = build_wav_header(info.channels, info.sample_rate, info.bits_per_sample, bytes_to_read);
     } else if (out_fmt == "AIFF" || out_fmt == "AIFC") {
         header = build_aiff_header(info.channels, info.sample_rate, info.bits_per_sample, num_frames, bytes_to_read);
     } else {
-        // Default to WAV
         header = build_wav_header(info.channels, info.sample_rate, info.bits_per_sample, bytes_to_read);
     }
 
@@ -1312,7 +1334,7 @@ write_track(
         // Target filename is so long that any sibling temp name would
         // exceed NAME_MAX. Refuse the write rather than rely on the
         // OS to surface ENAMETOOLONG mid-stream.
-        return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        return {AudioError::WriteError};
     }
     const std::filesystem::path temp_path = std::move(*temp_path_opt);
 
@@ -1329,26 +1351,27 @@ write_track(
             // permission denied, etc.). Nothing to clean up beyond a
             // possible zero-byte file the OS may have left behind.
             cleanup_temp();
-            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+            return {AudioError::WriteError};
         }
 
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — binary IO; `ofstream::write` requires `const char*`.
         file.write(reinterpret_cast<const char*>(file_data.data()),
                    static_cast<std::streamsize>(file_data.size()));
         if (!file.good()) {
             cleanup_temp();
-            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+            return {AudioError::WriteError};
         }
 
         file.flush();
         if (!file.good()) {
             cleanup_temp();
-            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+            return {AudioError::WriteError};
         }
 
         file.close();
         if (file.fail()) {
             cleanup_temp();
-            return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+            return {AudioError::WriteError};
         }
     }
 
@@ -1357,10 +1380,10 @@ write_track(
     std::filesystem::rename(temp_path, output_path, rename_ec);
     if (rename_ec) {
         cleanup_temp();
-        return Expected<std::filesystem::path, AudioError>(AudioError::WriteError);
+        return {AudioError::WriteError};
     }
 
-    return Expected<std::filesystem::path, AudioError>(output_path);
+    return {output_path};
 }
 
 } // namespace mwaac

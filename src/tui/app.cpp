@@ -7,6 +7,7 @@
 #include <iostream>
 #include <string>
 #include <filesystem>
+#include <utility>
 #include "core/audio_file.hpp"
 
 namespace mwaac::tui {
@@ -16,15 +17,16 @@ using namespace ftxui;
 // Forward declaration for export
 void export_tracks(AppState& state);
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) — FTXUI event-loop wiring; decomposition tracked separately.
 int run_tui(AppState& state) {
     auto screen = ScreenInteractive::Fullscreen();
 
     // Cursor follows selected marker
     int cursor_col = 0;
     if (!state.split_points.empty() && state.selected_marker >= 0 &&
-        state.selected_marker < static_cast<int>(state.split_points.size())) {
+        std::cmp_less(state.selected_marker, state.split_points.size())) {
         int width = Terminal::Size().dimx - 2;
-        if (state.audio.samples.size() > 0) {
+        if (!state.audio.samples.empty()) {
             cursor_col = static_cast<int>(static_cast<std::size_t>(state.split_points[static_cast<std::size_t>(state.selected_marker)].start_sample * width) / state.audio.samples.size());
         }
     }
@@ -32,7 +34,7 @@ int run_tui(AppState& state) {
     auto component = Renderer([&] {
         int width = Terminal::Size().dimx - 2;
         int height = 20;  // Waveform height
-        int64_t total_samples = static_cast<int64_t>(state.audio.samples.size());
+        auto total_samples = static_cast<int64_t>(state.audio.samples.size());
         
         // Downsample audio for display (respect view boundaries)
         int64_t view_start = state.view_start;
@@ -49,10 +51,10 @@ int run_tui(AppState& state) {
                 int64_t rel_pos = state.split_points[i].start_sample - view_start;
                 int col = static_cast<int>((rel_pos * width) / (view_end - view_start));
                 if (col >= 0 && col < width) {
-                    MarkerInfo mi;
+                    MarkerInfo mi{};
                     mi.column = col;
                     mi.track_number = static_cast<int>(i + 1);
-                    mi.selected = (static_cast<int>(i) == state.selected_marker);
+                    mi.selected = (std::cmp_equal(i, state.selected_marker));
                     markers.push_back(mi);
                 }
             }
@@ -144,7 +146,7 @@ int run_tui(AppState& state) {
         return main_content;
     });
     
-    component = CatchEvent(component, [&](Event event) {
+    component = CatchEvent(component, [&](const Event& event) {
         // Handle export progress while exporting
         if (state.export_status.in_progress) {
             return true;  // Block other input during export
