@@ -2760,7 +2760,7 @@ zero-residue.**
   verbatim. Recorded here per cycle pattern (PR #63/#64/#66/#67
   audit-finding inline fix-ups) so future audits see the provenance.
 
-### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree
+### T8-SPEC-ARCH-DRIFT — PROJECT_SPEC.md architecture diagram doesn't match the actual src/ tree — **RESOLVED via T8-SPEC-ARCH-DRIFT-CLEANUP** option (a)
 
 - **Origin.** Filed 2026-05-28 during DOC-2-SPEC-RECONCILIATION
   pre-cure state check (#66, `cd98294`). Surfaced by direct read of `PROJECT_SPEC.md` lines
@@ -2835,6 +2835,63 @@ zero-residue.**
   CMakeLists.txt + #include paths).
 - **Cure-attribution.** When cured, this entry receives a Status /
   Resolution block.
+- **Status / Resolution.** RESOLVED via T8-SPEC-ARCH-DRIFT-CLEANUP
+  close-out, option (a) (match spec to current tree). User-ratified
+  via AskUserQuestion 2026-06-02. The `PROJECT_SPEC.md` Architecture
+  section was rewritten to enumerate the actual `src/` tree as of
+  cure time:
+  - **`src/cli/` and `src/utils/` placeholder dirs preserved.**
+    Annotated as `(reserved placeholder; .gitkeep-only)` in the
+    diagram. Sub-decision: kept rather than `git rm`'d, matching
+    DOC-1's preserve-by-default precedent for benign tree state.
+    Notes section below the diagram explains CLI parsing landed
+    in `main.cpp` and DSP helpers folded into `src/core/*`.
+  - **Tree files added to diagram:** `alignment_result.hpp`,
+    `analysis.{cpp,hpp}`, `analysis_result.hpp`,
+    `audio_buffer.{cpp,hpp}`, `audio_file.{cpp,hpp}`,
+    `audio_info.hpp`, `correlation.{cpp,hpp}`, `drift_model.cpp`,
+    `frame_sample_bridge.hpp`, `music_detection.{cpp,hpp}`,
+    `pocketfft_hdronly.h` (cross-ref to THIRD_PARTY_LICENSES.md per
+    M-13), `split_point.hpp`, `verbose.hpp`, `app_handlers.{cpp,hpp}`
+    (Tier 7 state-mutator harness), `reaper_export.{cpp,hpp}`.
+  - **Spec stubs removed:** `alignment.hpp`, `editor.hpp`,
+    `src/utils/dsp.hpp`, `src/core/split_points.hpp` (plural; the
+    actual file is `split_point.hpp` singular).
+  - **Naming-convention drift resolved:** `reference.hpp` / `blind.hpp`
+    stubs replaced with `*_mode.{cpp,hpp}` matching tree.
+  - **Dead-file cross-references:** `core/core.hpp` annotated
+    `(dead; Mi-12 pending deletion)`; `core/test_deps.cpp` annotated
+    `(dead; Mi-11 pending deletion)`. The annotations make the
+    Tier 9 cleanup items discoverable from the architecture diagram.
+  - **Legacy-diagram notes section** appended explaining the
+    placeholder dirs, the absorbed/never-required stubs, and the
+    naming-convention transition. Provides narrative continuity
+    for readers of older revisions of PROJECT_SPEC.md.
+  - **Drift-detection bias** preserved by leading with "describes
+    current state, not aspiration" — future drift between spec
+    and tree should be cured by updating this section (matching
+    DOC-3's living-document discipline), not by re-introducing
+    aspirational stubs.
+  - **Audit fix-up note.** PR #72's first commit `4603b22` shipped
+    the diagram with two struct-location slips: `drift_model.cpp`
+    was annotated "struct in modes/reference_mode.hpp" and
+    `reference_mode.{cpp,hpp}` annotated "+ DriftModel struct", but
+    `grep -n DriftModel src/` shows `struct DriftModel` is declared
+    at `src/core/alignment_result.hpp:9` with zero references in
+    `reference_mode.hpp`. Also `alignment_result.hpp` was
+    mis-annotated "AlignPerTrackResult struct" — actual contents
+    are `AlignmentResult` + `TrackOffset` + `DriftModel`. Single-
+    audit HALT on the very claim-vs-reality axis the PR exists to
+    close. Fix-up reconciled inline: line 81 annotation lists all
+    three structs in alignment_result.hpp; line 89 points
+    drift_model.cpp's struct-location to alignment_result.hpp;
+    line 99 drops the false DriftModel claim from
+    reference_mode.{cpp,hpp}. Same fix-up pattern as PR #68 LICENSE
+    fidelity HALT (recorded in BACKLOG so future audits see the
+    cure's correction provenance). Mirrors
+    `feedback_user_concrete_detail_paraphrase.md` — orchestrator
+    paraphrased struct locations from memory rather than greping
+    the source; audit's empirical verification caught the slip.
 
 ### Mi-5-BLIND — magic threshold soup in `blind_mode.cpp` (Mi-5 sibling) — **RESOLVED in #69 (`1ca7249`)** via Mi-5-BLIND-CLEANUP
 
