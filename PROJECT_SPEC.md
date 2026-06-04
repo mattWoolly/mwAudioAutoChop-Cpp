@@ -84,7 +84,6 @@ src/
 │   ├── audio_buffer.{cpp,hpp}     # AudioBuffer container + ops
 │   ├── audio_file.{cpp,hpp}       # libsndfile + parser-validated I/O
 │   ├── audio_info.hpp             # AudioInfo metadata struct
-│   ├── core.hpp                   # (dead; Mi-12 pending deletion)
 │   ├── correlation.{cpp,hpp}      # Cross-correlation (time-domain + FFT)
 │   ├── drift_model.cpp            # DriftModel impl (struct in core/alignment_result.hpp)
 │   ├── frame_sample_bridge.hpp    # Typed sample/frame index discipline
