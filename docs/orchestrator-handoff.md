@@ -118,7 +118,7 @@ These are Tier 2 by classification but were never dispatched. Surface to the use
 
 - **`Mi-2`** — `compute_rms_energy` guard order fragility.
 - **`Mi-6`** — `min` identifier shadows `std::min`.
-- **`Mi-11`, `Mi-12`, `Mi-13`** — dead-code deletions (`tests/test_deps.cpp`, `src/core/core.hpp`, `verbose.hpp g_timer_start`).
+- **`Mi-11`, `Mi-12`, `Mi-13`** — dead-code deletions. **All RESOLVED.** Mi-11 (`src/core/test_deps.cpp`) deleted in #73 (`c5939d1`) as part of T8-CLANG-TIDY-BASELINE-CLEANUP. Mi-12 (`src/core/core.hpp`) and Mi-13 (`verbose.hpp g_timer_start`) deleted in #74 (`8c1e219`) as T9-DEAD-CODE-SWEEP. Original entry path `tests/test_deps.cpp` was inaccurate at filing — the file actually lived at `src/core/test_deps.cpp` per `git show 26d11df`.
 - **`Mi-14`** — verbose globals not thread-safe; promote to `std::atomic<bool>` or pass `Logger&`.
 - **`Mi-15`** — explicit ctors audit. **Resolved by M-14.** Mark `[x]` next paperwork pass.
 - **`Mi-16`** — `encode_float80` NaN/over-/under-flow handling. Documentation/assert work; not user-visible. Surfaced by C-1 audit-2.
