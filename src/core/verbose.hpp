@@ -9,9 +9,6 @@ namespace mwaac {
 // Global verbose flag - set by CLI
 inline bool g_verbose = false;
 
-// Start timing for a named operation
-inline std::chrono::steady_clock::time_point g_timer_start;
-
 // Verbose output to stderr (so stdout remains clean for structured output)
 inline void verbose(const std::string& msg) {
     if (g_verbose) {
