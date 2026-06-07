@@ -229,9 +229,12 @@ migration to `std::expected`-style storage happens in M-14.
 
 ### C-5 — `compute_spectral_flatness` unsigned wrap + stub implementation
 
-- **Defect.** `analysis.cpp:82–84` wraps on `samples.size() < frame_length`,
+- **Defect.** `analysis.cpp:141` wraps on `samples.size() < frame_length`,
   requesting a ~2⁶³ allocation. The body also returns all-0.5 placeholder
-  values.
+  values. (Pointer was `:82–84`, stale since Mi-2 (#76) shifted line numbers;
+  the guarded sibling sites `compute_rms_energy` / `compute_zero_crossing_rate`
+  were cured there, but this site is left for C-5 — it has no corrective guard
+  and its cure is behavior-changing, return-empty, not a behavior-preserving reorder.)
 - **Invariant established.** "Every analysis function that declares a public
   signature delivers on it (no stub returns that masquerade as data) or is
   removed from the public header."
@@ -3400,7 +3403,7 @@ discoverable across the codebase.
 
 ## Tier 9 — Cleanup (Minor, Nit)
 
-### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`.
+### Mi-2 — compute_rms_energy guard order fragility — `src/core/analysis.cpp`. — **RESOLVED in #76 (`c2609b8`)** via Mi-2 guard reorder. `compute_rms_energy` and `compute_zero_crossing_rate` computed `num_frames = 1 + ((size() - frame_length) / hop_length)` unconditionally, then corrected `num_frames = 1` afterward for sub-frame-length signals — so the `size() - frame_length` subtraction unsigned-wrapped (defined modular arithmetic, invisible to UBSan) before being discarded. Reordered to initialize `num_frames = 1` (the short-signal answer) and conditionally `+=` the extra frames only when `size() >= frame_length`, so the subtraction is never evaluated while negative. `num_frames` is identical in every case (`size()<F`→1, `size()==F`→1, `size()>F`→`1+(size-F)/hop`), so the change is byte-for-byte behavior-preserving; 14/14 ctest green. Used the fully-initialized `= 1` form rather than declared-then-assigned `size_t num_frames;` to avoid a new `cppcoreguidelines-init-variables` finding (clang-tidy is in the merge gate since #73). **Scope:** rms + zcr only. The standing family-grep surfaced a third site of the same pattern at `compute_spectral_flatness` (`analysis.cpp:141`), but that site has **no** corrective guard (latent `bad_alloc` / ~2⁶³ allocation on short input) and is already tracked as **C-5** (Tier 2, cure = return empty on short input) — excluded per the cross-reference rule and left untouched. Audit CLEAN (independent case-analysis confirmed `num_frames` identical across all three size regimes, entry guard `frame_length>0` intact at the casts, spectral_flatness verified unmodified); CI 6/6 green (clang-tidy included).
 ### Mi-3 — resample_linear divides by zero when sample_rate == 0 — `src/core/audio_buffer.cpp`. — **RESOLVED in #33 (`8af5793`)** via structural cure (deviation from original "early return {}" spec; see `docs/deviations.md` Mi-3 entry for reasoning).
 ### Mi-6 — `min` identifier shadows std::min — `src/modes/reference_mode.cpp`. — **RESOLVED in #75 (`ef4dc9b`)** via Mi-6-MIN-SHADOW (behavior-preserving rename `min`→`minutes` at the decl `reference_mode.cpp:1409` and its sole use `:1417`, inside the `g_verbose`-gated "Per-Track Alignment Results" print loop; `std::to_string(minutes)` emits bytes identical to `std::to_string(min)`, so verbose stderr output is unchanged). **Scope correction:** the original entry also listed `src/main.cpp`, but main.cpp contains zero `min` tokens (`grep -nE '\bmin\b' src/main.cpp` → 0 hits) — that reference was stale and is dropped; reference_mode.cpp was the single real site. Audit CLEAN (independently confirmed 16× qualified `std::min` with no `using`-directive, shadow-family sweep = this one site / no local `max` siblings, empty Active known-failing list); CI 6/6 green (clang-tidy included).
 ### Mi-11 — test_deps.cpp is dead — delete or compile. — **RESOLVED in #73 (`c5939d1`)** via T8-CLANG-TIDY-BASELINE-CLEANUP (delete option). The file was deleted as part of the clang-tidy baseline clean-up because (a) it was not referenced in CMakeLists.txt and was never compiled into any target, (b) the file's absence from `compile_commands.json` produced a `clang-diagnostic-error` under clang-tidy, and (c) the file's only contents were `#include` statements verifying header availability — there was no behavior to preserve. Verified no other references in the source tree before deletion. See T8-CLANG-TIDY-BASELINE entry's Status / Resolution block for the closure details.
