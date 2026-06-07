@@ -36,9 +36,12 @@ std::vector<float> compute_rms_energy(
         return {};
     }
 
-    size_t num_frames = 1 + ((samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length));
-    if (samples.size() < static_cast<size_t>(frame_length)) {
-        num_frames = 1;  // Single frame for short signals
+    // Evaluate the frame-count formula only once `size() - frame_length` is
+    // known non-negative: for signals shorter than one frame that subtraction
+    // would unsigned-wrap, so guard it rather than correcting after the fact.
+    size_t num_frames = 1;  // short signals collapse to a single frame
+    if (samples.size() >= static_cast<size_t>(frame_length)) {
+        num_frames += (samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length);
     }
 
     std::vector<float> rms(num_frames);
@@ -77,9 +80,10 @@ std::vector<float> compute_zero_crossing_rate(
         return {};
     }
     
-    size_t num_frames = 1 + ((samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length));
-    if (samples.size() < static_cast<size_t>(frame_length)) {
-        num_frames = 1;
+    // Same unsigned-wrap guard as compute_rms_energy above.
+    size_t num_frames = 1;  // short signals collapse to a single frame
+    if (samples.size() >= static_cast<size_t>(frame_length)) {
+        num_frames += (samples.size() - static_cast<std::size_t>(frame_length)) / static_cast<std::size_t>(hop_length);
     }
 
     std::vector<float> zcr(num_frames);
