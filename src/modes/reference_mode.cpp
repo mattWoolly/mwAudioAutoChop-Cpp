@@ -1406,7 +1406,7 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
         verbose_section("Per-Track Alignment Results");
         for (size_t i = 0; i < offsets.size(); ++i) {
             double offset_sec = static_cast<double>(offsets[i].first) / analysis_sr;
-            int min = static_cast<int>(offset_sec) / 60;
+            int minutes = static_cast<int>(offset_sec) / 60;
             int sec = static_cast<int>(offset_sec) % 60;
             std::ostringstream conf_oss;
             conf_oss << std::fixed << std::setprecision(3) << offsets[i].second;
@@ -1414,7 +1414,7 @@ Expected<AnalysisResult, ReferenceError> analyze_reference_mode(
             pos_oss << std::fixed << std::setprecision(2) << offset_sec;
             verbose("  Track " + std::to_string(i + 1) + " (" + tracks[i].path.filename().string() + "):");
             verbose("    Position: " + std::to_string(offsets[i].first) + " samples" +
-                    " (" + pos_oss.str() + "s = " + std::to_string(min) + ":" + std::to_string(sec) + ")");
+                    " (" + pos_oss.str() + "s = " + std::to_string(minutes) + ":" + std::to_string(sec) + ")");
             verbose("    Confidence: " + conf_oss.str());
         }
     }
