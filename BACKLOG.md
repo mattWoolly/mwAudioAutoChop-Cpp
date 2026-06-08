@@ -3877,6 +3877,40 @@ The review's Nit list (dead `static` on constexpr magic bytes, `M_PI` →
 `std::numbers::pi`, `tui/waveform.cpp:57` over-allocation, etc.) ride along
 with their enclosing TU's -Wconversion pass (Mi-18), one commit per TU.
 
+### Tier 9 close — remediation complete, ready for testing
+
+Tier 9 (Cleanup / Nit) cleanup scope closed 2026-06-07. Resolving PRs:
+Mi-3 (#33), Mi-17 (#46), M-REAPER-EXPORT-SORT-THROW (#47), Mi-11 (#73),
+Mi-12 + Mi-13 (#74), Mi-6 (#75), Mi-2 (#76), Mi-14 + Mi-16 doc-fix + FU-4c
+(#77), and the Mi-18-FU-6b/7a/7b/7c/7d/7e/8 dead-code batch (#78, `96a370b`).
+Mi-15 closed by M-14; Mi-18 + MI18-FOLLOWUP-BLIND-ITER reconciled RESOLVED
+2026-06-07 (the `-Werror` body had landed incrementally across the per-TU
+`-Wconversion` passes; the entries were never stamped); the Nits N-1..N-~12
+rode along with those same Mi-18 per-TU passes. Every PR since the gate went
+green (#73) merged on 6/6 green CI (build ubuntu/macOS × Debug/Release +
+sanitizers + clang-tidy), each with an independent audit PASS.
+
+**Not zero-residue — the following are explicitly held below the Tier-9 cut
+and are NOT blockers for testing:**
+- *Hardening, deferred:* Mi-16 residual (clamp → `assert(isfinite && >= 0)`
+  + `encode_float80(1e±5000)` extreme-value tests). The doc/code-mismatch
+  correctness defect is cured (#77); only the hardening remains, and AIFF
+  sample rates 44.1k–192k never reach the clamped path in practice.
+- *Design-level, deferred:* Mi-18-FU-1/2/3/4a (float/double interpolant
+  kernel choices, the `size_t→double` ratio rewrite, the vestigial
+  `compute_rms_energy` `sample_rate` param) — each a separate design pass.
+- *Pragma-shim, deferred:* Mi-18-FU-5/6 (centralize the pocketfft / Catch2
+  `#pragma` suppressions). Already cured at point-of-use; the shim is a
+  nice-to-have. Mi-18-FU-4b folded into C-5 (spectral_flatness FFT).
+- *Trigger-gated follow-ups:* F-AUDIT2-1 (depends on FIXTURE-WAVEEXT #25),
+  F-AUDIT2-3 (defer until a second `MWAAC_ASSERT_PRECONDITION` consumer),
+  F-AUDIT2-DT (defer until the next death-test consumer).
+
+**Ready for testing.** All nine remediation tiers are closed; the only open
+work is the deferred/trigger-gated set above, plus the forward-looking
+NEW-BLIND-GAP / NEW-WAVEEXT-WRITE invariants and the out-of-scope
+fuzzing / Windows-CI items. Next step is the human TUI golden-path pass.
+
 ---
 
 ## New invariants surfaced during remediation
