@@ -235,6 +235,10 @@ migration to `std::expected`-style storage happens in M-14.
   the guarded sibling sites `compute_rms_energy` / `compute_zero_crossing_rate`
   were cured there, but this site is left for C-5 — it has no corrective guard
   and its cure is behavior-changing, return-empty, not a behavior-preserving reorder.)
+- **Cross-reference.** `Mi-18-FU-4b` (Mi-18 follow-up catalog) is the **same
+  work** — it flagged this `// TODO: Implement with FFT` stub during the Mi-18
+  sweep. Single-tracked here under C-5 to avoid double-listing; the vestigial
+  `sample_rate` param FU-4b notes resolves when this implementation lands.
 - **Invariant established.** "Every analysis function that declares a public
   signature delivers on it (no stub returns that masquerade as data) or is
   removed from the public header."
@@ -3410,6 +3414,12 @@ discoverable across the codebase.
 ### Mi-12 — src/core/core.hpp is dead — delete. — **RESOLVED in #74 (`8c1e219`)** via T9-DEAD-CODE-SWEEP (delete option). Empirically verified dead pre-cure: `grep -rn "core/core.hpp\|#include.*\"core.hpp\"\|#include <core/core" src/ tests/` returned zero hits (the file is an umbrella header that `#include`s `audio_info.hpp` / `split_point.hpp` / `analysis_result.hpp` / `alignment_result.hpp`, but nothing includes it back). Deleted via `git rm`. Removed from PROJECT_SPEC.md Architecture diagram in same PR (the entry was previously annotated `(dead; Mi-12 pending deletion)` per T8-SPEC-ARCH-DRIFT-CLEANUP; preemptive removal matches the PR #73 audit's cross-doc reconciliation pattern catch on test_deps.cpp).
 ### Mi-13 — verbose.hpp g_timer_start is unused — delete. — **RESOLVED in #74 (`8c1e219`)** via T9-DEAD-CODE-SWEEP (delete option). Empirically verified unused pre-cure: `grep -rn "g_timer_start" src/ tests/` returned only the declaration at `src/core/verbose.hpp:13`. `VerboseTimer` uses its own member `start_` (`src/core/verbose.hpp:34, 47`) rather than the global; no other code path reads or writes `g_timer_start`. Deleted the declaration line + surrounding comment ("Start timing for a named operation") via `Edit`. Adjacent: `#include <chrono>` retained — still required for `VerboseTimer`'s `std::chrono::steady_clock::time_point start_` member.
 ### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&. *Scope refined post-T9-DEAD-CODE-SWEEP (PR #74): `g_timer_start` was the second verbose-global; deleted as unused via Mi-13 sibling, so the remaining surface is `g_verbose` only (`src/core/verbose.hpp:10`). Mi-14's "globals" framing was correct at filing time; the singular form would now read as "`g_verbose` is not thread-safe".*
+
+**Ratified 2026-06-07 — `std::atomic<bool>`.** Cured in this PR: `g_verbose`
+is now `inline std::atomic<bool> g_verbose{false}` (`verbose.hpp`, with
+`#include <atomic>`); every read/write site compiles unchanged via atomic's
+`operator bool`/`operator=`. The `:10` ref above is pre-cure (the declaration
+is now at `:11` after the added include). RESOLVED stamp lands in the close-out.
 ### Mi-15 — explicit ctors audit on result wrappers — resolved by M-14.
 ### Mi-16 — encode_float80 NaN/over-/under-flow handling
 
@@ -3425,6 +3435,16 @@ discoverable across the codebase.
   either reject in Debug or emit a documented bit pattern.
 - *Note.* AIFF sample rates 44.1 k–192 k all fit comfortably; this is a
   hardening item, not a correctness bug for the project's actual use case.
+- **Ratified 2026-06-07 — doc-only fix (cure option b).** The doc/code
+  mismatch is cured in this PR: the `encode_float80` header comment no longer
+  claims "NaN encodes as +0" (the pre-cure claim the bullets above describe);
+  it now states NaN is out of contract — asserted in Debug, unspecified in
+  Release (falls through `frexp`, NOT +0) — and notes the sole caller passes a
+  real sample rate so NaN never reaches it. **Residual, deferred (below the
+  Tier-9 cut):** the clamp → `assert(isfinite && >= 0)` hardening (bullet 1)
+  and the `encode_float80(1e±5000)` extreme-value tests (bullet 3) are
+  intentionally NOT done — hardening, not the doc-lie correctness defect.
+  RESOLVED stamp for the doc-mismatch lands in the close-out.
 ### Mi-17 — std::stoll in natural_less can throw — bound digit count + un-SKIP natural-sort unit test — **RESOLVED in #46 (`4d542d3`)**
 
 - **Defect.** `natural_less` (in `src/modes/reference_mode.cpp` or its
@@ -3633,7 +3653,22 @@ discoverable across the codebase.
   C-2's existing tests to use it.
 - **Trigger.** Defer until M-14 adds the next death-test consumer.
 
-### Mi-18 — -Wconversion / -Wdouble-promotion / -Wsign-conversion cleanup
+### Mi-18 — -Wconversion / -Wdouble-promotion / -Wsign-conversion cleanup — **RESOLVED (reconciled 2026-06-07)**
+
+**Status — RESOLVED.** The `-Werror` body was completed incrementally across
+the cycle's per-TU passes (e.g., `audio_buffer.cpp` in PR #30 `b9f9508`;
+`blind_mode.cpp` in `46e58ce` "style(blind_mode): silence -Werror findings
+(Mi-18)") — the entry was simply never stamped. Verified 2026-06-07: a local
+Release + `MWAAC_WERROR=ON` rebuild of every first-party TU is warning-free
+(only a benign `ld: ignoring duplicate libraries` linker notice, not a
+compiler `-W` finding), consistent with 6/6 green CI on every PR since the gate
+was set green in #73. The 15 follow-up *questions* the sweep surfaced
+(suppressions via `[[maybe_unused]]` / cast / `#pragma` that silenced the
+warning without resolving the underlying design or correctness point) were
+captured in `docs/m-i-18-followups.md` and are promoted to the tracked
+`Mi-18-FU` catalog entry below (per-item IDs `Mi-18-FU-1` … `Mi-18-FU-8`,
+15 items total). The historical plan text is retained for
+narrative continuity.
 
 Systematic cleanup of the 89 warning-as-error findings the Phase 0.2
 harness surfaced. One PR per TU. **Recommended starting TU:**
@@ -3659,7 +3694,21 @@ calibrates effort):
 
 Each of these is a ≤ 30-line diff; one item, one PR, one audit.
 
-### MI18-FOLLOWUP-BLIND-ITER — defensive cast on `blind_mode.cpp:73-74` iterator+size_t arithmetic
+### MI18-FOLLOWUP-BLIND-ITER — defensive cast on `blind_mode.cpp:73-74` iterator+size_t arithmetic — **RESOLVED (reconciled 2026-06-07)**
+
+**Status — RESOLVED (reconciled).** The two defensive casts this item asks
+for are already present in the tree — they landed in commit `46e58ce`
+("style(blind_mode): silence -Werror findings (Mi-18)") as part of the
+Mi-18 per-TU `-Wconversion`/`-Wsign-conversion` sweep, not as a dedicated
+PR. The `:73-74` line refs throughout this entry are **stale**: the
+`std::vector<float> gap_samples(...)` construction now sits at
+`blind_mode.cpp:104-105`, each iterator offset wrapped exactly as the exit
+criteria require:
+`samples.begin() + static_cast<std::ptrdiff_t>(start_sample)` and
+`... static_cast<std::ptrdiff_t>(end_sample)`. Verified against the working
+tree 2026-06-07. No code change needed; this is decision-independent
+reconciliation paperwork closing out a tracking entry whose work was
+already done under its owner-epic.
 
 - **Origin.** Promoted from the Mi-18 audit pass-2 advisory finding (PR #30).
   The audit-agent grepped for `.begin() + .size()` / iterator+`size_t`
@@ -3688,13 +3737,112 @@ Each of these is a ≤ 30-line diff; one item, one PR, one audit.
   reconciliation should cite this item back to PR #30's audit-2 verdict
   alongside the original `reference_mode.cpp:240` cure.
 - **Exit criteria.**
-  - [ ] `samples.begin() + start_sample` → `samples.begin() + static_cast<std::ptrdiff_t>(start_sample)` at `blind_mode.cpp:73`.
-  - [ ] Same cure at line 74 for `end_sample`.
-  - [ ] Build remains green on Linux GCC and macOS Apple Clang.
-  - [ ] Single commit, no scope creep beyond the two casts.
+  - [x] `samples.begin() + start_sample` → `samples.begin() + static_cast<std::ptrdiff_t>(start_sample)` — present at `blind_mode.cpp:104` (stale ref said `:73`).
+  - [x] Same cure at line 74 for `end_sample` — present at `blind_mode.cpp:105`.
+  - [x] Build remains green on Linux GCC and macOS Apple Clang — landed under `46e58ce`; CI green since.
+  - [x] Single commit, no scope creep beyond the two casts — folded into the `blind_mode.cpp` Mi-18 TU sweep (`46e58ce`).
 - **Effort.** ≤ 5 lines of diff, one commit, no audit needed (mechanical
   defensive cast — the audit framework already covered the broader pattern
   in Mi-18 pass 2).
+
+### Mi-18-FU — Mi-18 follow-up catalog (15 items) — promotion of `docs/m-i-18-followups.md`
+
+**Origin.** The Mi-18 `-Werror` sweep silenced its findings with mechanical
+casts / `[[maybe_unused]]` / `#pragma` suppressions, intentionally NOT folding
+the deeper design/correctness questions into the cure PRs (Mi-18 scope =
+mechanical only). Those 15 questions were parked in
+`docs/m-i-18-followups.md`. This entry promotes them into the source-of-truth
+BACKLOG so they survive the Tier-9 close-out and the testing handoff rather
+than living only in a side doc. **The mechanical cure is DONE and verified**
+(see Mi-18 above — `-Werror` body clean); every item below is a *post-cure*
+question and none block the build.
+
+**Identification.** Cited by **symbol name**, not line — the FU-doc's line refs
+are stale (line-drift rule, `docs/orchestrator-handoff.md`). Locations below
+are from a working-tree grep 2026-06-07.
+
+*Candidate correctness defect — RATIFIED 2026-06-07 (remove the param); cured in this PR:*
+
+- `Mi-18-FU-4c` — `estimate_noise_floor(window_seconds)` ignored its window.
+  Pre-cure, the declaration carried `window_seconds = 2.0f` ("Window for
+  searching quietest region") while the body marked it `[[maybe_unused]]` and
+  took a 10th-percentile RMS over the *entire* signal; the sole caller passed
+  the 2.0 s default, which was silently dropped. **Distinct from the resolved
+  `score_gap` `sample_rate` issue (Mi-7 / M-7)** despite the FU-doc's "REAL
+  Mi-7 SMOKE" label — its own unfiled ignored-param issue. **Ratified
+  2026-06-07: remove the param** (the window was never load-bearing; the
+  estimator is whole-signal by design). Cured in this PR — `window_seconds`
+  dropped from both the `music_detection.hpp` declaration and the
+  `music_detection.cpp` definition; all three call sites already omitted the
+  argument, so no caller changed. RESOLVED stamp lands in the close-out.
+
+*Real feature work — single-tracked elsewhere:*
+
+- `Mi-18-FU-4b` — `compute_spectral_flatness` is a `// TODO: Implement with
+  FFT` stub returning `0.5f` (`analysis.cpp:133`, decl `analysis.hpp:33`).
+  **This is the same work as `C-5`** — folded into C-5 to avoid double-tracking;
+  the vestigial `sample_rate` param resolves when the FFT lands.
+
+*Dead-code deletion candidates — RATIFIED 2026-06-07 (delete as a batch); cure lands in the follow-up dead-code-sweep PR (verify call-sites first):*
+
+- `Mi-18-FU-6b` — `measure_fade_in_samples` (`reference_mode.cpp:365`) +
+  `estimate_noise_floor_db` (`:637`), both `[[maybe_unused]]`, no call site.
+  Future-hook vs delete.
+- `Mi-18-FU-7a` — dead `bytes_per_frame` in the AIFF header builder.
+  **Target is the `[[maybe_unused]]` instance at `audio_file.cpp:1131` ONLY** —
+  there is a LIVE `bytes_per_frame` at `:1031` (used `:1032`/`:1033`) and a LIVE
+  `bytes_per_frame()` method (`:691`,`:1291`,`:1294`). A by-name delete would
+  break the live ones.
+- `Mi-18-FU-7b` — `gap_start_sec` (`blind_mode.cpp:272`, `[[maybe_unused]]`)
+  computed but never logged. Rewire into verbose output or delete.
+- `Mi-18-FU-7c` — `create_test_wav` stub, no caller, doesn't even write a file
+  (`test_audio_file.cpp:28`, `[[maybe_unused]]`). Delete; `test_lossless.cpp`
+  has the real one.
+- `Mi-18-FU-7d` — `double phase = 0.0` declared + never-advanced in two fixture
+  builders (`test_integration.cpp:162` and `:204`, both `[[maybe_unused]]`).
+  Delete both.
+- `Mi-18-FU-7e` — `read_file_bytes` `[[maybe_unused]]` at `test_lossless.cpp:21`.
+  **Caveat:** the FU-doc claims a twin in `test_integration.cpp` "is used" at
+  `:26`, but the twin is actually at `:89` and is ALSO `[[maybe_unused]]`.
+  Confirm call-sites for BOTH before deleting either; the "is used" claim needs
+  re-verification.
+- `Mi-18-FU-8` — `vinyl_info` bound but never read (`test_integration.cpp:690`,
+  `[[maybe_unused]]`). Possibly an abandoned assertion — sanity-check whether the
+  test should assert on it before deleting.
+
+*Design-level — recommend DEFER (cast landed; deeper fix is a separate design pass, out of Tier 9):*
+
+- `Mi-18-FU-1` — `resample_linear` mixes `float`/`double` interpolant
+  (`audio_buffer.cpp:57`). Keep-float vs promote-to-double kernel.
+- `Mi-18-FU-2` — channel-average `float/int` divide (`audio_buffer.cpp:41`,
+  cast present). `std::accumulate` cleanup candidate; numerically fine for audio.
+- `Mi-18-FU-3` — `output_size` `size_t→double` ratio cast past 2^53
+  (`audio_buffer.cpp:81`; Mi-3 already guards the cast at `:72`). Integer-
+  arithmetic rewrite is the deeper fix.
+- `Mi-18-FU-4a` — vestigial `sample_rate` on `compute_rms_energy`
+  (`analysis.hpp:14` / `analysis.cpp:29`, `[[maybe_unused]]`). Keep-for-ABI vs
+  drop — a signature change.
+
+*Already cured via `#pragma`; shim is a nice-to-have — recommend DEFER:*
+
+- `Mi-18-FU-5` — pocketfft `size→long-double` warning, suppressed by `#pragma`
+  at the include site in `correlation.cpp` (vendored header off-limits). A
+  `mwaac_fft.hpp` shim would centralize the suppression.
+- `Mi-18-FU-6` — Catch2 template warnings, suppressed by `#pragma` in test TUs.
+  A shared `tests/test_main.hpp` would centralize it.
+
+**Cross-references.** `Mi-18-FU-4b` ⇄ `C-5` (same spectral_flatness work —
+single-track under C-5). `Mi-18-FU-4c` is independent of `Mi-7` / `M-7`. The
+`### Nits — N-1 through N-~12` section below overlaps this catalog (both are
+ride-along cleanup); the dead-`static` / `M_PI` / waveform nits are tracked
+there.
+
+**Status.** Catalog promoted 2026-06-07. Ratification outcomes (2026-06-07):
+**FU-4c → remove the param (cured in this PR)**; **the FU-6b/7a/7b/7c/7d/7e/8
+dead-code batch → delete (cure in the follow-up dead-code-sweep PR)**;
+design-level (FU-1/2/3/4a) and pragma-shim (FU-5/6) **deferred** as below the
+Tier-9 cut; FU-4b folded into C-5. RESOLVED stamps land in each item's
+close-out.
 
 ### Nits — N-1 through N-~12
 
