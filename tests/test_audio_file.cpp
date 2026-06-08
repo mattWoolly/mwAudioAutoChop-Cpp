@@ -22,22 +22,6 @@
 
 #include "core/audio_file.hpp"
 
-namespace {
-
-// Create a temporary test WAV file for testing
-[[maybe_unused]] std::filesystem::path create_test_wav() {
-    auto temp_dir = std::filesystem::temp_directory_path();
-    auto test_file = temp_dir / "test_audio_file.wav";
-    
-    // Use libsndfile to create a simple test file
-    // For now, just check that the file doesn't exist
-    // The actual file creation would use libsndfile
-    
-    return test_file;
-}
-
-} // namespace
-
 TEST_CASE("AudioError enum values", "[audio_file]") {
     // Verify AudioError values exist
     CHECK(static_cast<int>(mwaac::AudioError::FileNotFound) >= 0);

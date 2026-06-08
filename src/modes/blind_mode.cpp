@@ -269,7 +269,6 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
                                      signal_reference_rms);
 
         if (g_verbose) {
-            [[maybe_unused]] double gap_start_sec = static_cast<double>(gap_start_sample.value) / static_cast<double>(config.analysis_sr);
             double gap_duration_sec = static_cast<double>(gap_duration) / static_cast<double>(config.analysis_sr);
             std::ostringstream conf_oss;
             conf_oss << std::fixed << std::setprecision(3) << confidence;
