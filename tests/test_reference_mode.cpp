@@ -438,8 +438,8 @@ TEST_CASE("M-REF-FRAME-SAMPLE-BRIDGE: env_frame_to_sample multiplies by frame_si
     using mwaac::detail::EnvFrameIdx;
     using mwaac::detail::env_frame_to_sample;
 
-    // Representative envelope frame_sizes from the actual call sites:
-    //   - measure_fade_in_samples uses 100 ms: sr=44100 → 4410.
+    // Representative envelope frame_sizes that exercise the bridge:
+    //   - 100 ms framing: sr=44100 → 4410.
     //   - compute_rms_envelope / envelope_refine_start use 50 ms:
     //     sr=44100 → 2205.
     const std::int64_t fs_100ms_at_44100 = 4410;

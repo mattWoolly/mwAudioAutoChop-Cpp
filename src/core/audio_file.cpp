@@ -1130,8 +1130,6 @@ std::vector<std::byte> build_aiff_header(
     std::vector<std::byte> header;
     header.reserve(54);
     
-    int bytes_per_sample = (bits_per_sample + 7) / 8;
-    [[maybe_unused]] int bytes_per_frame = channels * bytes_per_sample;
     int64_t form_size = data_size + 46;  // COMM(26) + SSND(8) + data + 12 overhead
     int64_t ssnd_size = data_size + 8;  // includes offset and block size
     

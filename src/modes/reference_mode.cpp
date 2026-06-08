@@ -71,27 +71,6 @@ static constexpr double kTrackEndTailPadSeconds        = 1.0;
 static constexpr double kTrackEndSilenceFloorDb        = -45.0;
 static constexpr double kTrackEndMinSilenceRunSeconds  = 3.0;
 
-// ----- Lead-in fade-detection (measure_fade_in_samples) ------------------
-
-// Default search/fade-length window for the fade-in detector. Real
-// fade-ins are 1-3 seconds; the cap protects against over-shifting
-// when a slow buildup would otherwise report an implausibly long fade.
-static constexpr double kFadeInMaxSearchSeconds = 20.0;
-static constexpr double kFadeInMinFadeSeconds   = 1.0;
-static constexpr double kFadeInMaxFadeSeconds   = 2.5;
-// Steady-state-RMS estimate starts at this frame index (80 = 8 s at
-// 100 ms frames). Starting past 8 s gives headroom for slow fade-ins
-// (Bicep-style ambient buildups) to reach steady before the median
-// window begins.
-static constexpr int64_t kFadeInSteadyStateStartFrame = 80;
-// "End of fade-in" target relative to steady-state RMS, expressed as a
-// linear ratio: 0.316 ≈ pow(10, -10/20) = -10 dB. Loose enough to
-// catch slow fades without requiring the signal to nearly reach
-// steady. The pre-fade GRADUAL-rise sanity check reuses the same ratio
-// (the frame `min_fade_seconds` before fade_end must still be > 10 dB
-// below steady).
-static constexpr double kFadeInTargetRatioMinus10Db = 0.316;
-
 // ----- RMS envelope / envelope-refine ------------------------------------
 
 // Default RMS-envelope frame duration. 50 ms is a compromise: short
@@ -126,10 +105,6 @@ static constexpr double kEnvelopeRefineMaxShiftSeconds = 4.0;
 // digital silence. Quiet-but-audible content (a -60 dB fade-in reads
 // ~1e-3) sits above this and is preserved.
 static constexpr double kDigitalSilenceLinearThreshold = 1e-4;
-// Percentile of 10 ms-frame RMS values used to estimate a signal's
-// noise floor (10th percentile). Sits well below typical surface-noise
-// median while ignoring the absolute quietest outliers.
-static constexpr double kNoiseFloorPercentile = 0.10;
 
 // ----- Find-music-onset call inside multi_snippet_refine -----------------
 
@@ -356,107 +331,6 @@ std::vector<EndDecision> compute_track_ends(
     return out;
 }
 
-// Measure the duration of a gradual fade-in at the start of the reference.
-// A fade-in is characterized by a monotonic-ish rise from very quiet to
-// near-steady-state over multiple seconds. Returns the number of samples
-// from sample 0 until the signal first reaches steady_state - 6 dB; zero
-// if the signal is already near steady-state (no meaningful fade-in) or if
-// the rise is too abrupt (digital-silence-then-loud, handled elsewhere).
-[[maybe_unused]] int64_t measure_fade_in_samples(
-    std::span<const float> samples,
-    int sample_rate,
-    double max_search_seconds = kFadeInMaxSearchSeconds,
-    double min_fade_seconds = kFadeInMinFadeSeconds,
-    double max_fade_seconds = kFadeInMaxFadeSeconds)
-{
-    if (samples.empty()) { return 0;
-}
-    const int64_t frame_size = std::max<int64_t>(1, sample_rate / 10);  // 100 ms
-    int64_t n_frames = std::min(
-        static_cast<int64_t>(samples.size()) / frame_size,
-        static_cast<int64_t>(max_search_seconds * 10));
-    if (n_frames < 20) { return 0;
-}
-
-    // Compute 100 ms-frame RMS values. M-REF-FRAME-SAMPLE-BRIDGE: the
-    // envelope-frame → sample-base crossing (`f * frame_size`) goes
-    // through the typed bridge so a future edit that accidentally
-    // multiplied by `n_frames` or `fade_end_frame` (same int64_t type,
-    // different semantics) fails at the bridge boundary rather than
-    // silently producing wrong-by-a-factor offsets.
-    std::vector<double> rms(static_cast<std::size_t>(n_frames));
-    for (int64_t f = 0; f < n_frames; ++f) {
-        double ss = 0.0;
-        const int64_t base = detail::env_frame_to_sample(
-            detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
-        for (int64_t i = 0; i < frame_size; ++i) {
-            auto s = static_cast<double>(samples[static_cast<std::size_t>(base + i)]);
-            ss += s * s;
-        }
-        rms[static_cast<std::size_t>(f)] = std::sqrt(ss / static_cast<double>(frame_size));
-    }
-
-    // Estimate steady-state RMS as the median of frames 8 s to max_search.
-    // Starting past 8 s gives headroom for slow fade-ins (like Bicep-style
-    // ambient buildups) to reach steady before the median window begins.
-    int64_t ss_start = std::min(n_frames - 1, kFadeInSteadyStateStartFrame);
-    std::vector<double> ss_samples(rms.begin() + ss_start, rms.end());
-    if (ss_samples.empty()) { return 0;
-}
-    std::nth_element(ss_samples.begin(),
-                     ss_samples.begin() + static_cast<std::ptrdiff_t>(ss_samples.size() / 2),
-                     ss_samples.end());
-    double steady_rms = ss_samples[ss_samples.size() / 2];
-    if (steady_rms < 1e-6) { return 0;
-}
-
-    // Target for "end of fade-in": 10 dB below steady state. Loose enough to
-    // catch slow fades without requiring the signal to nearly reach steady.
-    double target = steady_rms * kFadeInTargetRatioMinus10Db;  // -10 dB
-
-    // Find first frame reaching target. If it's before `min_fade_seconds`,
-    // the track doesn't have a meaningful fade-in — return 0.
-    int64_t fade_end_frame = -1;
-    for (int64_t f = 0; f < ss_start; ++f) {
-        if (rms[static_cast<std::size_t>(f)] >= target) { fade_end_frame = f; break; }
-    }
-    if (fade_end_frame < 0) { return 0;
-}
-
-    double fade_end_s = static_cast<double>(fade_end_frame) * 0.1;
-    if (fade_end_s < min_fade_seconds) { return 0;
-}
-
-    // Cap the reported fade-in at max_fade_seconds. Tracks with very slow
-    // multi-second buildups (loud steady state, gradual approach) would
-    // otherwise report implausibly long fade-ins that over-shift the output
-    // past the real track boundary. Real fade-ins are 1-3 seconds.
-    if (fade_end_s > max_fade_seconds) {
-        fade_end_frame = static_cast<int64_t>(max_fade_seconds * 10);
-    }
-
-    // Sanity check: the rise must be GRADUAL, not a sudden step.
-    // Require that the frame *min_fade_seconds* before fade_end is at least
-    // 10 dB quieter than steady. A "digital-silence then loud" intro
-    // (like ROLA) fails this: the frame just before fade_end is already
-    // loud (only separated by silence), so it's not a true fade-in.
-    auto pre_frames = static_cast<int64_t>(min_fade_seconds * 10);
-    if (fade_end_frame - pre_frames >= 0) {
-        double pre_rms = rms[static_cast<std::size_t>(fade_end_frame - pre_frames)];
-        if (pre_rms > steady_rms * kFadeInTargetRatioMinus10Db) { return 0;  // within 10 dB of steady
-}
-    }
-
-    // M-REF-FRAME-SAMPLE-BRIDGE: envelope-frame → sample crossing
-    // through the typed bridge. `fade_end_frame` is an envelope-frame
-    // index into the locally-computed `rms` vector (100 ms frames at
-    // sample_rate); wrapping as EnvFrameIdx pins that semantics at the
-    // bridge boundary.
-    return detail::env_frame_to_sample(
-        detail::EnvFrameIdx{static_cast<std::size_t>(fade_end_frame)},
-        frame_size).value;
-}
-
 // Compute the RMS envelope of a signal at fixed-duration frames. Returns
 // one RMS value per `frame_ms` of audio. Used for envelope cross-correlation,
 // which aligns tracks based on their amplitude profile over time — much
@@ -473,10 +347,10 @@ std::vector<float> compute_rms_envelope(
     std::vector<float> env(static_cast<size_t>(n_frames));
     for (int64_t f = 0; f < n_frames; ++f) {
         double ss = 0.0;
-        // M-REF-FRAME-SAMPLE-BRIDGE: same envelope-frame → sample
-        // crossing pattern as `measure_fade_in_samples` above; routed
-        // through the typed bridge so the two halves of the envelope
-        // computation share one statement of intent.
+        // M-REF-FRAME-SAMPLE-BRIDGE: the envelope-frame → sample
+        // crossing goes through the typed bridge so the frame-vs-sample
+        // intent is pinned at the boundary (a same-typed index like
+        // n_frames can't be substituted silently).
         int64_t base = detail::env_frame_to_sample(
             detail::EnvFrameIdx{static_cast<std::size_t>(f)}, frame_size).value;
         for (int64_t i = 0; i < frame_size; ++i) {
@@ -629,41 +503,6 @@ int64_t find_music_onset(
         }
     }
     return -1;
-}
-
-// Estimate a signal's noise floor as the p-th percentile of 10ms-frame RMS
-// values over the provided window. Used to set an adaptive onset threshold
-// for vinyl (which has surface noise above absolute silence).
-[[maybe_unused]] double estimate_noise_floor_db(
-    std::span<const float> audio,
-    int sample_rate,
-    int64_t start_sample,
-    int64_t window_samples,
-    double percentile = kNoiseFloorPercentile)
-{
-    const int64_t frame_size = std::max<int64_t>(1, sample_rate / 100);
-    int64_t begin = std::max<int64_t>(0, start_sample);
-    int64_t end = std::min(
-        static_cast<int64_t>(audio.size()),
-        begin + window_samples);
-
-    std::vector<double> frame_rms;
-    frame_rms.reserve(static_cast<std::size_t>(((end - begin) / frame_size) + 1));
-    for (int64_t f = begin; f + frame_size <= end; f += frame_size) {
-        double sum_sq = 0.0;
-        for (int64_t i = f; i < f + frame_size; ++i) {
-            auto s = static_cast<double>(audio[static_cast<std::size_t>(i)]);
-            sum_sq += s * s;
-        }
-        frame_rms.push_back(std::sqrt(sum_sq / static_cast<double>(frame_size)));
-    }
-    if (frame_rms.empty()) { return -120.0;
-}
-
-    auto k = static_cast<size_t>(percentile * static_cast<double>(frame_rms.size() - 1));
-    std::nth_element(frame_rms.begin(), frame_rms.begin() + static_cast<std::ptrdiff_t>(k), frame_rms.end());
-    double floor_linear = std::max(frame_rms[k], 1e-9);
-    return 20.0 * std::log10(floor_linear);
 }
 
 // One snippet's vote for where the track actually starts.

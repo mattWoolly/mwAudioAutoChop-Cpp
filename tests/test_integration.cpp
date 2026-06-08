@@ -85,17 +85,6 @@ load_ref_manifest(const fs::path& manifest_path) {
 // Test file generation utilities
 // =============================================================================
 
-// Read entire file to byte vector
-[[maybe_unused]] std::vector<uint8_t> read_file_bytes(const fs::path& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    auto size = file.tellg();
-    file.seekg(0);
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.read(reinterpret_cast<char*>(data.data()), size);
-    return data;
-}
-
 // Read raw bytes from a file region
 std::vector<uint8_t> read_raw_bytes(const fs::path& path, size_t offset, size_t size) {
     std::ifstream file(path, std::ios::binary);
@@ -159,7 +148,6 @@ bool create_pattern_wav(const fs::path& path, int sample_rate,
     std::uniform_real_distribution<float> noise_dist(-0.5f, 0.5f);
     
     double pi = 3.14159265358979323846;
-    [[maybe_unused]] double phase = 0.0;
     int64_t sample_idx = 0;
 
     for (const auto& [duration, pattern] : sections) {
@@ -201,7 +189,6 @@ bool create_vinyl_with_gaps(const fs::path& path, int sample_rate,
     std::uniform_real_distribution<float> noise_dist(-0.6f, 0.6f);
     
     double pi = 3.14159265358979323846;
-    [[maybe_unused]] double phase = 0.0;
     int64_t global_sample = 0;
 
     for (size_t t = 0; t < track_lengths.size(); ++t) {
@@ -687,7 +674,6 @@ TEST_CASE("Lossless end-to-end: full pipeline export", "[integration][e2e][lossl
     }
     
     // Verify exports are byte-identical to source regions
-    [[maybe_unused]] const auto& vinyl_info = vinyl_file_result.value().info();
     // Skip exact byte comparison - may differ due to format conversion
     // Instead verify export files exist and have correct size
     

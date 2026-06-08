@@ -17,17 +17,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Read entire file to byte vector
-[[maybe_unused]] std::vector<uint8_t> read_file_bytes(const fs::path& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return {};
-    auto size = file.tellg();
-    file.seekg(0);
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.read(reinterpret_cast<char*>(data.data()), size);
-    return data;
-}
-
 // Read raw bytes from a file region
 std::vector<uint8_t> read_raw_bytes(const fs::path& path, size_t offset, size_t size) {
     std::ifstream file(path, std::ios::binary);
