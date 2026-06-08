@@ -3782,7 +3782,7 @@ are from a working-tree grep 2026-06-07.
   **This is the same work as `C-5`** — folded into C-5 to avoid double-tracking;
   the vestigial `sample_rate` param resolves when the FFT lands.
 
-*Dead-code deletion candidates — RATIFIED 2026-06-07 (delete as a batch); cure lands in the follow-up dead-code-sweep PR (verify call-sites first):*
+*Dead-code deletion candidates — RATIFIED 2026-06-07 (delete as a batch); RESOLVED 2026-06-07 in #78 (`96a370b`); see batch close-out below:*
 
 - `Mi-18-FU-6b` — `measure_fade_in_samples` (`reference_mode.cpp:365`) +
   `estimate_noise_floor_db` (`:637`), both `[[maybe_unused]]`, no call site.
@@ -3838,10 +3838,38 @@ there.
 
 **Status.** Catalog promoted 2026-06-07. Ratification outcomes (2026-06-07):
 **FU-4c → remove the param (RESOLVED in #77)**; **the FU-6b/7a/7b/7c/7d/7e/8
-dead-code batch → delete (cure in the follow-up dead-code-sweep PR)**;
+dead-code batch → delete (RESOLVED 2026-06-07 in #78, `96a370b`)**;
 design-level (FU-1/2/3/4a) and pragma-shim (FU-5/6) **deferred** as below the
-Tier-9 cut; FU-4b folded into C-5. RESOLVED stamps land in each item's
-close-out.
+Tier-9 cut; FU-4b folded into C-5.
+
+**Dead-code batch close-out (#78, `96a370b`).** Call-sites re-verified fresh
+before deletion (catalog line numbers had drifted post-#77 — left as-written
+for provenance); Release+`-Werror` build clean and `ctest` 14/14 green;
+independent audit PASS (6/6 axes). Per-item:
+- **FU-6b** — deleted `measure_fade_in_samples` + `estimate_noise_floor_db`
+  AND their orphaned `constexpr` constant blocks (`kFadeIn*`,
+  `kNoiseFloorPercentile`), which the catalog did not flag — sole consumers
+  were the deleted bodies, so they would have tripped `-Wunused-const-variable`
+  under `-Werror`. The LIVE `env_frame_to_sample` bridge + `compute_rms_envelope`
+  stay; the `M-REF-FRAME-SAMPLE-BRIDGE` cross-ref comment was rewritten to drop
+  the dead-function reference.
+- **FU-7a** — removed only the dead `[[maybe_unused]]` AIFF `bytes_per_frame`
+  plus its now-orphaned `bytes_per_sample` (sole consumer). LIVE WAV-builder
+  pair and the `bytes_per_frame()` method untouched.
+- **FU-7e** — the catalog's "is used" twin claim was refuted: both
+  `read_file_bytes` instances (`test_lossless.cpp`, `test_integration.cpp`)
+  were dead `[[maybe_unused]]`; both deleted. `read_raw_bytes` stays live.
+- **FU-7b/7c/7d/8** — deleted as catalogued (`gap_start_sec`; the no-op
+  `create_test_wav` stub + its empty anon namespace; two never-advanced
+  `phase` locals; the unread `vinyl_info` binding). Live neighbors
+  (`gap_start_sample`, the real multi-arg `create_test_wav`,
+  `vinyl_file_result`) intact.
+
+Archival note: older `[x]`-done sections (the `M-REF-FRAME-SAMPLE-BRIDGE`
+close-out and the magic-number inventory) still cite the now-deleted
+`measure_fade_in_samples` / `estimate_noise_floor_db` by name. Those are
+historical epic records, preserved as-written; this close-out is the
+forward-pointer noting those symbols are gone.
 
 ### Nits — N-1 through N-~12
 
