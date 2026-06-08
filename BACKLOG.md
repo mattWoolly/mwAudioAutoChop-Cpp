@@ -3413,15 +3413,15 @@ discoverable across the codebase.
 ### Mi-11 — test_deps.cpp is dead — delete or compile. — **RESOLVED in #73 (`c5939d1`)** via T8-CLANG-TIDY-BASELINE-CLEANUP (delete option). The file was deleted as part of the clang-tidy baseline clean-up because (a) it was not referenced in CMakeLists.txt and was never compiled into any target, (b) the file's absence from `compile_commands.json` produced a `clang-diagnostic-error` under clang-tidy, and (c) the file's only contents were `#include` statements verifying header availability — there was no behavior to preserve. Verified no other references in the source tree before deletion. See T8-CLANG-TIDY-BASELINE entry's Status / Resolution block for the closure details.
 ### Mi-12 — src/core/core.hpp is dead — delete. — **RESOLVED in #74 (`8c1e219`)** via T9-DEAD-CODE-SWEEP (delete option). Empirically verified dead pre-cure: `grep -rn "core/core.hpp\|#include.*\"core.hpp\"\|#include <core/core" src/ tests/` returned zero hits (the file is an umbrella header that `#include`s `audio_info.hpp` / `split_point.hpp` / `analysis_result.hpp` / `alignment_result.hpp`, but nothing includes it back). Deleted via `git rm`. Removed from PROJECT_SPEC.md Architecture diagram in same PR (the entry was previously annotated `(dead; Mi-12 pending deletion)` per T8-SPEC-ARCH-DRIFT-CLEANUP; preemptive removal matches the PR #73 audit's cross-doc reconciliation pattern catch on test_deps.cpp).
 ### Mi-13 — verbose.hpp g_timer_start is unused — delete. — **RESOLVED in #74 (`8c1e219`)** via T9-DEAD-CODE-SWEEP (delete option). Empirically verified unused pre-cure: `grep -rn "g_timer_start" src/ tests/` returned only the declaration at `src/core/verbose.hpp:13`. `VerboseTimer` uses its own member `start_` (`src/core/verbose.hpp:34, 47`) rather than the global; no other code path reads or writes `g_timer_start`. Deleted the declaration line + surrounding comment ("Start timing for a named operation") via `Edit`. Adjacent: `#include <chrono>` retained — still required for `VerboseTimer`'s `std::chrono::steady_clock::time_point start_` member.
-### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&. *Scope refined post-T9-DEAD-CODE-SWEEP (PR #74): `g_timer_start` was the second verbose-global; deleted as unused via Mi-13 sibling, so the remaining surface is `g_verbose` only (`src/core/verbose.hpp:10`). Mi-14's "globals" framing was correct at filing time; the singular form would now read as "`g_verbose` is not thread-safe".*
+### Mi-14 — verbose globals not thread-safe — std::atomic<bool> or Logger&. — **RESOLVED in #77 (`23477d0`)** via the atomic<bool> option. *Scope refined post-T9-DEAD-CODE-SWEEP (PR #74): `g_timer_start` was the second verbose-global; deleted as unused via Mi-13 sibling, so the remaining surface is `g_verbose` only (`src/core/verbose.hpp:10`). Mi-14's "globals" framing was correct at filing time; the singular form would now read as "`g_verbose` is not thread-safe".*
 
 **Ratified 2026-06-07 — `std::atomic<bool>`.** Cured in this PR: `g_verbose`
 is now `inline std::atomic<bool> g_verbose{false}` (`verbose.hpp`, with
 `#include <atomic>`); every read/write site compiles unchanged via atomic's
 `operator bool`/`operator=`. The `:10` ref above is pre-cure (the declaration
-is now at `:11` after the added include). RESOLVED stamp lands in the close-out.
+is now at `:11` after the added include).
 ### Mi-15 — explicit ctors audit on result wrappers — resolved by M-14.
-### Mi-16 — encode_float80 NaN/over-/under-flow handling
+### Mi-16 — encode_float80 NaN/over-/under-flow handling — **doc/code mismatch RESOLVED in #77 (`23477d0`); clamp-assert + extreme-value-test hardening DEFERRED (below the Tier-9 cut)**
 
 - Replace the silent `biased_exp` clamp on subnormal/overflow inputs with
   `assert(std::isfinite(value) && value >= 0)` at function entry.
@@ -3444,7 +3444,6 @@ is now at `:11` after the added include). RESOLVED stamp lands in the close-out.
   Tier-9 cut):** the clamp → `assert(isfinite && >= 0)` hardening (bullet 1)
   and the `encode_float80(1e±5000)` extreme-value tests (bullet 3) are
   intentionally NOT done — hardening, not the doc-lie correctness defect.
-  RESOLVED stamp for the doc-mismatch lands in the close-out.
 ### Mi-17 — std::stoll in natural_less can throw — bound digit count + un-SKIP natural-sort unit test — **RESOLVED in #46 (`4d542d3`)**
 
 - **Defect.** `natural_less` (in `src/modes/reference_mode.cpp` or its
@@ -3761,7 +3760,7 @@ question and none block the build.
 are stale (line-drift rule, `docs/orchestrator-handoff.md`). Locations below
 are from a working-tree grep 2026-06-07.
 
-*Candidate correctness defect — RATIFIED 2026-06-07 (remove the param); cured in this PR:*
+*Candidate correctness defect — RATIFIED 2026-06-07 (remove the param); RESOLVED in #77 (`23477d0`):*
 
 - `Mi-18-FU-4c` — `estimate_noise_floor(window_seconds)` ignored its window.
   Pre-cure, the declaration carried `window_seconds = 2.0f` ("Window for
@@ -3774,7 +3773,7 @@ are from a working-tree grep 2026-06-07.
   estimator is whole-signal by design). Cured in this PR — `window_seconds`
   dropped from both the `music_detection.hpp` declaration and the
   `music_detection.cpp` definition; all three call sites already omitted the
-  argument, so no caller changed. RESOLVED stamp lands in the close-out.
+  argument, so no caller changed. **RESOLVED in #77 (`23477d0`).**
 
 *Real feature work — single-tracked elsewhere:*
 
@@ -3838,7 +3837,7 @@ ride-along cleanup); the dead-`static` / `M_PI` / waveform nits are tracked
 there.
 
 **Status.** Catalog promoted 2026-06-07. Ratification outcomes (2026-06-07):
-**FU-4c → remove the param (cured in this PR)**; **the FU-6b/7a/7b/7c/7d/7e/8
+**FU-4c → remove the param (RESOLVED in #77)**; **the FU-6b/7a/7b/7c/7d/7e/8
 dead-code batch → delete (cure in the follow-up dead-code-sweep PR)**;
 design-level (FU-1/2/3/4a) and pragma-shim (FU-5/6) **deferred** as below the
 Tier-9 cut; FU-4b folded into C-5. RESOLVED stamps land in each item's
