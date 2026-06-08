@@ -56,8 +56,7 @@ static constexpr float kMusicOnsetNoiseFloorMultiplier = 4.0F;
 
 float estimate_noise_floor(
     std::span<const float> samples,
-    int sample_rate,
-    [[maybe_unused]] float window_seconds)
+    int sample_rate)
 {
     if (samples.empty()) { return 0.0F;
 }

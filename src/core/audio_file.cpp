@@ -908,9 +908,12 @@ static_assert(float80_layout::kExponentBias <= float80_layout::kMaxBiasedExp,
 //   * `value`: must be finite. The AIFF use case (sample rate, frame count)
 //     only ever passes non-negative values; this is asserted in Debug. The
 //     negative-value branch is retained for completeness so callers that
-//     want a signed encoder can rely on the wire format. NaN and ±∞ are
-//     handled explicitly (NaN encodes as +0 — AIFF has no NaN sample rate;
-//     callers must not pass NaN, which is asserted in Debug).
+//     want a signed encoder can rely on the wire format. ±∞ is handled
+//     explicitly (encoded with the all-ones exponent per SANE). NaN is
+//     out of contract: asserted against in Debug, and in Release left
+//     unspecified — it falls through to `frexp`, which yields an
+//     unspecified bit pattern (NOT +0). The sole caller passes a sample
+//     rate, so NaN never actually reaches here.
 //
 // Output:
 //   * Writes *exactly* 10 bytes to `out`, in the byte layout described in

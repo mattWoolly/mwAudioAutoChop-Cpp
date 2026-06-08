@@ -1,13 +1,14 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
 #include <chrono>
 #include <string>
 
 namespace mwaac {
 
-// Global verbose flag - set by CLI
-inline bool g_verbose = false;
+// Global verbose flag (set by CLI). Atomic so reads from any thread are race-free.
+inline std::atomic<bool> g_verbose{false};
 
 // Verbose output to stderr (so stdout remains clean for structured output)
 inline void verbose(const std::string& msg) {

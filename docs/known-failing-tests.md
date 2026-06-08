@@ -101,6 +101,8 @@ Aggregate post-#23: 41 assertions across 3 test cases, all passing locally per t
 
 Post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48), the Active known-failing list is empty for the first time in the remediation cycle. All build/test/sanitizer jobs are expected to pass; only `clang-tidy` remains expected-red on style nits.
 
+**Update 2026-06-07 (post-#73).** The `clang-tidy` row in the table below is **superseded**. PR #73 (Mi-11) cleared the clang-tidy baseline; the job has been green on every merge since — verified all-six-green on main HEAD `d650c3c` (`clang-tidy` = success), and #73/#74/#75/#76 each merged on a full six-green run including `clang-tidy`. The merge gate is now **all six jobs green, including `clang-tidy`** — it is no longer out-of-scope, and the "Do not wait for clang-tidy green" guidance from the Mi-18 cycle no longer applies. The "red on style nits" status in the table reflects the historical #48 snapshot only.
+
 | Job | Build | Tests | Comments |
 |---|---|---|---|
 | `build / ubuntu-latest / Release` | green | green (12/12 binaries pass) | test_integration fully green post-#48 |
@@ -108,7 +110,7 @@ Post-NEW-BLIND-GAP merge `7c0bc4a` (PR #48), the Active known-failing list is em
 | `build / macos-latest / Release` | green | green (12/12 binaries pass) | same |
 | `build / macos-latest / Debug` | green | green (12/12 binaries pass) | same |
 | `sanitizers (asan+ubsan)` | green | green (12/12 binaries pass) | ASan no longer trips on encode_float80 (post-#27); blind-mode confidence path UBSan-clean post-#48 |
-| `clang-tidy` | red on style nits | n/a (job stops at clang-tidy) | Out of Mi-18 scope per mandate; tracked under N-1..N-12 / Mi-18-FU-* |
+| `clang-tidy` | green since #73 | n/a | **Superseded — see the 2026-06-07 update above.** Baseline cleared in #73; gate is now all-six-green incl. `clang-tidy`. (Was red / out-of-scope through the Mi-18 cycle.) |
 
 ## Update protocol
 
