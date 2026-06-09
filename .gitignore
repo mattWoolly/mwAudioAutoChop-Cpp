@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-*/
 cmake-build-*/
 out/
 
@@ -40,3 +41,6 @@ Makefile
 # Testing
 Testing/
 CTestTestfile.cmake
+
+# Claude Code agent worktrees (regenerable)
+.claude/worktrees/
