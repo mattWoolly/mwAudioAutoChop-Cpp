@@ -4,6 +4,7 @@
 #include <vector>
 #include <filesystem>
 #include <iomanip>
+#include <cmath>
 #include "modes/reference_mode.hpp"
 #include "modes/blind_mode.hpp"
 #include "modes/reaper_export.hpp"
@@ -34,6 +35,26 @@ std::string_view audio_error_to_string(mwaac::AudioError e) noexcept {
     return "unknown error";
 }
 
+// Parse a CLI numeric argument as a strictly-positive, finite float.
+// Returns false (leaving `out` untouched) on non-numeric input,
+// trailing junk, non-finite values (e.g. "inf"/"nan"), or values <= 0.
+// Blind-mode --min-gap/--max-gap are durations in seconds and must be
+// positive; CLI input is a trust boundary, so a bad value yields a
+// clean error instead of letting std::stof throw out of main.
+bool parse_positive_float(const char* text, float& out) {
+    try {
+        std::string s(text);
+        size_t consumed = 0;
+        float value = std::stof(s, &consumed);
+        if (consumed != s.size()) return false;
+        if (!std::isfinite(value) || value <= 0.0f) return false;
+        out = value;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 } // namespace
 
 void print_help() {
@@ -58,6 +79,8 @@ void print_help() {
               << "\n"
               << "Blind Options:\n"
               << "  -o, --output <path>      Output directory (required)\n"
+              << "  --min-gap <seconds>      Minimum gap to split on (default 2.0)\n"
+              << "  --max-gap <seconds>      Maximum gap to split on (default 30.0)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
               << "\n"
@@ -232,12 +255,23 @@ int main(int argc, char* argv[]) {
         fs::path output_dir;
         bool dry_run = false;
         bool verbose = false;
-        
+        mwaac::BlindModeConfig config;  // gap thresholds; defaults 2.0s / 30.0s
+
         // Parse arguments
         for (int i = 3; i < argc; ++i) {
             std::string arg = argv[i];
             if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
                 output_dir = argv[++i];
+            } else if (arg == "--min-gap" && i + 1 < argc) {
+                if (!parse_positive_float(argv[++i], config.min_gap_seconds)) {
+                    std::cerr << "Error: --min-gap requires a positive number of seconds\n";
+                    return 1;
+                }
+            } else if (arg == "--max-gap" && i + 1 < argc) {
+                if (!parse_positive_float(argv[++i], config.max_gap_seconds)) {
+                    std::cerr << "Error: --max-gap requires a positive number of seconds\n";
+                    return 1;
+                }
             } else if (arg == "--dry-run") {
                 dry_run = true;
             } else if (arg == "-v" || arg == "--verbose") {
@@ -255,11 +289,18 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: -o is required\n";
             return 1;
         }
-        
+
+        if (config.min_gap_seconds >= config.max_gap_seconds) {
+            std::cerr << "Error: --min-gap (" << config.min_gap_seconds
+                      << "s) must be less than --max-gap (" << config.max_gap_seconds
+                      << "s)\n";
+            return 1;
+        }
+
         std::cout << "Analyzing vinyl (blind mode): " << vinyl_path << "\n\n";
         
         // Run analysis
-        auto result = mwaac::analyze_blind_mode(vinyl_path);
+        auto result = mwaac::analyze_blind_mode(vinyl_path, config);
         if (!result) {
             std::cerr << "Error: Analysis failed: ";
             switch (result.error()) {
