@@ -888,6 +888,84 @@ confidence threshold).
   See `INV-SCORE-GAP-REFERENCE-IS-SIGNAL-LEVEL` below for the
   parameter-contract invariant.
 
+### INV-BLIND-ABSOLUTE-SILENCE-FLOOR — Blind gap threshold has an absolute floor so a digital-zero master cannot collapse it
+
+`analyze_blind_mode`'s gap-detection threshold is
+`std::max(noise_floor * kBlindGapThresholdNoiseFloorMultiplier,
+kBlindGapSilenceFloorLinear)`, where `kBlindGapSilenceFloorLinear` =
+1e-3 (−60 dBFS) and the noise-floor estimate is the all-frames p10 of
+the RMS envelope. The threshold is therefore provably > 0 even when the
+noise-floor estimate is exactly 0.0 (a master with ≥10% true-digital-zero
+frames pins the p10 to 0), and `detect_gaps` uses the non-strict
+`rms <= threshold` so an exactly-0.0 gap frame is always detectable. The
+relative term (noise_floor × 2, +6 dB) remains dominant on any rip whose
+own surface-noise floor exceeds ~−57 dBFS, so noisy vinyl is not
+over-split by a fixed floor; the absolute floor engages only when the
+relative term collapses toward 0 (digital / restored-master silence).
+
+- **Owner.** `analyze_blind_mode` and `detect_gaps` in
+  `src/modes/blind_mode.cpp`.
+- **Enforcement.**
+  - File-scope `kBlindGapSilenceFloorLinear = 1.0e-3F` (−60 dBFS) in the
+    Mi-5-BLIND catalog, citing the real-master percentiles (p15=−55.9 dB,
+    p20=−39.6 dB, p50=−24.9 dB) and the reference_mode constants it
+    mirrors (`kSkipSilenceDefaultThresholdDb`, `kDigitalSilenceLinearThreshold`).
+  - `analyze_blind_mode: digital-zero inter-track gap yields >=2 tracks
+    (p10==0)` in `tests/test_blind_mode.cpp` — a 3 s tone / 3 s EXACT 0.0 /
+    3 s tone fixture (33% zero frames, so the precondition
+    `estimate_noise_floor == 0` is asserted) that returns 1 split pre-cure
+    and ≥2 post-cure.
+  - Hardened `Blind mode pipeline: clear silence detection` in
+    `tests/test_integration.cpp` (pattern 0 = true 0.0f at 22050 Hz),
+    promoted from a soft `if(has_value())` guard to a hard
+    `REQUIRE(split_points.size() >= 2)` (the digital-zero bug had kept this
+    assertion dormant) with the position tolerance loosened from the
+    sub-hop ±200 samples to 100 ms (`sample_rate/10`).
+- **Status.** `holds` post-NEW-BLIND-ZERO-FLOOR. Pre-cure the threshold
+  was purely relative (`noise_floor × 2`); on the 192 k/24 Djrum master
+  with 14.7% true-zero frames the p10 noise floor was 0, the threshold was
+  0, and strict `<` rejected every 0.0 frame, yielding ONE split spanning
+  the album at confidence 1.0 (a confident wrong answer). Validated on that
+  master: the cure recovers exactly the 11 reference-matching boundaries
+  (a −50 dBFS floor over-split by one spurious lead-out region; estimating
+  the floor from non-silence frames instead of all frames over-split to
+  ~81). Cross-references `INV-SCORE-GAP-REFERENCE-IS-SIGNAL-LEVEL`
+  (unchanged — the p90 signal reference is kept) and NEW-BLIND-GAP (which
+  fixed `score_gap`'s denominator; this fixes the untouched detection
+  threshold).
+
+### INV-BLIND-NATIVE-COORDS — Blind SplitPoint coordinates are converted analysis-rate → native-rate before write/print
+
+`analyze_blind_mode` builds `SplitPoint.start_sample` (and its
+analysis-space `end_sample`) in ANALYSIS-rate sample space
+(`load_audio_mono` resamples the vinyl to `config.analysis_sr`). The
+`main.cpp` blind branch converts every `start_sample` to NATIVE rate via
+`analysis_to_native_sample(start_sample, native_sr, config.analysis_sr)`
+(the C-4 helper, the same call `reference_mode` uses) and re-derives
+`end_sample` in native space (non-last = next native start − 1, last =
+`total_frames − 1`) BEFORE any print or `write_track`. On
+`native_sr == analysis_sr` the conversion is the integer identity, so
+44.1 k / 22.05 k inputs are bit-identical.
+
+- **Owner.** `main.cpp` blind branch (conversion) + `analyze_blind_mode`
+  (analysis-space emission).
+- **Enforcement.**
+  - `analyze_blind_mode: split coordinates are analysis-rate, convertible
+    to native` in `tests/test_blind_mode.cpp` — a 96000 Hz fixture analyzed
+    at `analysis_sr=44100` asserts (a) the returned start is ~6 s in
+    analysis space (near 6×44100, NOT 6×96000) and (b)
+    `analysis_to_native_sample` maps it back to ~6 s of native time.
+  - The `analysis_to_native_sample` arg-order unit pins in
+    `tests/test_reference_mode.cpp` guard the helper itself.
+- **Status.** `holds` post-NEW-BLIND-COORD-MISMATCH. Pre-cure `main.cpp`
+  passed the analysis-rate `start_sample` straight into `write_track` on a
+  natively-opened file, cutting every blind track ~`native_sr/analysis_sr`
+  (~4.35× at 192 k) too early; masked because the only multi-track real
+  master also tripped BLIND-NOISE-FLOOR-ZERO and yielded 1 track, and every
+  synthetic fixture was 44.1 k (native == analysis). Coupled with
+  INV-BLIND-ABSOLUTE-SILENCE-FLOOR: that fix is what first produces the
+  multi-track blind output which exercises this conversion.
+
 ### INV-SCORE-GAP-REFERENCE-IS-SIGNAL-LEVEL — `score_gap`'s reference parameter is a signal level, not a noise floor
 
 `score_gap`'s 5th parameter (`signal_reference_rms`) is semantically

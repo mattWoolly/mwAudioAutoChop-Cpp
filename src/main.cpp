@@ -338,8 +338,22 @@ int main(int argc, char* argv[]) {
         mwaac::AudioFile& audio_file = opened.value();
         int native_sr = audio_file.info().sample_rate;
 
-        // Fix end samples (last track goes to end of file)
+        // BLIND-COORD-MISMATCH (coupled with BLIND-NOISE-FLOOR-ZERO):
+        // analyze_blind_mode builds SplitPoint.start_sample in ANALYSIS-rate
+        // sample space (load_audio_mono resampled the vinyl to
+        // config.analysis_sr), but the file is opened here at NATIVE rate.
+        // Convert every start_sample analysis -> native via the C-4 helper
+        // (the same call reference_mode uses) BEFORE deriving end_sample, so
+        // write_track and the printed times below all operate in one
+        // coordinate system. On native_sr == analysis_sr the conversion is
+        // the integer identity, so 44.1k inputs are bit-identical. See
+        // INV-BLIND-NATIVE-COORDS.
         int64_t total_frames = audio_file.info().frames;
+        for (auto& sp : analysis.split_points) {
+            sp.start_sample = mwaac::analysis_to_native_sample(
+                sp.start_sample, native_sr, config.analysis_sr);
+        }
+        // Fix end samples in native space (last track goes to end of file).
         for (size_t i = 0; i < analysis.split_points.size(); ++i) {
             auto& sp = analysis.split_points[i];
             if (i + 1 < analysis.split_points.size()) {

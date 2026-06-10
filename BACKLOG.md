@@ -1591,6 +1591,83 @@ migration to `std::expected`-style storage happens in M-14.
   (removal of the `[[maybe_unused]] int sample_rate` parameter from
   `score_gap`).
 
+### NEW-BLIND-ZERO-FLOOR — Blind mode returns 1 track on digital-zero (processed-master) silence — **FIX IMPLEMENTED on branch `fix/blind-digital-zero-and-coords` (2026-06-09); PR/commit TBD**
+
+- **Defect (correctness).** The blind gap-detection threshold was purely
+  relative: `threshold = noise_floor * kBlindGapThresholdNoiseFloorMultiplier`
+  (`blind_mode.cpp`), and `estimate_noise_floor` returns the all-frames p10
+  of frame RMS. On a processed/restored master (iZotope RX, etc.) with
+  true-digital-zero inter-track silence, ≥10% of frames are exactly 0.0 so
+  the p10 — hence the threshold — is exactly 0; `detect_gaps`' strict
+  `rms < threshold` then never fires (`0 < 0` is false), yielding 0 gaps and
+  a single split spanning the whole album at confidence 1.0. Empirically
+  reproduced on the 192k/24 Djrum master (14.7% zero frames → 1 track of
+  72 min). Distinct from NEW-BLIND-GAP, which fixed `score_gap`'s *scoring*
+  denominator; this is the untouched *detection threshold*. Surfaced by the
+  first real-data blind dry-run (see `project_blind_improvements` memory).
+- **Cure.** `threshold = std::max(noise_floor * multiplier,
+  kBlindGapSilenceFloorLinear)` with `kBlindGapSilenceFloorLinear = 1e-3`
+  (−60 dBFS, validated as the floor that recovers exactly the 11
+  reference-matching boundaries; −50 dBFS over-split by one, and a
+  non-silence-frame estimator over-split to ~81), plus `detect_gaps`
+  `<` → `<=`. Also raised the `kBlindDefaultMaxGapSeconds` default 30 → 180
+  (7 of the master's 10 real gaps are 36–145 s 2LP side-flips that 30 s
+  dropped) and clamped `min/max_gap_frames` to ≥ 1.
+- **Invariant established.** `INV-BLIND-ABSOLUTE-SILENCE-FLOOR`
+  (`docs/invariants.md`).
+- **Files touched.** `src/modes/blind_mode.cpp`, `src/modes/blind_mode.hpp`,
+  `tests/test_blind_mode.cpp` (digital-zero regression), `tests/test_integration.cpp`
+  (woke + retuned the dormant `clear silence detection` assertion),
+  `docs/invariants.md`.
+- **Coupled with NEW-BLIND-COORD-MISMATCH** — fixing this is what first
+  produces multi-track blind output, exercising the coordinate bug; both
+  ship in one PR.
+- **Status.** Fix implemented + validated (real master → 11 tracks; ctest
+  14/14; −Werror clean). Awaiting audit-agent close per the one-item-per-PR
+  rule.
+
+### NEW-BLIND-COORD-MISMATCH — Blind split offsets are analysis-rate but consumed as native-rate — **FIX IMPLEMENTED on branch `fix/blind-digital-zero-and-coords` (2026-06-09); PR/commit TBD**
+
+- **Defect (latent correctness).** `analyze_blind_mode` builds
+  `SplitPoint.start_sample` in analysis-rate (`config.analysis_sr`, 44100)
+  sample space (`load_audio_mono` resamples), but the `main.cpp` blind
+  branch fed it straight into `write_track` / track-time printing on a
+  natively-opened file with no `analysis_to_native_sample` conversion (which
+  `reference_mode` does, C-4). On a non-44.1k rip every track was cut
+  ~`native_sr/analysis_sr` (~4.35× at 192 k) too early; `end_sample` was
+  also mixed-coordinate (non-last in analysis space, last in native). Latent
+  because blind mode had never produced multi-track output on a non-44.1k
+  file (the only real 192 k master also tripped NEW-BLIND-ZERO-FLOOR → 1
+  track; all synthetic fixtures were 44.1 k).
+- **Cure.** In the `main.cpp` blind branch, convert every `start_sample`
+  via `mwaac::analysis_to_native_sample(start_sample, native_sr,
+  config.analysis_sr)` before deriving `end_sample` (now uniformly native).
+- **Invariant established.** `INV-BLIND-NATIVE-COORDS` (`docs/invariants.md`).
+- **Files touched.** `src/main.cpp`, `tests/test_blind_mode.cpp` (96000 Hz
+  analysis-rate-vs-native coordinate contract test), `docs/invariants.md`.
+- **Status.** Fix implemented + validated (real 192 k master prints
+  coherent 0:00–72:38 native-rate boundaries; ctest 14/14). Coupled with
+  NEW-BLIND-ZERO-FLOOR.
+
+### Follow-ups filed (deferred, below this PR's cut)
+
+- **BLIND-GAP-FRAGMENT** (the other half of the asymmetry): `detect_gaps`
+  has no hysteresis / smoothing / adjacent-gap merge, so on *noisy* vinyl a
+  surface-noise crackle fragments one real gap into sub-`min-gap` pieces
+  that all drop. Add Schmitt-trigger hysteresis + short adjacent-gap merge,
+  deriving the high threshold internally so the public signature is
+  unchanged. Audit-confirmed HIGH; isolated from the headline fix to keep
+  blast radius small.
+- **BLIND-DEGENERATE-WARNING**: emit a non-verbose warning when 0 gaps are
+  found on a long input (helps the genuinely-segued / all-gaps-too-long case
+  the absolute floor cannot rescue).
+- **BLIND-CLI-ESCAPE-HATCH**: wire `--silence-db` / `--confidence` /
+  `--analysis-sr` (currently only `--min-gap` / `--max-gap` are exposed).
+- **BLIND-SCORE-GAP-EFFICIENCY**: `score_gap` copies the whole gap into a
+  `std::vector` only to sum it; stream the sum over the samples slice.
+- **BLIND-NUM-GAPS-SEMANTICS**: `metadata["num_gaps_found"]` counts
+  detect_gaps candidates, not accepted splits.
+
 ### NEW-BLIND-GAP — Blind mode returns only 1 split on clear 2-track fixture — **RESOLVED in #48 (`7c0bc4a`)**
 
 - **Defect.** Surfaced by Phase 0.5 at `test_integration.cpp:479` and `:762`

@@ -42,6 +42,25 @@ static constexpr float kBlindGapThresholdNoiseFloorMultiplier = 2.0F;
 static constexpr std::size_t kBlindSignalReferencePercentileNumerator   = 9;
 static constexpr std::size_t kBlindSignalReferencePercentileDenominator = 10;
 
+// Absolute silence floor for the gap-detection threshold, combined with
+// the relative `noise_floor * multiplier` term via std::max. Without it, a
+// processed/restored master with digital-zero inter-track silence drives
+// estimate_noise_floor (p10 of frame RMS) to exactly 0, collapsing the
+// relative threshold to 0; detect_gaps' `rms <= threshold` then compares
+// every frame against 0 and never flags the silence. -60 dBFS = 1e-3
+// linear (10^(-60/20)) sits below the quietest realistic music — measured
+// frame-RMS percentiles on the 192k/24 Djrum master were p15=-55.9 dB,
+// p20=-39.6 dB, p50=-24.9 dB — yet above the digital-silence / low-surface-
+// noise band, so it captures true-zero and near-zero gap frames without
+// clipping music. Empirically it is the floor that recovers exactly the 11
+// reference-matching boundaries on that master; a -50 dBFS floor over-split
+// by one spurious lead-out region. The relative term dominates the max()
+// on any rip whose own surface-noise floor exceeds ~-57 dBFS, so noisy
+// vinyl is unaffected (not over-split by a fixed floor). Compare
+// reference_mode.cpp's absolute model (kDigitalSilenceLinearThreshold=1e-4,
+// kSkipSilenceDefaultThresholdDb=-50). See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+static constexpr float kBlindGapSilenceFloorLinear = 1.0e-3F;  // -60 dBFS
+
 std::vector<std::pair<size_t, size_t>> detect_gaps(
     std::span<const float> rms_values,
     float threshold,
@@ -52,14 +71,24 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
 {
     std::vector<std::pair<size_t, size_t>> gaps;
     
-    auto min_gap_frames = static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
-    auto max_gap_frames = static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
+    // Clamp to >= 1 frame: a sub-hop min_gap_seconds would truncate to 0,
+    // making the length filter accept every below-threshold run regardless
+    // of duration. Mirrors detect_music_start's min_music_frames guard
+    // (music_detection.cpp).
+    auto min_gap_frames = std::max<size_t>(1, static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length)));
+    auto max_gap_frames = std::max<size_t>(1, static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length)));
     
     bool in_gap = false;
     size_t gap_start = 0;
     
     for (size_t i = 0; i < rms_values.size(); ++i) {
-        bool below_threshold = rms_values[i] < threshold;
+        // Non-strict: a digital-silence frame (rms == 0) must register as
+        // below a zero-derived threshold. analyze_blind_mode's absolute
+        // floor keeps the threshold > 0 in practice, but `<=` is the
+        // correct relation for "at or below the silence level" and agrees
+        // with `<` on every non-degenerate frame. See
+        // INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+        bool below_threshold = rms_values[i] <= threshold;
         
         if (below_threshold && !in_gap) {
             // Start of gap
@@ -164,9 +193,15 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
 
-    // Gap threshold: just above noise floor (6 dB; see
-    // kBlindGapThresholdNoiseFloorMultiplier).
-    float threshold = noise_floor * kBlindGapThresholdNoiseFloorMultiplier;
+    // Gap threshold: the louder of (a) 6 dB above the estimated noise
+    // floor (see kBlindGapThresholdNoiseFloorMultiplier) and (b) an
+    // absolute silence floor (kBlindGapSilenceFloorLinear, -60 dBFS). The
+    // absolute floor prevents a zero/near-zero noise-floor estimate — which
+    // a digital-silence / restored master produces — from collapsing the
+    // threshold to 0. On noisy vinyl the relative term dominates and the
+    // floor is inert. See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+    float threshold = std::max(noise_floor * kBlindGapThresholdNoiseFloorMultiplier,
+                               kBlindGapSilenceFloorLinear);
 
     // NEW-BLIND-GAP: signal reference level for score_gap, separate from
     // noise floor. The previous implementation passed noise_floor itself
@@ -199,7 +234,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         std::ostringstream sig_oss;
         sig_oss << std::scientific << std::setprecision(2) << signal_reference_rms;
         verbose("  Noise floor RMS: " + oss.str());
-        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor)");
+        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor, clamped to -60 dBFS absolute floor)");
         verbose("  Signal reference RMS (p90): " + sig_oss.str());
     }
 
