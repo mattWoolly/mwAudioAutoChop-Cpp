@@ -229,8 +229,59 @@ TEST_CASE("analyze_blind_mode: digital-zero inter-track gap yields >=2 tracks (p
     const int64_t actual_start = analysis.split_points[1].start_sample;
     INFO("expected ~" << expected_start << " actual " << actual_start);
     CHECK(std::abs(actual_start - expected_start) < sr / 10);
-    CHECK(analysis.split_points[1].confidence >=
-          static_cast<double>(config.confidence_threshold));
+    // A digital-zero gap has gap_rms == 0, so score_gap returns ~1.0 — assert
+    // near-perfect, which is STRONGER than the 0.6 gate the split already
+    // passed (so it is not a tautology: a scoring regression to e.g. 0.7
+    // would still create the split but fail this).
+    CHECK(analysis.split_points[1].confidence > 0.99);
+
+    std::error_code ec;
+    fs::remove(tmp_path, ec);
+    fs::remove(tmp_dir, ec);
+}
+
+// INV-BLIND-ABSOLUTE-SILENCE-FLOOR (lead-in/lead-out guard). A rip from a
+// processed master usually OPENS with digital-zero lead-in silence and ENDS
+// with lead-out silence. The absolute floor makes that silence detectable,
+// so without the leading/trailing-silence suppression in analyze_blind_mode
+// the lead-in is promoted to a spurious first "track" (and the lead-out to a
+// trailing one) at confidence 1.0 — which the 0.6 gate cannot drop. Fixture:
+// 3 s zero | 3 s tone | 3 s zero | 3 s tone | 3 s zero. The two real tracks
+// start at ~3 s and ~9 s; the count must be EXACTLY 2 (not 4).
+TEST_CASE("analyze_blind_mode: lead-in/lead-out silence is not split into tracks",
+          "[blind][zero-floor]")
+{
+    namespace fs = std::filesystem;
+    const int sr = 44100;
+    std::vector<float> samples;
+    append_silence(samples, 3.0, sr);          // lead-in
+    append_tone(samples, 440.0, 3.0, sr, 0.7); // track 1
+    append_silence(samples, 3.0, sr);          // inter-track gap
+    append_tone(samples, 550.0, 3.0, sr, 0.7); // track 2
+    append_silence(samples, 3.0, sr);          // lead-out
+
+    fs::path tmp_dir = fs::temp_directory_path() / "mwaac_blind_leadinout";
+    fs::create_directories(tmp_dir);
+    fs::path tmp_path = tmp_dir / "leadinout.wav";
+    REQUIRE(write_temp_wav(tmp_path, samples, sr));
+
+    mwaac::BlindModeConfig config;
+    config.min_gap_seconds = 2.0F;
+    config.max_gap_seconds = 5.0F;
+    config.analysis_sr = sr;
+
+    auto result = mwaac::analyze_blind_mode(tmp_path, config);
+    REQUIRE(result.has_value());
+    const auto& analysis = result.value();
+
+    // EXACTLY 2 tracks: lead-in and lead-out suppressed, one inter-track gap.
+    REQUIRE(analysis.split_points.size() == 2);
+    // Track 1 starts where the lead-in ends (~3 s), not at sample 0.
+    CHECK(std::abs(analysis.split_points[0].start_sample
+                   - static_cast<int64_t>(sr) * 3) < sr / 10);
+    // Track 2 starts after track 1 + inter-track gap (~9 s).
+    CHECK(std::abs(analysis.split_points[1].start_sample
+                   - static_cast<int64_t>(sr) * 9) < sr / 10);
 
     std::error_code ec;
     fs::remove(tmp_path, ec);

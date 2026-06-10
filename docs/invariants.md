@@ -898,10 +898,13 @@ the RMS envelope. The threshold is therefore provably > 0 even when the
 noise-floor estimate is exactly 0.0 (a master with ≥10% true-digital-zero
 frames pins the p10 to 0), and `detect_gaps` uses the non-strict
 `rms <= threshold` so an exactly-0.0 gap frame is always detectable. The
-relative term (noise_floor × 2, +6 dB) remains dominant on any rip whose
-own surface-noise floor exceeds ~−57 dBFS, so noisy vinyl is not
-over-split by a fixed floor; the absolute floor engages only when the
-relative term collapses toward 0 (digital / restored-master silence).
+relative term (noise_floor × 2, +6 dB) overtakes the −60 dBFS floor once
+the noise floor exceeds 5e-4 (= −66 dBFS), so any rip with real surface
+noise is governed by the relative term and not over-split by the fixed
+floor; the absolute floor engages only when the relative term collapses
+toward 0 (digital / restored-master silence). Leading/trailing silence is
+suppressed (see INV-BLIND-NATIVE-COORDS sibling note) so a digital-zero
+lead-in/lead-out does not manufacture a spurious first/last track.
 
 - **Owner.** `analyze_blind_mode` and `detect_gaps` in
   `src/modes/blind_mode.cpp`.

@@ -80,7 +80,7 @@ void print_help() {
               << "Blind Options:\n"
               << "  -o, --output <path>      Output directory (required)\n"
               << "  --min-gap <seconds>      Minimum gap to split on (default 2.0)\n"
-              << "  --max-gap <seconds>      Maximum gap to split on (default 30.0)\n"
+              << "  --max-gap <seconds>      Maximum gap to split on (default 180.0)\n"
               << "  --dry-run                Preview splits without writing files\n"
               << "  -v, --verbose            Show detailed output\n"
               << "\n"
