@@ -46,8 +46,8 @@ bool parse_positive_float(const char* text, float& out) {
         std::string s(text);
         size_t consumed = 0;
         float value = std::stof(s, &consumed);
-        if (consumed != s.size()) return false;
-        if (!std::isfinite(value) || value <= 0.0f) return false;
+        if (consumed != s.size()) { return false; }
+        if (!std::isfinite(value) || value <= 0.0F) { return false; }
         out = value;
         return true;
     } catch (const std::exception&) {
