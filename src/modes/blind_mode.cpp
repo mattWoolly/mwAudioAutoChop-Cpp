@@ -42,6 +42,26 @@ static constexpr float kBlindGapThresholdNoiseFloorMultiplier = 2.0F;
 static constexpr std::size_t kBlindSignalReferencePercentileNumerator   = 9;
 static constexpr std::size_t kBlindSignalReferencePercentileDenominator = 10;
 
+// Absolute silence floor for the gap-detection threshold, combined with
+// the relative `noise_floor * multiplier` term via std::max. Without it, a
+// processed/restored master with digital-zero inter-track silence drives
+// estimate_noise_floor (p10 of frame RMS) to exactly 0, collapsing the
+// relative threshold to 0; detect_gaps' `rms <= threshold` then compares
+// every frame against 0 and never flags the silence. -60 dBFS = 1e-3
+// linear (10^(-60/20)) sits below the quietest realistic music — measured
+// frame-RMS percentiles on the 192k/24 Djrum master were p15=-55.9 dB,
+// p20=-39.6 dB, p50=-24.9 dB — yet above the digital-silence / low-surface-
+// noise band, so it captures true-zero and near-zero gap frames without
+// clipping music. Empirically it is the floor that recovers exactly the 11
+// reference-matching boundaries on that master; a -50 dBFS floor over-split
+// by one spurious lead-out region. The relative term (2*noise_floor)
+// dominates the max() once the noise floor exceeds 5e-4 (= -66 dBFS, where
+// 2*5e-4 = 1e-3), so any rip with real surface noise is governed by the
+// relative term and not over-split by the fixed floor. Compare
+// reference_mode.cpp's absolute model (kDigitalSilenceLinearThreshold=1e-4,
+// kSkipSilenceDefaultThresholdDb=-50). See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+static constexpr float kBlindGapSilenceFloorLinear = 1.0e-3F;  // -60 dBFS
+
 std::vector<std::pair<size_t, size_t>> detect_gaps(
     std::span<const float> rms_values,
     float threshold,
@@ -52,14 +72,24 @@ std::vector<std::pair<size_t, size_t>> detect_gaps(
 {
     std::vector<std::pair<size_t, size_t>> gaps;
     
-    auto min_gap_frames = static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
-    auto max_gap_frames = static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length));
+    // Clamp to >= 1 frame: a sub-hop min_gap_seconds would truncate to 0,
+    // making the length filter accept every below-threshold run regardless
+    // of duration. Mirrors detect_music_start's min_music_frames guard
+    // (music_detection.cpp).
+    auto min_gap_frames = std::max<size_t>(1, static_cast<size_t>(min_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length)));
+    auto max_gap_frames = std::max<size_t>(1, static_cast<size_t>(max_gap_seconds * static_cast<float>(sample_rate) / static_cast<float>(hop_length)));
     
     bool in_gap = false;
     size_t gap_start = 0;
     
     for (size_t i = 0; i < rms_values.size(); ++i) {
-        bool below_threshold = rms_values[i] < threshold;
+        // Non-strict: a digital-silence frame (rms == 0) must register as
+        // below a zero-derived threshold. analyze_blind_mode's absolute
+        // floor keeps the threshold > 0 in practice, but `<=` is the
+        // correct relation for "at or below the silence level" and agrees
+        // with `<` on every non-degenerate frame. See
+        // INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+        bool below_threshold = rms_values[i] <= threshold;
         
         if (below_threshold && !in_gap) {
             // Start of gap
@@ -164,9 +194,15 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
     verbose("Estimating noise floor...");
     float noise_floor = estimate_noise_floor(audio.samples, config.analysis_sr);
 
-    // Gap threshold: just above noise floor (6 dB; see
-    // kBlindGapThresholdNoiseFloorMultiplier).
-    float threshold = noise_floor * kBlindGapThresholdNoiseFloorMultiplier;
+    // Gap threshold: the louder of (a) 6 dB above the estimated noise
+    // floor (see kBlindGapThresholdNoiseFloorMultiplier) and (b) an
+    // absolute silence floor (kBlindGapSilenceFloorLinear, -60 dBFS). The
+    // absolute floor prevents a zero/near-zero noise-floor estimate — which
+    // a digital-silence / restored master produces — from collapsing the
+    // threshold to 0. On noisy vinyl the relative term dominates and the
+    // floor is inert. See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+    float threshold = std::max(noise_floor * kBlindGapThresholdNoiseFloorMultiplier,
+                               kBlindGapSilenceFloorLinear);
 
     // NEW-BLIND-GAP: signal reference level for score_gap, separate from
     // noise floor. The previous implementation passed noise_floor itself
@@ -199,7 +235,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         std::ostringstream sig_oss;
         sig_oss << std::scientific << std::setprecision(2) << signal_reference_rms;
         verbose("  Noise floor RMS: " + oss.str());
-        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor)");
+        verbose("  Gap threshold: " + thresh_oss.str() + " (6 dB above noise floor, clamped to -60 dBFS absolute floor)");
         verbose("  Signal reference RMS (p90): " + sig_oss.str());
     }
 
@@ -226,16 +262,28 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         verbose("INFO: No gaps detected — returning single-split result for the full input");
     }
 
-    // Convert gaps to split points
-    // Each gap boundary marks the START of a new track
+    // Convert gaps to split points. Each NON-trailing gap end marks the
+    // START of a new track.
     std::vector<SplitPoint> split_points;
-    
-    // First track starts at 0
-    SplitPoint first_track;
-    first_track.start_sample = 0;
-    first_track.source = "blind";
-    first_track.confidence = 1.0;  // First track is certain
-    split_points.push_back(first_track);
+
+    // Track 1 starts at sample 0 — UNLESS the rip opens with a detected gap
+    // (lead-in silence), in which case track 1 starts where that lead-in
+    // ends (emitted by the loop below) and the implicit sample-0 start would
+    // be a spurious silence "track". A gap detected at frame 0 sits below
+    // the silence threshold and so scores far above the confidence gate, so
+    // it reliably produces the replacement start. (A short lead-in below
+    // min_gap_seconds is not a detected gap, so it stays part of track 1.)
+    // Without this guard, the absolute-floor cure detects lead-in silence on
+    // a digital-zero / restored master and manufactures a spurious leading
+    // track. See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+    const bool leading_silence = !gaps.empty() && gaps.front().first == 0;
+    if (!leading_silence) {
+        SplitPoint first_track;
+        first_track.start_sample = 0;
+        first_track.source = "blind";
+        first_track.confidence = 1.0;  // First track is certain
+        split_points.push_back(first_track);
+    }
     
     // Each gap end marks start of new track
     if (g_verbose) {
@@ -260,6 +308,12 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
         const int64_t track_start = gap_end_sample.value;
         const int64_t gap_duration = gap_end_sample.value - gap_start_sample.value;
 
+        // A gap that ends at EOF is trailing lead-out silence: no track
+        // follows it, so it must not spawn a (degenerate, near-empty) track.
+        // detect_gaps emits rms.size() as the end frame of an end-of-buffer
+        // gap. See INV-BLIND-ABSOLUTE-SILENCE-FLOOR.
+        const bool trailing_silence = gap.second >= rms.size();
+
         // Score this gap. NEW-BLIND-GAP: pass the signal reference level
         // (p90 of RMS) rather than the noise floor — see the rationale
         // block above the signal_reference_rms computation.
@@ -280,7 +334,7 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
             verbose("    Confidence: " + conf_oss.str());
         }
         
-        if (confidence >= config.confidence_threshold) {
+        if (!trailing_silence && confidence >= config.confidence_threshold) {
             SplitPoint sp;
             sp.start_sample = track_start;
             sp.confidence = static_cast<double>(confidence);
@@ -290,9 +344,21 @@ Expected<AnalysisResult, BlindError> analyze_blind_mode(
             split_points.push_back(sp);
         }
     }
-    
+
+    // Robustness: never return zero splits. The leading/trailing-silence
+    // suppression above can empty the list on a pathological all-silence rip
+    // (the only gap is both leading and trailing); fall back to a single
+    // full-span track so INV-BLIND-SINGLE-TRACK holds.
+    if (split_points.empty()) {
+        SplitPoint full;
+        full.start_sample = 0;
+        full.source = "blind";
+        full.confidence = 1.0;
+        split_points.push_back(full);
+    }
+
     if (g_verbose) {
-        verbose("  Valid gaps (above threshold): " + std::to_string(split_points.size() - 1));
+        verbose("  Track segments: " + std::to_string(split_points.size()));
     }
     
     // Set end samples

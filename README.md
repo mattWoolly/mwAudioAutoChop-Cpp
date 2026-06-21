@@ -17,7 +17,7 @@ Designed for vinyl archivists who want bit-perfect output, tight alignment to a 
 Feed it a continuous vinyl rip and either:
 
 - **Reference mode** — a folder of reference tracks (digital master, CD rip, whatever you have), and the tool aligns each one sample-accurately and writes out individually-chopped files.
-- **Blind mode** — no reference needed; detects inter-track gaps by energy envelope.
+- **Blind mode** — no reference needed; detects inter-track gaps by energy envelope. Works on noisy vinyl rips *and* clean/restored masters whose gaps are exact digital silence.
 - **TUI mode** — interactive waveform editor for when you want hands-on control.
 
 The chop points are found by correlation + refinement. The audio samples themselves are *copied*, never decoded and re-encoded.
@@ -142,8 +142,15 @@ mwAudioAutoChop blind vinyl_rip.wav -o output/ [options]
 |---|---|
 | `-o, --output` | Output directory. |
 | `--min-gap` | Minimum gap duration in seconds to split on (default `2.0`). |
-| `--max-gap` | Maximum gap duration (default `30.0`). |
-| `-v, --verbose` | Show gap detection details. |
+| `--max-gap` | Maximum gap duration in seconds (default `180.0`). Long enough that vinyl side-flip gaps still count as track boundaries; lower it if a track has a long genuinely-quiet passage you don't want split on. |
+| `--dry-run` | Preview the detected tracks without writing files. |
+| `-v, --verbose` | Show gap-detection details (noise floor, threshold, per-gap confidence). |
+
+Blind mode finds boundaries from inter-track silence, so it needs records that actually have gaps between tracks — it won't split a continuous / DJ-mix album (use reference mode for those). It handles both vinyl surface noise and **processed/restored masters whose inter-track gaps are exact digital zero**, and it excludes lead-in / lead-out silence rather than emitting it as spurious leading or trailing tracks. Preview before writing:
+
+```bash
+mwAudioAutoChop blind vinyl_rip.wav -o output/ --dry-run -v
+```
 
 ### Interactive TUI
 

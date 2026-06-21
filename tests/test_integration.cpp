@@ -540,25 +540,34 @@ TEST_CASE("Blind mode pipeline: clear silence detection", "[integration][blind]"
     
     auto analysis_result = mwaac::analyze_blind_mode(vinyl_path, config);
     
-    // Should find at least 2 tracks (with a gap in between)
-    if (analysis_result.has_value()) {
-        const auto& analysis = analysis_result.value();
-        
-        // First split point should be at the start (sample 0)
-        REQUIRE(analysis.split_points.size() >= 1);
-        CHECK(analysis.split_points[0].start_sample == 0);
-        
-        // Second track should start after the gap
-        if (analysis.split_points.size() >= 2) {
-            int64_t expected_start = sample_rate * 5;  // After 2s track + 3s gap
-            int64_t actual_start = analysis.split_points[1].start_sample;
-            
-            // Check within tolerance (±200 samples)
-            CHECK(std::abs(actual_start - expected_start) < 200);
-            
-            INFO("Expected split at: " << expected_start << ", actual: " << actual_start);
-        }
-    }
+    // INV-BLIND-ABSOLUTE-SILENCE-FLOOR regression: this fixture's gap is
+    // TRUE digital silence (create_pattern_wav writes 0.0f), so >10% of
+    // frames are exactly 0 and estimate_noise_floor returns 0. Before the
+    // absolute silence floor + `<=` cure, the relative threshold collapsed
+    // to 0, no gap was detected, and analyze_blind_mode returned a single
+    // split — so the `>= 2` block below never ran (a dormant assertion that
+    // masked the digital-zero bug). Post-cure the gap is detected; hard-
+    // assert >= 2 tracks.
+    REQUIRE(analysis_result.has_value());
+    const auto& analysis = analysis_result.value();
+
+    // First split point should be at the start (sample 0)
+    REQUIRE(analysis.split_points.size() >= 2);
+    CHECK(analysis.split_points[0].start_sample == 0);
+
+    // Second track should start after the gap. The position is quantized to
+    // the RMS-envelope grid (50 ms frame, 12.5 ms hop = 275 samples at
+    // 22050 Hz) and the music-onset frame straddles the silence->tone
+    // boundary, so the detected start sits within ~one frame of the true
+    // boundary. Tolerance = 100 ms (sample_rate/10), comfortably above the
+    // frame/hop quantization yet far below the seconds-scale error a
+    // coordinate or threshold regression would produce. (The original
+    // ±200-sample tolerance was below one hop and was never exercised while
+    // the digital-zero bug kept this fixture to a single split.)
+    int64_t expected_start = sample_rate * 5;  // After 2s track + 3s gap
+    int64_t actual_start = analysis.split_points[1].start_sample;
+    INFO("Expected split at: " << expected_start << ", actual: " << actual_start);
+    CHECK(std::abs(actual_start - expected_start) < sample_rate / 10);
 }
 
 TEST_CASE("Blind mode pipeline: split point positions", "[integration][blind]") {

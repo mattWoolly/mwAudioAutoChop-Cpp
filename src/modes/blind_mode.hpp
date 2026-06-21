@@ -26,10 +26,14 @@ namespace mwaac {
 // pauses (sustained chords, breath gaps) on the vinyl corpus.
 inline constexpr float kBlindDefaultMinGapSeconds = 2.0f;
 
-// Maximum gap duration in seconds — gaps longer than this are
-// treated as lead-in / lead-out / side-flip artifacts, not track
-// boundaries.
-inline constexpr float kBlindDefaultMaxGapSeconds = 30.0f;
+// Maximum gap duration in seconds. Gaps longer than this are treated as
+// non-boundary artifacts (extended run-out / dead air). 180 s mirrors
+// reference_mode.cpp's kSkipSilenceDefaultMaxSkipSeconds: on multi-disc
+// vinyl an inter-track or side-flip silence IS a genuine track boundary and
+// routinely runs 60-145 s (measured on the 192k/24 Djrum 2LP master), so
+// the previous 30 s default dropped 7 of that album's 10 real boundaries.
+// 180 s admits side-flips while still excluding pathological dead air.
+inline constexpr float kBlindDefaultMaxGapSeconds = 180.0f;
 
 // Score_gap confidence gate. Per NEW-BLIND-GAP's docstring on
 // score_gap, the formula `1 - gap_rms / signal_reference_rms`
